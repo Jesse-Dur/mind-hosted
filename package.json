@@ -1,0 +1,20 @@
+{
+  "name": "jesse-dashboard",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c cyan,magenta 'bun run backend/index.ts' 'bun run --cwd frontend dev'",
+    "dev:backend": "bun run backend/index.ts",
+    "dev:frontend": "bun run --cwd frontend dev",
+    "start": "bun run backend/index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "concurrently": "^9.2.1"
+  },
+  "dependencies": {
+    "@clerk/backend": "^3.4.11",
+    "@hono/clerk-auth": "^3.1.1",
+    "hono": "^4.12.16",
+    "postgres": "^3.4.9"
+  }
+}

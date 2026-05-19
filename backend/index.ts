@@ -1,0 +1,22 @@
+import { Hono } from "hono"
+import { cors } from "hono/cors"
+import { clerkMiddleware } from "@hono/clerk-auth"
+import { tilesRoute } from "./routes/tiles"
+import { thoughtsRoute } from "./routes/thoughts"
+import { tagsRoute } from "./routes/tags"
+import { groqRoute } from "./routes/groq"
+import { historyRoute } from "./routes/history"
+import "./db/client"
+
+const app = new Hono()
+
+app.use("*", cors({ origin: process.env.FRONTEND_URL ?? "http://localhost:5173" }))
+app.use("*", clerkMiddleware())
+
+app.route("/api/tiles", tilesRoute)
+app.route("/api/thoughts", thoughtsRoute)
+app.route("/api/tags", tagsRoute)
+app.route("/api/ai", groqRoute)
+app.route("/api/history", historyRoute)
+
+export default { port: 3000, fetch: app.fetch }
