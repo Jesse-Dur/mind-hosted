@@ -28,6 +28,7 @@ export function SettingsPanel() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <p style={{ fontSize: 11, color: "#ccc", textAlign: "right", marginBottom: -8 }}>v{__APP_VERSION__}</p>
       <div>
         <p style={{ fontSize: 11, fontWeight: 700, color: "#aaa", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 16 }}>Canvas Size</p>
 
