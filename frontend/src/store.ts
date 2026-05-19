@@ -71,13 +71,13 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   updateTile: async (id, data) => {
-    const updated = await api().tiles.update(id, data)
-    set((s) => ({ tiles: s.tiles.map((t) => (t.id === id ? updated : t)) }))
+    set((s) => ({ tiles: s.tiles.map((t) => (t.id === id ? { ...t, ...data } : t)) }))
+    api().tiles.update(id, data).catch(console.error)
   },
 
   removeTile: async (id) => {
-    await api().tiles.remove(id)
     set((s) => ({ tiles: s.tiles.filter((t) => t.id !== id), thoughts: s.thoughts.filter((t) => t.tile_id !== id) }))
+    api().tiles.remove(id).catch(console.error)
   },
 
   addThought: async (data) => {
