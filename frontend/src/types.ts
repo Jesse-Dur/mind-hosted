@@ -37,6 +37,6 @@ export interface HistoryEvent {
   id: number
   action: string
   summary: string
-  detail: string
+  detail: string | Record<string, unknown>
   created_at: string
 }

@@ -76,7 +76,7 @@ export function HistoryPanel({ active, sidebarOpen }: { active: boolean; sidebar
       <style>{`@keyframes historyIn { from { opacity:0; transform:translateY(4px) } to { opacity:1; transform:translateY(0) } }`}</style>
       {events.length === 0 && <p style={{ fontSize: 12, color: "#ccc" }}>No history yet</p>}
       {events.map((e, i) => {
-        const detail = JSON.parse(e.detail) as Record<string, unknown>
+        const detail = (typeof e.detail === "string" ? JSON.parse(e.detail) : e.detail) as Record<string, unknown>
         const isExpanded = expanded === e.id
         const isAI = e.action === "ai.process"
 
