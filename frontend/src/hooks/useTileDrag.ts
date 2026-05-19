@@ -34,7 +34,12 @@ export function useTileDrag(tile: Tile, scale: number) {
       updateTile(tile.id, { x, y })
     }
 
-    function onUp() {
+    function onUp(e: MouseEvent) {
+      if (moved && drag.current) {
+        const x = Math.max(0, Math.min(snap((drag.current.tx + (e.clientX - drag.current.mx))), maxX))
+        const y = Math.max(0, Math.min(snap((drag.current.ty + (e.clientY - drag.current.my))), maxY))
+        updateTile(tile.id, { x, y })
+      }
       drag.current = null
       window.removeEventListener("mousemove", onMove)
       window.removeEventListener("mouseup", onUp)
@@ -57,7 +62,12 @@ export function useTileDrag(tile: Tile, scale: number) {
       updateTile(tile.id, { width, height })
     }
 
-    function onUp() {
+    function onUp(e: MouseEvent) {
+      if (resize.current) {
+        const width = Math.min(snap(CANVAS_W - tile.x), Math.max(GRID * 4, snap(resize.current.tw + (e.clientX - resize.current.mx))))
+        const height = Math.min(snap(CANVAS_H - tile.y), Math.max(GRID * 4, snap(resize.current.th + (e.clientY - resize.current.my))))
+        updateTile(tile.id, { width, height })
+      }
       resize.current = null
       window.removeEventListener("mousemove", onMove)
       window.removeEventListener("mouseup", onUp)

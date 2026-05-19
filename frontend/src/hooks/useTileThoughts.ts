@@ -35,11 +35,12 @@ export function useTileThoughts(tileId: number, tileThoughts: Thought[]) {
 
   async function onThoughtDrop() {
     if (!orderedIds.length) return
-    await Promise.all(orderedIds.map((id, i) => createApi(getToken).thoughts.reorder(id, i)))
+    const ids = [...orderedIds]
     dragThought.current = null
     dragState.thoughtId = null
     dragState.sourceTileId = null
     setDraggingId(null)
+    Promise.all(ids.map((id, i) => createApi(getToken).thoughts.reorder(id, i))).catch(console.error)
   }
 
   async function onTileContentDrop(e: React.DragEvent) {
@@ -48,10 +49,10 @@ export function useTileThoughts(tileId: number, tileThoughts: Thought[]) {
     const id = dragState.thoughtId
     const srcTile = dragState.sourceTileId
     if (!id || srcTile === tileId) return
-    await createApi(getToken).thoughts.move(id, tileId)
     dragState.thoughtId = null
     dragState.sourceTileId = null
     useStore.getState().loadThoughts()
+    createApi(getToken).thoughts.move(id, tileId).catch(console.error)
   }
 
   return { orderedIds, draggingId, dropTarget, setDropTarget, onThoughtDragStart, onThoughtDragOver, onThoughtDrop, onTileContentDrop }
