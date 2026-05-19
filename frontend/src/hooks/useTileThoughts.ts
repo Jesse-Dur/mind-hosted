@@ -1,6 +1,7 @@
 import { useState, useRef } from "react"
+import { useAuth } from "@clerk/clerk-react"
 import { useStore } from "../store"
-import { thoughtsApi } from "../api/client"
+import { createApi } from "../api/client"
 import { dragState } from "../utils/dragState"
 import type { Thought } from "../types"
 
@@ -9,6 +10,7 @@ export function useTileThoughts(tileId: number, tileThoughts: Thought[]) {
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const [dropTarget, setDropTarget] = useState(false)
   const dragThought = useRef<number | null>(null)
+  const { getToken } = useAuth()
 
   function onThoughtDragStart(id: number) {
     dragThought.current = id
@@ -33,7 +35,7 @@ export function useTileThoughts(tileId: number, tileThoughts: Thought[]) {
 
   async function onThoughtDrop() {
     if (!orderedIds.length) return
-    await Promise.all(orderedIds.map((id, i) => thoughtsApi.reorder(id, i)))
+    await Promise.all(orderedIds.map((id, i) => createApi(getToken).thoughts.reorder(id, i)))
     dragThought.current = null
     dragState.thoughtId = null
     dragState.sourceTileId = null
@@ -46,7 +48,7 @@ export function useTileThoughts(tileId: number, tileThoughts: Thought[]) {
     const id = dragState.thoughtId
     const srcTile = dragState.sourceTileId
     if (!id || srcTile === tileId) return
-    await thoughtsApi.move(id, tileId)
+    await createApi(getToken).thoughts.move(id, tileId)
     dragState.thoughtId = null
     dragState.sourceTileId = null
     useStore.getState().loadThoughts()

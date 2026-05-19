@@ -1,6 +1,6 @@
 import { sql } from "./client"
 import { historyDb } from "./history"
-import type { Tile } from "../../frontend/src/types"
+import type { Tile } from "../types"
 
 export const tilesDb = {
   list: async (userId: string) =>

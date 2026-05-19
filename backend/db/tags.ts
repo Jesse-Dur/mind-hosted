@@ -1,5 +1,5 @@
 import { sql } from "./client"
-import type { Tag } from "../../frontend/src/types"
+import type { Tag } from "../types"
 
 export const tagsDb = {
   list: async (userId: string) =>

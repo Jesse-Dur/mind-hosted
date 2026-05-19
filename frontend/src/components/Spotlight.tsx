@@ -1,7 +1,8 @@
 import { Command } from "cmdk"
 import { useState, useEffect } from "react"
+import { useAuth } from "@clerk/clerk-react"
 import { useStore } from "../store"
-import { tilesApi, thoughtsApi, ollamaApi } from "../api/client"
+import { createApi } from "../api/client"
 import type { Tile, Thought } from "../types"
 import { findEmptySpot } from "../utils/findEmptySpot"
 
@@ -16,6 +17,7 @@ const GROUP_HEADING: React.CSSProperties = {
 
 export function Spotlight() {
   const { tiles, thoughts, setSpotlightOpen, addTile } = useStore()
+  const { getToken } = useAuth()
   const [showPast, setShowPast] = useState(false)
   const [pastTiles, setPastTiles] = useState<Tile[]>([])
   const [pastThoughts, setPastThoughts] = useState<Thought[]>([])
@@ -42,7 +44,8 @@ export function Spotlight() {
 
   async function togglePast() {
     if (!showPast) {
-      const [t, th] = await Promise.all([tilesApi.listPast(), thoughtsApi.listPast()])
+      const api = createApi(getToken)
+      const [t, th] = await Promise.all([api.tiles.listPast(), api.thoughts.listPast()])
       setPastTiles(t)
       setPastThoughts(th)
     }
@@ -58,7 +61,7 @@ export function Spotlight() {
   function handleAI() {
     const input = isAIMode ? query.slice(1).trim() : query.trim()
     if (!input) return
-    ollamaApi.process(input, "medium")
+    createApi(getToken).ai.process(input, "medium")
     setSpotlightOpen(false)
   }
 

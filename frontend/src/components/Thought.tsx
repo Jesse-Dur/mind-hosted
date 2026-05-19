@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { createPortal } from "react-dom"
-import { thoughtsApi } from "../api/client"
+import { useAuth } from "@clerk/clerk-react"
+import { createApi } from "../api/client"
 import { useStore } from "../store"
 import { TagMenu } from "./TagMenu"
 import { CloseButton } from "./CloseButton"
@@ -19,6 +20,7 @@ interface Props {
 
 export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: Props) {
   const { loadThoughts, newThoughtIds } = useStore()
+  const { getToken } = useAuth()
   const isNew = newThoughtIds.has(thought.id)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [localTags, setLocalTags] = useState(thought.tags)
@@ -26,13 +28,13 @@ export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: 
 
   async function remove(e: React.MouseEvent) {
     e.stopPropagation()
-    await thoughtsApi.remove(thought.id)
+    await createApi(getToken).thoughts.remove(thought.id)
     loadThoughts()
   }
 
   async function onTagUpdate(tags: string[]) {
     setLocalTags(tags)
-    await thoughtsApi.updateTags(thought.id, tags)
+    await createApi(getToken).thoughts.updateTags(thought.id, tags)
   }
 
   return (

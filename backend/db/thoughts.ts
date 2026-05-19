@@ -1,6 +1,6 @@
 import { sql } from "./client"
 import { historyDb } from "./history"
-import type { Thought } from "../../frontend/src/types"
+import type { Thought } from "../types"
 
 export const thoughtsDb = {
   list: async (userId: string, tileId?: number) =>

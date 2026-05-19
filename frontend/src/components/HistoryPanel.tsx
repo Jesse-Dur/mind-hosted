@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react"
-import { historyApi } from "../api/client"
+import { useAuth } from "@clerk/clerk-react"
+import { createApi } from "../api/client"
 import type { HistoryEvent } from "../types"
 
 const ACTION_LABELS: Record<string, string> = {
@@ -64,10 +65,11 @@ function ExpandDetail({ isAI, detail, visible }: { isAI: boolean; detail: Record
 export function HistoryPanel({ active, sidebarOpen }: { active: boolean; sidebarOpen: boolean }) {
   const [events, setEvents] = useState<HistoryEvent[]>([])
   const [expanded, setExpanded] = useState<number | null>(null)
+  const { getToken } = useAuth()
 
   useEffect(() => {
-    if (active && sidebarOpen) historyApi.list().then(setEvents)
-  }, [active, sidebarOpen])
+    if (active && sidebarOpen) createApi(getToken).history.list().then(setEvents)
+  }, [active, sidebarOpen, getToken])
 
   return (
     <div style={{ flex: 1, overflowY: "auto" }}>

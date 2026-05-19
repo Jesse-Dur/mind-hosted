@@ -1,5 +1,6 @@
 import { useState, useRef } from "react"
-import { thoughtsApi } from "../api/client"
+import { useAuth } from "@clerk/clerk-react"
+import { createApi } from "../api/client"
 import { useStore } from "../store"
 
 function parseInput(value: string, knownTags: string[]): { content: string; tags: string[] } {
@@ -22,6 +23,7 @@ export function ThoughtInput({ tileId, inputRef }: { tileId: number; inputRef?: 
   const [value, setValue] = useState("")
   const [suggestion, setSuggestion] = useState<string | null>(null)
   const { loadThoughts, tags } = useStore()
+  const { getToken } = useAuth()
   const localRef = useRef<HTMLInputElement>(null)
   const ref = inputRef ?? localRef
 
@@ -51,7 +53,7 @@ export function ThoughtInput({ tileId, inputRef }: { tileId: number; inputRef?: 
     e.preventDefault()
     if (!value.trim()) return
     const { content, tags: parsedTags } = parseInput(value, tags.map((t) => t.name))
-    await thoughtsApi.create({ tile_id: tileId, content: content || value.trim(), tags: parsedTags, sort_order: 0 })
+    await createApi(getToken).thoughts.create({ tile_id: tileId, content: content || value.trim(), tags: parsedTags, sort_order: 0 })
     setValue("")
     setSuggestion(null)
     loadThoughts()
