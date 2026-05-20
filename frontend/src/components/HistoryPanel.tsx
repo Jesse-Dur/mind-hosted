@@ -15,7 +15,7 @@ const ACTION_LABELS: Record<string, string> = {
 }
 
 function formatTime(iso: string) {
-  return new Date(iso + "Z").toLocaleString(undefined, {
+  return new Date(iso).toLocaleString(undefined, {
     month: "short", day: "numeric",
     hour: "2-digit", minute: "2-digit", second: "2-digit",
   })
