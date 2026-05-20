@@ -60,7 +60,7 @@ export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: 
         }}
       >
         <span style={{ color: "#ccc", flexShrink: 0, fontSize: 11 }}>⠿</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center" }}>
           <span
             contentEditable
             suppressContentEditableWarning
@@ -70,7 +70,7 @@ export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: 
               if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur() }
               if (e.key === "Escape") { e.currentTarget.blur(); cancelEditing() }
             }}
-            onMouseDown={(e) => { if (e.buttons === 1 && window.getSelection()?.toString()) return; e.stopPropagation() }}
+            onMouseDown={(e) => e.stopPropagation()}
             style={{ color: "#1a1a1a", outline: "none", cursor: "text", userSelect: "text", fontSize: 13 }}
           >{content}</span>
         </div>
