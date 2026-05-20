@@ -124,7 +124,6 @@ async function classifyAndStore(input: string, userId: string) {
   const tiles = await tilesDb.list(userId)
   const tags = await tagsDb.list(userId)
   const tagList = tags.map((t) => t.name).join(", ")
-  const randomTileId = tiles.find((t) => t.title.toLowerCase().includes("random"))?.id ?? null
 
   const allThoughts = await thoughtsDb.list(userId)
   const inputTags = tags.filter((t) => {
@@ -134,16 +133,13 @@ async function classifyAndStore(input: string, userId: string) {
   const inputTagHint = inputTags.length
     ? `\nDetected tags in input: ${inputTags.map((t) => {
         const taggedThoughts = allThoughts.filter((th) => th.tags.includes(t.name))
-        if (!taggedThoughts.length) {
-          const rTile = tiles.find((ti) => ti.id === randomTileId)
-          return `"${t.name}" (no existing thoughts — use tile "${rTile?.title ?? "Random"}" id:${randomTileId ?? "unknown"})`
-        }
+        if (!taggedThoughts.length) return `"${t.name}" (no existing thoughts with this tag)`
         const tileCounts: Record<number, number> = {}
         taggedThoughts.forEach((th) => { tileCounts[th.tile_id] = (tileCounts[th.tile_id] ?? 0) + 1 })
-        const mostCommonTileId = Number(Object.entries(tileCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? randomTileId)
+        const mostCommonTileId = Number(Object.entries(tileCounts).sort((a, b) => b[1] - a[1])[0]![0])
         const tile = tiles.find((ti) => ti.id === mostCommonTileId)
         return `"${t.name}" (${taggedThoughts.length} existing thought(s), most commonly in tile "${tile?.title ?? "?"}" id:${mostCommonTileId})`
-      }).join(", ")} — use these tags and tiles for new thoughts.`
+      }).join(", ")} — use these tiles for new thoughts.`
     : ""
 
   const reqId = Math.random().toString(36).slice(2, 6)
@@ -157,12 +153,15 @@ async function classifyAndStore(input: string, userId: string) {
       role: "system",
       content: `You are a personal thought organiser assistant.
 Available tags: ${tagList || "none"}
-Default tile for uncertain items: ${randomTileId ? `id:${randomTileId}` : "none"}
 
-- Call search_tiles to find tile IDs before creating or moving thoughts.
+- ALWAYS call search_tiles first to get a valid tile_id. NEVER guess or invent tile IDs.
+- Only use tile_ids returned by search_tiles.
+- Call multiple tools in parallel in a single message whenever possible.
 - Apply matching tags automatically. Do NOT repeat the tag in the thought content.
+- Do NOT repeat tile context in the content (e.g. if tile is 'Tasks if Bored', don't say 'when bored').
 - Strip redundant context. Thought should be the pure action/note only.
 - Split compound inputs into multiple create_thought calls.
+- If input is ambiguous, prefer CREATE over searching for something to update.
 - If search finds nothing, CREATE instead of searching again.
 - Call done() in the SAME message as your last action.`,
     },
@@ -196,9 +195,28 @@ Default tile for uncertain items: ${randomTileId ? `id:${randomTileId}` : "none"
       error?: { message: string }
     }
 
+    const remainingReqs = res.headers.get("x-ratelimit-remaining-requests")
+    const remainingTokens = res.headers.get("x-ratelimit-remaining-tokens")
+    const resetTokens = res.headers.get("x-ratelimit-reset-tokens")
+    if (remainingReqs || remainingTokens) {
+      log(`📊 rate limit — requests remaining: ${remainingReqs}, tokens remaining: ${remainingTokens}, reset: ${resetTokens}`)
+    }
+
     if (!data.choices?.[0]) {
-      log(`Bad response: ${JSON.stringify(data.error ?? data)}`)
-      messages.push({ role: "user", content: `Error: ${data.error?.message ?? "unknown"}. Try again.` })
+      const errMsg = data.error?.message ?? "unknown"
+      log(`Bad response ${res.status}: ${errMsg}`)
+      if (res.status === 429) {
+        const retryAfter = res.headers.get("retry-after")
+        const wait = retryAfter ? Number(retryAfter) * 1000 : 10000
+        log(`⏳ Rate limited — waiting ${wait / 1000}s (reset: ${resetTokens})`)
+        await new Promise((r) => setTimeout(r, wait))
+        continue
+      }
+      if (res.status >= 400 && res.status < 500) {
+        log(`❌ Non-retryable error ${res.status} — aborting`)
+        return
+      }
+      messages.push({ role: "user", content: `Error: ${errMsg}. Try again.` })
       continue
     }
 
@@ -276,9 +294,11 @@ Default tile for uncertain items: ${randomTileId ? `id:${randomTileId}` : "none"
           : `No thoughts in tile ${tileId}`
 
       } else if (call.function.name === "create_thought") {
-        const tileId = Number(args.tile_id) || randomTileId
+        const tileId = Number(args.tile_id)
         const content = String(args.content ?? "")
         if (!tileId || !content) { result = "Error: missing tile_id or content"; continue }
+        const validTile = tiles.find((t) => t.id === tileId)
+        if (!validTile) { result = `Error: tile_id ${tileId} does not exist. Call search_tiles first to get a valid tile_id.`; continue }
         const validTags = ((args.tags as string[]) ?? []).filter((t) => tags.some((tag) => tag.name === t))
         const thought = await thoughtsDb.create({ tile_id: tileId, content, tags: validTags, sort_order: 0 }, userId, true)
         const tile = tiles.find((t) => t.id === tileId)
