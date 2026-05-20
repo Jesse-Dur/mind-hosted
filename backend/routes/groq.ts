@@ -154,16 +154,16 @@ async function classifyAndStore(input: string, userId: string) {
       content: `You are a personal thought organiser assistant.
 Available tags: ${tagList || "none"}
 
-- ALWAYS call search_tiles first to get a valid tile_id. NEVER guess or invent tile IDs.
-- Only use tile_ids returned by search_tiles.
-- Wait for search results before calling create_thought, update_thought, move_thought.
-- Apply matching tags automatically. Do NOT repeat the tag in the thought content.
-- Do NOT repeat tile context in the content (e.g. if tile is 'Tasks if Bored', don't say 'when bored').
-- Strip redundant context. Thought should be the pure action/note only.
-- Split compound inputs into multiple create_thought calls.
-- If input is ambiguous, prefer CREATE over searching for something to update.
-- If search finds nothing, CREATE instead of searching again.
-- Call done() in the SAME message as your last action.`,
+- You can call multiple tools in parallel in a single message-do this whenever possible.
+- ALWAYS use tile_ids returned by search_tiles. NEVER guess or invent tile IDs.
+- If the input mentions a known tag name, call search_by_tag to find related thoughts and the correct tile.
+- Always apply matching tags automatically. Do NOT repeat the tag/subject in the thought content.
+- Do NOT repeat tile context in the content (e.g. if tile is 'Tasks if Bored', don't say 'if I'm bored' or 'when bored').
+- Strip all redundant context — the thought should be the pure action/note only. e.g. "if I'm bored I can do in2it website development" tagged 'in2it' in 'Tasks if Bored' → content: "Website development".
+- Split compound inputs into multiple separate create_thought calls (one task = one thought).
+- If search returns no results, CREATE a new thought instead of giving up.
+- If input is ambiguous (could be a move instruction or new info), prefer CREATE.
+- Call done() in the SAME message as your last action that satisfy's all of the user's request(s).`,
     },
     { role: "user", content: input + inputTagHint },
   ]
@@ -184,7 +184,9 @@ Available tags: ${tagList || "none"}
       body: JSON.stringify({
         model: "llama-3.1-8b-instant",
         messages,
-        tools: searchCount >= MAX_SEARCHES ? TOOLS.filter((t) => !t.function.name.startsWith("search_by")) : TOOLS,
+        tools: i === 0
+          ? TOOLS.filter((t) => t.function.name === "search_tiles" || t.function.name === "search_by_tag" || t.function.name === "search_thoughts")
+          : searchCount >= MAX_SEARCHES ? TOOLS.filter((t) => !t.function.name.startsWith("search_by")) : TOOLS,
         temperature: 0.1,
       }),
       signal: AbortSignal.timeout(60000),
@@ -248,16 +250,21 @@ Available tags: ${tagList || "none"}
         return
       }
 
-      const args = JSON.parse(call.function.arguments) as Record<string, unknown>
+      let args: Record<string, unknown> = {}
+      try { args = JSON.parse(call.function.arguments) } catch { 
+        messages.push({ role: "tool", content: "Error: invalid JSON arguments", name: call.function.name, tool_call_id: call.id })
+        continue
+      }
       let result = ""
 
+      try {
       if (call.function.name === "search_tiles") {
         const query = String(args.query ?? "").toLowerCase()
         const results = tiles
           .filter((t) => t.title.toLowerCase().includes(query))
           .map((t) => ({ id: t.id, title: t.title }))
         log(`🗂️ search_tiles("${query}") → ${results.length} result(s)`)
-        result = results.length ? JSON.stringify(results) : `No tiles matching "${query}"`
+        result = results.length ? JSON.stringify(results) : `No tiles matching "${query}". Try a shorter keyword.`
 
       } else if (call.function.name === "search_thoughts") {
         const query = String(args.query ?? "")
@@ -296,46 +303,65 @@ Available tags: ${tagList || "none"}
       } else if (call.function.name === "create_thought") {
         const tileId = Number(args.tile_id)
         const content = String(args.content ?? "")
-        if (!tileId || !content) { result = "Error: missing tile_id or content"; continue }
-        const validTile = tiles.find((t) => t.id === tileId)
-        if (!validTile) { result = `Error: tile_id ${tileId} does not exist. Call search_tiles first to get a valid tile_id.`; continue }
-        const validTags = ((args.tags as string[]) ?? []).filter((t) => tags.some((tag) => tag.name === t))
-        const thought = await thoughtsDb.create({ tile_id: tileId, content, tags: validTags, sort_order: 0 }, userId, true)
-        const tile = tiles.find((t) => t.id === tileId)
-        const action = `Created "${thought.content}" in "${tile?.title ?? tileId}"`
-        historyActions.push(action)
-        log(`✏️ ${action}`)
-        result = `Created thought id:${thought.id}`
+        if (!tileId || !content) { result = "Error: missing tile_id or content"; }
+        else {
+          const validTile = tiles.find((t) => t.id === tileId)
+          if (!validTile) {
+            result = `Error: tile_id ${tileId} does not exist. Call search_tiles to get a valid tile_id.`
+          } else {
+            const validTags = ((args.tags as string[]) ?? []).filter((t) => tags.some((tag) => tag.name === t))
+            const thought = await thoughtsDb.create({ tile_id: tileId, content, tags: validTags, sort_order: 0 }, userId, true)
+            const action = `Created "${thought.content}" in "${validTile.title}"`
+            historyActions.push(action)
+            log(`✏️ ${action}`)
+            result = `Created thought id:${thought.id}`
+          }
+        }
 
       } else if (call.function.name === "update_thought") {
         const id = Number(args.thought_id)
         const content = String(args.content ?? "")
-        if (!id || !content) { result = "Error: missing thought_id or content"; continue }
-        const validTags = args.tags ? (args.tags as string[]).filter((t) => tags.some((tag) => tag.name === t)) : undefined
-        await thoughtsDb.update(id, content, userId, validTags)
-        const action = `Updated thought ${id} → "${content}"`
-        historyActions.push(action)
-        log(`✏️ ${action}`)
-        result = "Updated"
+        if (!id || !content) { result = "Error: missing thought_id or content" }
+        else {
+          const validTags = args.tags ? (args.tags as string[]).filter((t) => tags.some((tag) => tag.name === t)) : undefined
+          await thoughtsDb.update(id, content, userId, validTags)
+          const action = `Updated thought ${id} → "${content}"`
+          historyActions.push(action)
+          log(`✏️ ${action}`)
+          result = "Updated"
+        }
 
       } else if (call.function.name === "delete_thought") {
         const id = Number(args.thought_id)
-        if (!id) { result = "Error: missing thought_id"; continue }
-        await thoughtsDb.remove(id, userId)
-        historyActions.push(`Deleted thought ${id}`)
-        log(`🗑️ Deleted thought ${id}`)
-        result = "Deleted"
+        if (!id) { result = "Error: missing thought_id" }
+        else {
+          await thoughtsDb.remove(id, userId)
+          historyActions.push(`Deleted thought ${id}`)
+          log(`🗑️ Deleted thought ${id}`)
+          result = "Deleted"
+        }
 
       } else if (call.function.name === "move_thought") {
         const id = Number(args.thought_id)
         const tileId = Number(args.tile_id)
-        if (!id || !tileId) { result = "Error: missing ids"; continue }
-        await thoughtsDb.move(id, tileId, userId)
-        const tile = tiles.find((t) => t.id === tileId)
-        const action = `Moved thought ${id} to "${tile?.title ?? tileId}"`
-        historyActions.push(action)
-        log(`📦 ${action}`)
-        result = "Moved"
+        if (!id || !tileId) { result = "Error: missing ids" }
+        else {
+          const validTile = tiles.find((t) => t.id === tileId)
+          if (!validTile) {
+            result = `Error: tile_id ${tileId} does not exist. Call search_tiles to get a valid tile_id.`
+          } else {
+            await thoughtsDb.move(id, tileId, userId)
+            const action = `Moved thought ${id} to "${validTile.title}"`
+            historyActions.push(action)
+            log(`📦 ${action}`)
+            result = "Moved"
+          }
+        }
+      }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        log(`⚠️ Tool error (${call.function.name}): ${msg}`)
+        result = `Error executing ${call.function.name}: ${msg}. Try again with valid parameters.`
       }
 
       messages.push({ role: "tool", content: result, name: call.function.name, tool_call_id: call.id })
