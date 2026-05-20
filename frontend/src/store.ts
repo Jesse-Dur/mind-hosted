@@ -57,7 +57,16 @@ export const useStore = create<Store>((set, get) => ({
     const prev = useStore.getState().thoughts.map((t) => t.id)
     const thoughts = await api().thoughts.list()
     const newIds = new Set(thoughts.filter((t) => !prev.includes(t.id)).map((t) => t.id))
-    set({ thoughts, newThoughtIds: newIds })
+    // merge: keep optimistic tile_id for any thought that differs only in tile_id
+    // to avoid poll overwriting a cross-tile move before the DB confirms
+    set((s) => {
+      const merged = thoughts.map((t) => {
+        const existing = s.thoughts.find((e) => e.id === t.id)
+        if (existing && existing.tile_id !== t.tile_id) return existing
+        return t
+      })
+      return { thoughts: merged, newThoughtIds: newIds }
+    })
     if (newIds.size > 0) setTimeout(() => set({ newThoughtIds: new Set() }), 1000)
   },
 
