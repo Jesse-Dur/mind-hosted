@@ -56,7 +56,7 @@ export function TagsPanel() {
                 <input value={editName} onChange={(e) => setEditName(e.target.value.slice(0, MAX_TAG_LENGTH))}
                   onKeyDown={(e) => { if (e.key === "Enter") saveEdit(tag.id); if (e.key === "Escape") setEditing(null) }}
                   autoFocus
-                  style={{ flex: 1, fontSize: 13, border: "none", outline: "none", color: "#1a1a1a", background: "transparent" }} />
+                  style={{ flex: 1, minWidth: 0, fontSize: 13, border: "none", outline: "none", color: "#1a1a1a", background: "transparent" }} />
                 <input value={editHex} onChange={(e) => { setEditHex(e.target.value); if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) setEditColor(e.target.value) }}
                   style={{ width: 70, fontSize: 11, padding: "2px 4px", border: "1px solid #e0e0e0", borderRadius: 4, fontFamily: "monospace", color: "#1a1a1a" }} />
                 <button onClick={() => saveEdit(tag.id)} style={{ fontSize: 11, padding: "2px 8px", background: "#1a1a1a", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer" }}>Save</button>
