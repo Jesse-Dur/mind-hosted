@@ -40,6 +40,13 @@ export function useTileThoughts(tileId: number, tileThoughts: Thought[]) {
     dragState.thoughtId = null
     dragState.sourceTileId = null
     setDraggingId(null)
+    setOrderedIds([])
+    useStore.setState((s) => ({
+      thoughts: [
+        ...s.thoughts.filter((t) => t.tile_id !== tileId),
+        ...ids.map((id, i) => ({ ...s.thoughts.find((t) => t.id === id)!, sort_order: i })),
+      ]
+    }))
     Promise.all(ids.map((id, i) => createApi(getToken).thoughts.reorder(id, i))).catch(console.error)
   }
 
