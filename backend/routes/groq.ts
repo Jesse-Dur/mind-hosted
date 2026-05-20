@@ -14,14 +14,6 @@ const TOOLS = [
   {
     type: "function",
     function: {
-      name: "search_tiles",
-      description: "Search tiles by name. Use to find the right tile_id before creating or moving thoughts.",
-      parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
-    },
-  },
-  {
-    type: "function",
-    function: {
       name: "search_by_tag",
       description: "Find all thoughts with a specific tag. Use when searching for things like 'physics' that might be a tag.",
       parameters: { type: "object", properties: { tag: { type: "string" } }, required: ["tag"] },
@@ -123,6 +115,7 @@ const TOOLS = [
 async function classifyAndStore(input: string, userId: string) {
   const tiles = await tilesDb.list(userId)
   const tags = await tagsDb.list(userId)
+  const tileList = tiles.map((t) => `id:${t.id} title:"${t.title}"`).join(", ")
   const tagList = tags.map((t) => t.name).join(", ")
 
   const allThoughts = await thoughtsDb.list(userId)
@@ -152,18 +145,18 @@ async function classifyAndStore(input: string, userId: string) {
     {
       role: "system",
       content: `You are a personal thought organiser assistant.
+Tiles: ${tileList || "none"}
 Available tags: ${tagList || "none"}
 
-- You can call multiple tools in parallel in a single message-do this whenever possible.
-- ALWAYS use tile_ids returned by search_tiles. NEVER guess or invent tile IDs.
-- If the input mentions a known tag name, call search_by_tag to find related thoughts and the correct tile.
+- You can call multiple tools in parallel in a single message — do this whenever possible.
+- If the input mentions a known tag name, FIRST call search_by_tag with that tag to find related existing thoughts and the correct tile to use.
 - Always apply matching tags automatically. Do NOT repeat the tag/subject in the thought content.
-- Do NOT repeat tile context in the content (e.g. if tile is 'Tasks if Bored', don't say 'if I'm bored' or 'when bored').
+- Do NOT repeat tile context in the content (e.g. if in 'Tasks if Bored', don't say 'if I'm bored' or 'when bored').
 - Strip all redundant context — the thought should be the pure action/note only. e.g. "if I'm bored I can do in2it website development" tagged 'in2it' in 'Tasks if Bored' → content: "Website development".
 - Split compound inputs into multiple separate create_thought calls (one task = one thought).
 - If search returns no results, CREATE a new thought instead of giving up.
 - If input is ambiguous (could be a move instruction or new info), prefer CREATE.
-- Call done() in the SAME message as your last action that satisfy's all of the user's request(s).`,
+- Call done() in the SAME message as your last action that satisfies all of the user's request(s).`,
     },
     { role: "user", content: input + inputTagHint },
   ]
@@ -184,9 +177,7 @@ Available tags: ${tagList || "none"}
       body: JSON.stringify({
         model: "llama-3.1-8b-instant",
         messages,
-        tools: i === 0
-          ? TOOLS.filter((t) => t.function.name === "search_tiles" || t.function.name === "search_by_tag" || t.function.name === "search_thoughts")
-          : searchCount >= MAX_SEARCHES ? TOOLS.filter((t) => !t.function.name.startsWith("search_by")) : TOOLS,
+        tools: searchCount >= MAX_SEARCHES ? TOOLS.filter((t) => !t.function.name.startsWith("search_by")) : TOOLS,
         temperature: 0.1,
       }),
       signal: AbortSignal.timeout(60000),
@@ -258,15 +249,7 @@ Available tags: ${tagList || "none"}
       let result = ""
 
       try {
-      if (call.function.name === "search_tiles") {
-        const query = String(args.query ?? "").toLowerCase()
-        const results = tiles
-          .filter((t) => t.title.toLowerCase().includes(query))
-          .map((t) => ({ id: t.id, title: t.title }))
-        log(`🗂️ search_tiles("${query}") → ${results.length} result(s)`)
-        result = results.length ? JSON.stringify(results) : `No tiles matching "${query}". Try a shorter keyword.`
-
-      } else if (call.function.name === "search_thoughts") {
+      if (call.function.name === "search_thoughts") {
         const query = String(args.query ?? "")
         const results = allThoughts
           .filter((t) => t.content.toLowerCase().includes(query.toLowerCase()))
