@@ -51,7 +51,7 @@ export function useTileThoughts(tileId: number, tileThoughts: Thought[]) {
     if (!id || srcTile === tileId) return
     dragState.thoughtId = null
     dragState.sourceTileId = null
-    useStore.getState().loadThoughts()
+    useStore.setState((s) => ({ thoughts: s.thoughts.map((t) => t.id === id ? { ...t, tile_id: tileId } : t) }))
     createApi(getToken).thoughts.move(id, tileId).catch(console.error)
   }
 
