@@ -7,7 +7,9 @@ import type { Thought as ThoughtType } from "../types"
 
 export function TileContent({ tileId, tileThoughts }: { tileId: number; tileThoughts: ThoughtType[] }) {
   const thoughtInputRef = useRef<HTMLInputElement>(null)
-  const { draggingId, dropTarget, setDropTarget, onThoughtDragStart, onThoughtDragOver, onThoughtDrop, onTileContentDrop } = useTileThoughts(tileId, tileThoughts)
+  const { orderedIds, draggingId, dropTarget, setDropTarget, onThoughtDragStart, onThoughtDragOver, onThoughtDrop, onTileContentDrop } = useTileThoughts(tileId, tileThoughts)
+
+  const displayed = orderedIds.length ? orderedIds.map((id) => tileThoughts.find((t) => t.id === id)!).filter(Boolean) : tileThoughts
 
   return (
     <div
@@ -17,7 +19,7 @@ export function TileContent({ tileId, tileThoughts }: { tileId: number; tileThou
       onDragLeave={() => setDropTarget(false)}
       onDrop={onTileContentDrop}
     >
-      {tileThoughts.map((t) => (
+      {displayed.map((t) => (
         <Thought
           key={t.id}
           thought={t}

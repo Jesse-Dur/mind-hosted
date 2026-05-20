@@ -33,7 +33,7 @@ export function useTileThoughts(tileId: number, tileThoughts: Thought[]) {
     })
   }
 
-  async function onThoughtDrop() {
+  function onThoughtDrop() {
     if (!orderedIds.length) return
     const ids = [...orderedIds]
     dragThought.current = null
@@ -45,7 +45,7 @@ export function useTileThoughts(tileId: number, tileThoughts: Thought[]) {
       thoughts: [
         ...s.thoughts.filter((t) => t.tile_id !== tileId),
         ...ids.map((id, i) => ({ ...s.thoughts.find((t) => t.id === id)!, sort_order: i })),
-      ]
+      ],
     }))
     Promise.all(ids.map((id, i) => createApi(getToken).thoughts.reorder(id, i))).catch(console.error)
   }
