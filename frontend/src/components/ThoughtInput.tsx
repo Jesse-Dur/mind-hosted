@@ -53,9 +53,14 @@ export function ThoughtInput({ tileId, inputRef }: { tileId: number; inputRef?: 
     e.preventDefault()
     if (!value.trim() || tileId < 0) return
     const { content, tags: parsedTags } = parseInput(value, tags.map((t) => t.name))
+    const trimmed = content || value.trim()
     setValue("")
     setSuggestion(null)
-    createApi(getToken).thoughts.create({ tile_id: tileId, content: content || value.trim(), tags: parsedTags, sort_order: 0 }).catch(console.error)
+    const tempId = -Date.now()
+    useStore.setState((s) => ({ thoughts: [...s.thoughts, { id: tempId, tile_id: tileId, content: trimmed, tags: parsedTags, sort_order: 0, created_at: new Date().toISOString() }] }))
+    createApi(getToken).thoughts.create({ tile_id: tileId, content: trimmed, tags: parsedTags, sort_order: 0 })
+      .then((t) => useStore.setState((s) => ({ thoughts: s.thoughts.map((th) => th.id === tempId ? t : th) })))
+      .catch(() => useStore.setState((s) => ({ thoughts: s.thoughts.filter((th) => th.id !== tempId) })))
   }
 
   return (
