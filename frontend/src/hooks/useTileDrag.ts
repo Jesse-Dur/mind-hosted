@@ -6,7 +6,7 @@ const GRID = 24
 function snap(n: number) { return Math.round(n / GRID) * GRID }
 
 export function useTileDrag(tile: Tile, scale: number) {
-  const { updateTile, canvasHeight } = useStore()
+  const { updateTile, moveTileLocal, canvasHeight } = useStore()
   const CANVAS_W = Math.floor(Math.round(canvasHeight * (16 / 9)) / GRID) * GRID
   const CANVAS_H = canvasHeight
   const drag = useRef<{ mx: number; my: number; tx: number; ty: number } | null>(null)
@@ -29,15 +29,15 @@ export function useTileDrag(tile: Tile, scale: number) {
       if (!moved && (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8)) moved = true
       if (!moved) return
       e.preventDefault()
-      const x = Math.max(0, Math.min(snap((drag.current.tx + (e.clientX - drag.current.mx))), maxX))
-      const y = Math.max(0, Math.min(snap((drag.current.ty + (e.clientY - drag.current.my))), maxY))
-      updateTile(tile.id, { x, y })
+      const x = Math.max(0, Math.min(snap((drag.current.tx + (e.clientX - drag.current.mx) / scale)), maxX))
+      const y = Math.max(0, Math.min(snap((drag.current.ty + (e.clientY - drag.current.my) / scale)), maxY))
+      moveTileLocal(tile.id, { x, y })
     }
 
     function onUp(e: MouseEvent) {
       if (moved && drag.current) {
-        const x = Math.max(0, Math.min(snap((drag.current.tx + (e.clientX - drag.current.mx))), maxX))
-        const y = Math.max(0, Math.min(snap((drag.current.ty + (e.clientY - drag.current.my))), maxY))
+        const x = Math.max(0, Math.min(snap((drag.current.tx + (e.clientX - drag.current.mx) / scale)), maxX))
+        const y = Math.max(0, Math.min(snap((drag.current.ty + (e.clientY - drag.current.my) / scale)), maxY))
         updateTile(tile.id, { x, y })
       }
       drag.current = null
@@ -57,15 +57,15 @@ export function useTileDrag(tile: Tile, scale: number) {
     function onMove(e: MouseEvent) {
       if (!resize.current) return
       e.preventDefault()
-      const width = Math.min(snap(CANVAS_W - tile.x), Math.max(GRID * 4, snap(resize.current.tw + (e.clientX - resize.current.mx))))
-      const height = Math.min(snap(CANVAS_H - tile.y), Math.max(GRID * 4, snap(resize.current.th + (e.clientY - resize.current.my))))
-      updateTile(tile.id, { width, height })
+      const width = Math.min(snap(CANVAS_W - tile.x), Math.max(GRID * 4, snap(resize.current.tw + (e.clientX - resize.current.mx) / scale)))
+      const height = Math.min(snap(CANVAS_H - tile.y), Math.max(GRID * 4, snap(resize.current.th + (e.clientY - resize.current.my) / scale)))
+      moveTileLocal(tile.id, { width, height })
     }
 
     function onUp(e: MouseEvent) {
       if (resize.current) {
-        const width = Math.min(snap(CANVAS_W - tile.x), Math.max(GRID * 4, snap(resize.current.tw + (e.clientX - resize.current.mx))))
-        const height = Math.min(snap(CANVAS_H - tile.y), Math.max(GRID * 4, snap(resize.current.th + (e.clientY - resize.current.my))))
+        const width = Math.min(snap(CANVAS_W - tile.x), Math.max(GRID * 4, snap(resize.current.tw + (e.clientX - resize.current.mx) / scale)))
+        const height = Math.min(snap(CANVAS_H - tile.y), Math.max(GRID * 4, snap(resize.current.th + (e.clientY - resize.current.my) / scale)))
         updateTile(tile.id, { width, height })
       }
       resize.current = null
