@@ -24,7 +24,8 @@ interface Store {
   loadThoughts: () => Promise<void>
   loadTags: () => Promise<void>
   addTile: (tile: Omit<Tile, "id" | "created_at">) => Promise<void>
-  updateTile: (id: number, data: Partial<Tile>) => Promise<void>
+  moveTileLocal: (id: number, data: Partial<Tile>) => void
+  updateTile: (id: number, data: Partial<Tile>) => void
   removeTile: (id: number) => Promise<void>
   addThought: (thought: Omit<Thought, "id" | "created_at">) => Promise<void>
   updateThoughtContent: (id: number, content: string) => Promise<void>
@@ -73,7 +74,10 @@ export const useStore = create<Store>((set, get) => ({
     set((s) => ({ tiles: s.tiles.map((t) => t.id === tempId ? tile : t), newestTileId: tile.id }))
   },
 
-  updateTile: async (id, data) => {
+  moveTileLocal: (id, data) =>
+    set((s) => ({ tiles: s.tiles.map((t) => (t.id === id ? { ...t, ...data } : t)) })),
+
+  updateTile: (id, data) => {
     set((s) => ({ tiles: s.tiles.map((t) => (t.id === id ? { ...t, ...data } : t)) }))
     api().tiles.update(id, data).catch(console.error)
   },
