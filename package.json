@@ -1,5 +1,5 @@
 {
-  "name": "jesse-dashboard",
+  "name": "mind",
   "private": true,
   "scripts": {
     "dev": "concurrently -n backend,frontend -c cyan,magenta 'bun run backend/index.ts' 'bun run --cwd frontend dev'",
