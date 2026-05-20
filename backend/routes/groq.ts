@@ -14,6 +14,14 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "search_tiles",
+      description: "Search tiles by name. Use to find the right tile_id before creating or moving thoughts.",
+      parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "search_by_tag",
       description: "Find all thoughts with a specific tag. Use when searching for things like 'physics' that might be a tag.",
       parameters: { type: "object", properties: { tag: { type: "string" } }, required: ["tag"] },
@@ -115,7 +123,6 @@ const TOOLS = [
 async function classifyAndStore(input: string, userId: string) {
   const tiles = await tilesDb.list(userId)
   const tags = await tagsDb.list(userId)
-  const tileList = tiles.map((t) => `id:${t.id} title:"${t.title}"`).join(", ")
   const tagList = tags.map((t) => t.name).join(", ")
   const randomTileId = tiles.find((t) => t.title.toLowerCase().includes("random"))?.id ?? null
 
@@ -148,21 +155,16 @@ async function classifyAndStore(input: string, userId: string) {
   const messages: Message[] = [
     {
       role: "system",
-      content: `You are a personal dashboard assistant.
-Tiles: ${tileList || "none"}
+      content: `You are a personal thought organiser assistant.
 Available tags: ${tagList || "none"}
-Default tile for uncertain items: ${randomTileId ? `id:${randomTileId}` : "none — skip if unsure"}
+Default tile for uncertain items: ${randomTileId ? `id:${randomTileId}` : "none"}
 
-Rules:
-- You can call multiple tools in parallel in a single message — do this whenever possible.
-- If the input mentions a known tag name, FIRST call search_by_tag with that tag to find related existing thoughts and the correct tile to use.
-- Always apply matching tags automatically. Do NOT repeat the tag/subject in the thought content.
-- Do NOT repeat tile context in the content (e.g. if in 'Tasks if Bored', don't say 'if I'm bored' or 'when bored').
-- Strip all redundant context — the thought should be the pure action/note only.
-- Split compound inputs into multiple separate create_thought calls (one task = one thought).
-- If search returns no results after trying, CREATE a new thought instead of searching again.
-- If input is ambiguous (could be a move instruction or new info), prefer CREATE.
-- Call done() in the SAME message as your last action, not separately.`,
+- Call search_tiles to find tile IDs before creating or moving thoughts.
+- Apply matching tags automatically. Do NOT repeat the tag in the thought content.
+- Strip redundant context. Thought should be the pure action/note only.
+- Split compound inputs into multiple create_thought calls.
+- If search finds nothing, CREATE instead of searching again.
+- Call done() in the SAME message as your last action.`,
     },
     { role: "user", content: input + inputTagHint },
   ]
@@ -183,7 +185,7 @@ Rules:
       body: JSON.stringify({
         model: "llama-3.1-8b-instant",
         messages,
-        tools: searchCount >= MAX_SEARCHES ? TOOLS.filter((t) => !t.function.name.startsWith("search")) : TOOLS,
+        tools: searchCount >= MAX_SEARCHES ? TOOLS.filter((t) => !t.function.name.startsWith("search_by")) : TOOLS,
         temperature: 0.1,
       }),
       signal: AbortSignal.timeout(60000),
@@ -231,7 +233,15 @@ Rules:
       const args = JSON.parse(call.function.arguments) as Record<string, unknown>
       let result = ""
 
-      if (call.function.name === "search_thoughts") {
+      if (call.function.name === "search_tiles") {
+        const query = String(args.query ?? "").toLowerCase()
+        const results = tiles
+          .filter((t) => t.title.toLowerCase().includes(query))
+          .map((t) => ({ id: t.id, title: t.title }))
+        log(`🗂️ search_tiles("${query}") → ${results.length} result(s)`)
+        result = results.length ? JSON.stringify(results) : `No tiles matching "${query}"`
+
+      } else if (call.function.name === "search_thoughts") {
         const query = String(args.query ?? "")
         const results = allThoughts
           .filter((t) => t.content.toLowerCase().includes(query.toLowerCase()))
