@@ -19,17 +19,17 @@ interface Props {
 }
 
 export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: Props) {
-  const { loadThoughts, newThoughtIds } = useStore()
+  const { newThoughtIds } = useStore()
   const { getToken } = useAuth()
   const isNew = newThoughtIds.has(thought.id)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [localTags, setLocalTags] = useState(thought.tags)
   const { editing, saving, content, saveEditing, startEditing, cancelEditing } = useThoughtEdit(thought)
 
-  async function remove(e: React.MouseEvent) {
+  function remove(e: React.MouseEvent) {
     e.stopPropagation()
-    await createApi(getToken).thoughts.remove(thought.id)
-    loadThoughts()
+    useStore.setState((s) => ({ thoughts: s.thoughts.filter((t) => t.id !== thought.id) }))
+    createApi(getToken).thoughts.remove(thought.id).catch(console.error)
   }
 
   async function onTagUpdate(tags: string[]) {

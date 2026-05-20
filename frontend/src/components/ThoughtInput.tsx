@@ -22,7 +22,7 @@ function parseInput(value: string, knownTags: string[]): { content: string; tags
 export function ThoughtInput({ tileId, inputRef }: { tileId: number; inputRef?: React.RefObject<HTMLInputElement | null> }) {
   const [value, setValue] = useState("")
   const [suggestion, setSuggestion] = useState<string | null>(null)
-  const { loadThoughts, tags } = useStore()
+  const { tags } = useStore()
   const { getToken } = useAuth()
   const localRef = useRef<HTMLInputElement>(null)
   const ref = inputRef ?? localRef
@@ -51,12 +51,11 @@ export function ThoughtInput({ tileId, inputRef }: { tileId: number; inputRef?: 
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (!value.trim()) return
+    if (!value.trim() || tileId < 0) return
     const { content, tags: parsedTags } = parseInput(value, tags.map((t) => t.name))
-    await createApi(getToken).thoughts.create({ tile_id: tileId, content: content || value.trim(), tags: parsedTags, sort_order: 0 })
     setValue("")
     setSuggestion(null)
-    loadThoughts()
+    createApi(getToken).thoughts.create({ tile_id: tileId, content: content || value.trim(), tags: parsedTags, sort_order: 0 }).catch(console.error)
   }
 
   return (
@@ -66,8 +65,9 @@ export function ThoughtInput({ tileId, inputRef }: { tileId: number; inputRef?: 
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={onKeyDown}
-        placeholder="Add a thought… (#tag to tag)"
-        style={{ width: "100%", background: "transparent", border: "none", borderTop: "1px solid #ebebeb", color: "#999", fontSize: 12, padding: "5px 0", outline: "none" }}
+        placeholder={tileId < 0 ? "Saving tile…" : "Add a thought… (#tag to tag)"}
+        disabled={tileId < 0}
+        style={{ width: "100%", background: "transparent", border: "none", borderTop: "1px solid #ebebeb", color: "#999", fontSize: 12, padding: "5px 0", outline: "none", opacity: tileId < 0 ? 0.4 : 1 }}
       />
       {suggestion && (
         <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #e8e8e8", borderRadius: 6, padding: "3px 8px", fontSize: 11, color: "#888", boxShadow: "0 2px 8px rgba(0,0,0,0.08)", whiteSpace: "nowrap", zIndex: 10 }}>

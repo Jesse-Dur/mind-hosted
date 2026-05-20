@@ -66,8 +66,11 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   addTile: async (data) => {
+    const tempId = -Date.now()
+    const tempTile = { ...data, id: tempId, created_at: new Date().toISOString() }
+    set((s) => ({ tiles: [...s.tiles, tempTile], newestTileId: tempId }))
     const tile = await api().tiles.create(data)
-    set((s) => ({ tiles: [...s.tiles, tile], newestTileId: tile.id }))
+    set((s) => ({ tiles: s.tiles.map((t) => t.id === tempId ? tile : t), newestTileId: tile.id }))
   },
 
   updateTile: async (id, data) => {
@@ -81,14 +84,16 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   addThought: async (data) => {
+    const tempId = -Date.now()
+    const tempThought = { ...data, id: tempId, created_at: new Date().toISOString() }
+    set((s) => ({ thoughts: [...s.thoughts, tempThought] }))
     const thought = await api().thoughts.create(data)
-    set((s) => ({ thoughts: [...s.thoughts, thought] }))
-    get().loadTiles()
+    set((s) => ({ thoughts: s.thoughts.map((t) => t.id === tempId ? thought : t) }))
   },
 
   updateThoughtContent: async (id, content) => {
     set((s) => ({ thoughts: s.thoughts.map((t) => t.id === id ? { ...t, content } : t) }))
-    await api().thoughts.updateContent(id, content)
+    api().thoughts.updateContent(id, content).catch(console.error)
   },
 
   addTag: async (name, color) => {
