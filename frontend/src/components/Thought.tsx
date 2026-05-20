@@ -12,13 +12,13 @@ import type { Thought as ThoughtType } from "../types"
 
 interface Props {
   thought: ThoughtType
-  onDragStart: (id: number) => void
-  onDragOver: (id: number) => void
-  onDrop: () => void
+  itemRef: (el: HTMLDivElement | null) => void
+  offset: number
   dragging: boolean
+  onDragHandleMouseDown: (e: React.MouseEvent) => void
 }
 
-export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: Props) {
+export function Thought({ thought, itemRef, offset, dragging, onDragHandleMouseDown }: Props) {
   const { newThoughtIds } = useStore()
   const { getToken } = useAuth()
   const isNew = newThoughtIds.has(thought.id)
@@ -41,25 +41,32 @@ export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: 
     <>
       <style>{`@keyframes thoughtIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }`}</style>
       <div
-        draggable={!editing}
-        onDragStart={() => !editing && onDragStart(thought.id)}
-        onDragEnd={onDrop}
-        onDragOver={(e) => { e.preventDefault(); onDragOver(thought.id) }}
-        onDrop={onDrop}
+        ref={itemRef}
+        draggable={false}
+        onMouseDown={(e) => {
+          if ((e.target as HTMLElement).closest("[contenteditable]")) return
+          if ((e.target as HTMLElement).closest("button")) return
+          onDragHandleMouseDown(e)
+        }}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY }) }}
         onClick={(e) => e.stopPropagation()}
         style={{
           display: "flex", alignItems: "center", gap: 6,
           padding: "5px 8px", marginBottom: 2, fontSize: 13,
-          background: dragging ? "#f5f5f5" : "#fafafa",
-          border: "1px solid #ebebeb", borderRadius: 6, cursor: "grab",
-          opacity: dragging ? 0.4 : 1,
-          transition: "opacity 0.15s ease, transform 0.12s ease",
-          transform: dragging ? "scale(0.98)" : "scale(1)",
+          background: dragging ? "#f0f0f0" : "#fafafa",
+          border: "1px solid #ebebeb", borderRadius: 6,
+          opacity: dragging ? 0.5 : 1,
+          transform: `translateY(${offset}px)`,
+          transition: dragging ? "opacity 0.1s ease" : "transform 0.15s ease, opacity 0.1s ease",
+          position: "relative",
+          zIndex: dragging ? 10 : 1,
           animation: isNew ? "thoughtIn 0.4s cubic-bezier(0.4,0,0.2,1)" : undefined,
         }}
       >
-        <span style={{ color: "#ccc", flexShrink: 0, fontSize: 11 }}>⠿</span>
+        <span
+          onMouseDown={onDragHandleMouseDown}
+          style={{ color: "#ccc", flexShrink: 0, fontSize: 11, cursor: "grab", padding: "2px 0" }}
+        >⠿</span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <span
             contentEditable
