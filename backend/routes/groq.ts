@@ -156,7 +156,7 @@ Available tags: ${tagList || "none"}
 
 - ALWAYS call search_tiles first to get a valid tile_id. NEVER guess or invent tile IDs.
 - Only use tile_ids returned by search_tiles.
-- Call multiple tools in parallel in a single message whenever possible.
+- Wait for search results before calling create_thought, update_thought, move_thought.
 - Apply matching tags automatically. Do NOT repeat the tag in the thought content.
 - Do NOT repeat tile context in the content (e.g. if tile is 'Tasks if Bored', don't say 'when bored').
 - Strip redundant context. Thought should be the pure action/note only.
