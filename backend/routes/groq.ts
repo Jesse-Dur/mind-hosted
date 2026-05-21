@@ -304,11 +304,12 @@ Available tags: ${tagList || "none"}
       } else if (call.function.name === "create_thought") {
         const tileId = Number(args.tile_id)
         const content = String(args.content ?? "")
-        if (!tileId || !content) { result = "Error: missing tile_id or content"; }
-        else {
+        if (!tileId || !content) {
+          result = "Error: missing tile_id or content"
+        } else {
           const validTile = tiles.find((t) => t.id === tileId)
           if (!validTile) {
-            result = `Error: tile_id ${tileId} does not exist. Call search_tiles to get a valid tile_id.`
+            result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${t.id} ("${t.title}")`).join(", ")}`
           } else {
             const validTags = ((args.tags as string[]) ?? []).filter((t) => tags.some((tag) => tag.name === t))
             const thought = await thoughtsDb.create({ tile_id: tileId, content, tags: validTags, sort_order: 0 }, userId, true)
@@ -322,8 +323,9 @@ Available tags: ${tagList || "none"}
       } else if (call.function.name === "update_thought") {
         const id = Number(args.thought_id)
         const content = String(args.content ?? "")
-        if (!id || !content) { result = "Error: missing thought_id or content" }
-        else {
+        if (!id || !content) {
+          result = "Error: missing thought_id or content"
+        } else {
           const validTags = args.tags ? (args.tags as string[]).filter((t) => tags.some((tag) => tag.name === t)) : undefined
           await thoughtsDb.update(id, content, userId, validTags)
           const action = `Updated thought ${id} → "${content}"`
@@ -334,8 +336,9 @@ Available tags: ${tagList || "none"}
 
       } else if (call.function.name === "delete_thought") {
         const id = Number(args.thought_id)
-        if (!id) { result = "Error: missing thought_id" }
-        else {
+        if (!id) {
+          result = "Error: missing thought_id"
+        } else {
           await thoughtsDb.remove(id, userId)
           historyActions.push(`Deleted thought ${id}`)
           log(`🗑️ Deleted thought ${id}`)
@@ -345,11 +348,12 @@ Available tags: ${tagList || "none"}
       } else if (call.function.name === "move_thought") {
         const id = Number(args.thought_id)
         const tileId = Number(args.tile_id)
-        if (!id || !tileId) { result = "Error: missing ids" }
-        else {
+        if (!id || !tileId) {
+          result = "Error: missing ids"
+        } else {
           const validTile = tiles.find((t) => t.id === tileId)
           if (!validTile) {
-            result = `Error: tile_id ${tileId} does not exist. Call search_tiles to get a valid tile_id.`
+            result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${t.id} ("${t.title}")`).join(", ")}`
           } else {
             await thoughtsDb.move(id, tileId, userId)
             const action = `Moved thought ${id} to "${validTile.title}"`
