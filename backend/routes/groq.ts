@@ -10,6 +10,18 @@ export const groqRoute = new Hono()
 const CONCURRENCY: Record<string, number> = { low: 1, medium: 2, high: 4 }
 let running = 0
 
+export type AiStatus = "idle" | "processing" | "queued" | "limited"
+let aiStatus: AiStatus = "idle"
+let statusResetTimer: ReturnType<typeof setTimeout> | null = null
+
+function setStatus(s: AiStatus, resetAfterMs?: number) {
+  aiStatus = s
+  if (statusResetTimer) clearTimeout(statusResetTimer)
+  if (resetAfterMs) statusResetTimer = setTimeout(() => { aiStatus = "idle" }, resetAfterMs)
+}
+
+groqRoute.get("/status", (c) => c.json({ status: aiStatus }))
+
 const TOOLS = [
   {
     type: "function",
@@ -139,6 +151,7 @@ async function classifyAndStore(input: string, userId: string) {
   const log = (msg: string) => console.log(`[${reqId}] ${msg}`)
 
   console.log(`\n🤖 [${reqId}] AI input: "${input.replace(/[\r\n]/g, " ")}"`)
+  setStatus("processing")
 
   type Message = { role: string; content: string; name?: string; tool_call_id?: string }
   const messages: Message[] = [
@@ -201,12 +214,15 @@ Available tags: ${tagList || "none"}
       if (res.status === 429) {
         const retryAfter = res.headers.get("retry-after")
         const wait = retryAfter ? Number(retryAfter) * 1000 : 10000
+        setStatus(wait > 60000 ? "limited" : "queued")
         log(`⏳ Rate limited — waiting ${wait / 1000}s (reset: ${resetTokens})`)
         await new Promise((r) => setTimeout(r, wait))
+        setStatus("processing")
         continue
       }
       if (res.status >= 400 && res.status < 500) {
         log(`❌ Non-retryable error ${res.status} — aborting`)
+        setStatus("idle")
         return
       }
       messages.push({ role: "user", content: `Error: ${errMsg}. Try again.` })
@@ -224,6 +240,7 @@ Available tags: ${tagList || "none"}
           { input, actions: historyActions }
         )
       }
+      setStatus("idle")
       return
     }
 
@@ -238,6 +255,7 @@ Available tags: ${tagList || "none"}
             { input, actions: historyActions }
           )
         }
+        setStatus("idle")
         return
       }
 
@@ -356,6 +374,7 @@ Available tags: ${tagList || "none"}
   }
 
   log("   ⚠️ Loop exhausted")
+  setStatus("idle")
 }
 
 groqRoute.post("/process", async (c) => {
@@ -370,6 +389,7 @@ groqRoute.post("/process", async (c) => {
     running++
     classifyAndStore(input, auth.userId).catch(console.error).finally(() => running--)
   } else {
+    setStatus("queued")
     setTimeout(() => {
       running++
       classifyAndStore(input, auth.userId).catch(console.error).finally(() => running--)
