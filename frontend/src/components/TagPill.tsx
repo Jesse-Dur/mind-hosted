@@ -43,7 +43,7 @@ export function TagDot({ tag }: { tag: string }) {
         background: hovered ? color + "22" : color,
         outline: hovered ? `1px solid ${color}55` : "none",
         overflow: "hidden",
-        transformOrigin: "right center",
+        transformOrigin: "center center",
         transform: hovered ? "scale(1)" : "scale(0.44)",
         transition: "transform 0.22s cubic-bezier(0.4,0,0.2,1), background 0.18s ease, outline 0.18s ease",
       }}>

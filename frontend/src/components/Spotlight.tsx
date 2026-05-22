@@ -16,13 +16,18 @@ const GROUP_HEADING: React.CSSProperties = {
 }
 
 export function Spotlight() {
-  const { tiles, thoughts, setSpotlightOpen, addTile, setAiStatus } = useStore()
+  const { tiles, thoughts, setSpotlightOpen, addTile, setAiStatus, startAiPolling } = useStore()
   const { getToken } = useAuth()
   const [showPast, setShowPast] = useState(false)
   const [pastTiles, setPastTiles] = useState<Tile[]>([])
   const [pastThoughts, setPastThoughts] = useState<Thought[]>([])
   const [query, setQuery] = useState("")
   const isAIMode = query.startsWith(">")
+  const AI_LIMIT = 500
+  const aiInput = isAIMode ? query.slice(1).trim() : query.trim()
+  const aiCharsLeft = AI_LIMIT - aiInput.length
+  const showCounter = aiCharsLeft <= 50
+  const isOverLimit = aiCharsLeft < 0
   const isTagMode = query.startsWith("#")
   const tagSearch = isTagMode ? query.slice(1).toLowerCase() : ""
   const tagFilteredThoughts = isTagMode
@@ -61,7 +66,9 @@ export function Spotlight() {
   function handleAI() {
     const input = isAIMode ? query.slice(1).trim() : query.trim()
     if (!input) return
+    if (input.length > AI_LIMIT) { return }
     setAiStatus("processing")
+    startAiPolling()
     createApi(getToken).ai.process(input, "medium")
     setSpotlightOpen(false)
   }
@@ -90,14 +97,24 @@ export function Spotlight() {
           <input
             autoFocus
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+
             onKeyDown={(e) => {
               if (e.key === "Escape") { setSpotlightOpen(false) }
               if (e.key === "Enter" && (isAIMode || highlightAI) && query.trim()) { e.preventDefault(); handleAI() }
             }}
+            onChange={(e) => setQuery(e.target.value)}
             placeholder="Search, '#tag' filter, 't' new tile, '>' AI…"
             style={{ width: "100%", background: "transparent", border: "none", borderBottom: "1px solid #ebebeb", color: isAIMode ? "#7c3aed" : "#1a1a1a", fontSize: 15, padding: "14px 16px", outline: "none" }}
           />
+
+          {/* AI char counter + over-limit error */}
+          {(showCounter || isOverLimit) && (
+            <div style={{ padding: "4px 16px", display: "flex", alignItems: "center", justifyContent: "flex-end", minHeight: 24 }}>
+              <span style={{ fontSize: 12, fontWeight: 500, color: aiCharsLeft < 0 ? "#ef4444" : aiCharsLeft === 0 ? "#f97316" : "#999" }}>
+                AI Input Characters: {aiCharsLeft}
+              </span>
+            </div>
+          )}
 
           {/* Past toggle */}
           <div style={{ padding: "6px 12px", borderBottom: "1px solid #f5f5f5", display: "flex", alignItems: "center", gap: 8 }}>
@@ -118,11 +135,11 @@ export function Spotlight() {
               onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
             >
               <span>＋</span>
-              {query.trim() && !isAIMode && !isTagMode ? `New tile "${query.trim()}"` : "New Tile"}
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{query.trim() && !isAIMode && !isTagMode ? `New tile "${query.trim()}"` : "New Tile"}</span>
             </div>
             <div
               onClick={handleAI}
-              style={{ ...ACTION_ITEM, color: "#7c3aed", background: highlightAI ? "#f0f0f0" : "transparent" }}
+              style={{ ...ACTION_ITEM, color: "#7c3aed", background: highlightAI ? "#f0f0f0" : "transparent", overflow: "hidden" }}
               onMouseEnter={(e) => (e.currentTarget.style.background = "#f0f0f0")}
               onMouseLeave={(e) => (e.currentTarget.style.background = highlightAI ? "#f0f0f0" : "transparent")}
             >

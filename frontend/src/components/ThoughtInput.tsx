@@ -57,9 +57,17 @@ export function ThoughtInput({ tileId, inputRef }: { tileId: number; inputRef?: 
     setValue("")
     setSuggestion(null)
     const tempId = -Date.now()
-    useStore.setState((s) => ({ thoughts: [...s.thoughts, { id: tempId, tile_id: tileId, content: trimmed, tags: parsedTags, sort_order: 0, created_at: new Date().toISOString() }] }))
+    const stableKey = Date.now()
+    const maxOrder = Math.max(-1, ...useStore.getState().thoughts.filter((t) => t.tile_id === tileId).map((t) => t.sort_order))
+    const tempSortOrder = maxOrder + 1
+    useStore.setState((s) => ({ thoughts: [...s.thoughts, { id: tempId, tile_id: tileId, content: trimmed, tags: parsedTags, sort_order: tempSortOrder, created_at: new Date().toISOString() }], thoughtStableKeys: new Map(s.thoughtStableKeys).set(tempId, stableKey) }))
     createApi(getToken).thoughts.create({ tile_id: tileId, content: trimmed, tags: parsedTags, sort_order: 0 })
-      .then((t) => useStore.setState((s) => ({ thoughts: s.thoughts.map((th) => th.id === tempId ? t : th) })))
+      .then((t) => useStore.setState((s) => {
+        const keys = new Map(s.thoughtStableKeys)
+        keys.delete(tempId)
+        keys.set(t.id, stableKey)
+        return { thoughts: s.thoughts.map((th) => th.id === tempId ? t : th), thoughtStableKeys: keys }
+      }))
       .catch(() => useStore.setState((s) => ({ thoughts: s.thoughts.filter((th) => th.id !== tempId) })))
   }
 

@@ -48,7 +48,9 @@ export const thoughtsDb = {
   },
 
   move: async (id: number, tile_id: number, userId: string) => {
-    await sql`UPDATE thoughts SET tile_id = ${tile_id} WHERE id = ${id} AND user_id = ${userId}`
+    const [maxRow] = await sql<{ m: number | null }[]>`SELECT MAX(sort_order) as m FROM thoughts WHERE tile_id = ${tile_id} AND user_id = ${userId} AND deleted_at IS NULL`
+    const sort_order = (maxRow?.m ?? -1) + 1
+    await sql`UPDATE thoughts SET tile_id = ${tile_id}, sort_order = ${sort_order} WHERE id = ${id} AND user_id = ${userId}`
     const [tile] = await sql<{ title: string }[]>`SELECT title FROM tiles WHERE id = ${tile_id} AND user_id = ${userId}`
     await historyDb.log(userId, "thought.move", `Moved thought to "${tile?.title ?? tile_id}"`, { thought_id: id, tile_id })
   },

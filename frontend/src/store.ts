@@ -15,6 +15,8 @@ interface Store {
   thoughts: Thought[]
   tags: Tag[]
   newThoughtIds: Set<number>
+  thoughtStableKeys: Map<number, number>
+  inFlightMoves: Set<number>
   newestTileId: number | null
   spotlightOpen: boolean
   sidebarOpen: boolean
@@ -27,10 +29,11 @@ interface Store {
   loadThoughts: () => Promise<void>
   loadTags: () => Promise<void>
   loadAiStatus: () => Promise<void>
+  startAiPolling: () => void
   setAiStatus: (status: AiStatus) => void
   addTile: (tile: Omit<Tile, "id" | "created_at">) => Promise<void>
   moveTileLocal: (id: number, data: Partial<Tile>) => void
-  updateTile: (id: number, data: Partial<Tile>) => void
+  updateTile: (id: number, data: Partial<Tile>) => Promise<void>
   removeTile: (id: number) => Promise<void>
   addThought: (thought: Omit<Thought, "id" | "created_at">) => Promise<void>
   updateThoughtContent: (id: number, content: string) => Promise<void>
@@ -44,6 +47,8 @@ export const useStore = create<Store>((set, get) => ({
   thoughts: [],
   tags: [],
   newThoughtIds: new Set<number>(),
+  thoughtStableKeys: new Map<number, number>(),
+  inFlightMoves: new Set<number>(),
   newestTileId: null,
   spotlightOpen: false,
   sidebarOpen: false,
@@ -61,12 +66,13 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   loadThoughts: async () => {
-    const prev = useStore.getState().thoughts.map((t) => t.id)
+    const state = useStore.getState()
+    if (state.inFlightMoves.size > 0) return
+    const prev = state.thoughts.map((t) => t.id)
     const thoughts = await api().thoughts.list()
     const newIds = new Set(thoughts.filter((t) => !prev.includes(t.id)).map((t) => t.id))
-    // merge: keep optimistic tile_id for any thought that differs only in tile_id
-    // to avoid poll overwriting a cross-tile move before the DB confirms
     set((s) => {
+      if (s.inFlightMoves.size > 0) return s
       const merged = thoughts.map((t) => {
         const existing = s.thoughts.find((e) => e.id === t.id)
         if (existing && existing.tile_id !== t.tile_id) return existing
@@ -89,6 +95,18 @@ export const useStore = create<Store>((set, get) => ({
     } catch { /* ignore */ }
   },
 
+  startAiPolling: () => {
+    let poll: ReturnType<typeof setInterval>
+    const safety = setTimeout(() => clearInterval(poll), 120000)
+    poll = setInterval(async () => {
+      try {
+        const { status } = await api().ai.status()
+        set({ aiStatus: status as AiStatus })
+        if (status === "idle") { clearInterval(poll); clearTimeout(safety) }
+      } catch { clearInterval(poll); clearTimeout(safety) }
+    }, 1000)
+  },
+
   addTile: async (data) => {
     const tempId = -Date.now()
     const tempTile = { ...data, id: tempId, created_at: new Date().toISOString() }
@@ -102,7 +120,7 @@ export const useStore = create<Store>((set, get) => ({
 
   updateTile: (id, data) => {
     set((s) => ({ tiles: s.tiles.map((t) => (t.id === id ? { ...t, ...data } : t)) }))
-    api().tiles.update(id, data).catch(console.error)
+    return api().tiles.update(id, data).catch(console.error)
   },
 
   removeTile: async (id) => {
@@ -129,15 +147,13 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   updateTag: async (id, name, color) => {
+    const oldTag = get().tags.find((t) => t.id === id)
     const tag = await api().tags.update(id, name, color)
     set((s) => ({
       tags: s.tags.map((t) => t.id === id ? tag : t),
       thoughts: s.thoughts.map((t) => ({
         ...t,
-        tags: t.tags.map((tg) => {
-          const old = s.tags.find((tag) => tag.id === id)
-          return old && tg === old.name ? name : tg
-        }),
+        tags: t.tags.map((tg) => oldTag && tg === oldTag.name ? name : tg),
       })),
     }))
   },

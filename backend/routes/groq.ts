@@ -11,16 +11,28 @@ const CONCURRENCY: Record<string, number> = { low: 1, medium: 2, high: 4 }
 let running = 0
 
 export type AiStatus = "idle" | "processing" | "queued" | "limited"
-let aiStatus: AiStatus = "idle"
-let statusResetTimer: ReturnType<typeof setTimeout> | null = null
+const userStatus = new Map<string, AiStatus>()
+const userStatusTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-function setStatus(s: AiStatus, resetAfterMs?: number) {
-  aiStatus = s
-  if (statusResetTimer) clearTimeout(statusResetTimer)
-  if (resetAfterMs) statusResetTimer = setTimeout(() => { aiStatus = "idle" }, resetAfterMs)
+function setStatus(userId: string, s: AiStatus, resetAfterMs?: number) {
+  if (s === "idle") userStatus.delete(userId)
+  else userStatus.set(userId, s)
+  const existing = userStatusTimers.get(userId)
+  if (existing) clearTimeout(existing)
+  if (resetAfterMs) {
+    userStatusTimers.set(userId, setTimeout(() => { userStatus.delete(userId); userStatusTimers.delete(userId) }, resetAfterMs))
+  }
 }
 
-groqRoute.get("/status", (c) => c.json({ status: aiStatus }))
+function getStatus(userId: string): AiStatus {
+  return userStatus.get(userId) ?? "idle"
+}
+
+groqRoute.get("/status", (c) => {
+  const auth = getAuth(c)
+  if (!auth?.userId) return c.json({ status: "idle" })
+  return c.json({ status: getStatus(auth.userId) })
+})
 
 const TOOLS = [
   {
@@ -43,7 +55,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "search_thoughts",
-      description: "Search existing thoughts by keyword. Use before update/delete/move.",
+      description: "Search existing thoughts by keyword. Use before update/delete/move. Use a single short keyword (e.g. 'physics', not 'physics homework') — thought content is concise and won't contain the full phrase.",
       parameters: {
         type: "object",
         properties: {
@@ -151,9 +163,9 @@ async function classifyAndStore(input: string, userId: string) {
   const log = (msg: string) => console.log(`[${reqId}] ${msg}`)
 
   console.log(`\n🤖 [${reqId}] AI input: "${input.replace(/[\r\n]/g, " ")}"`)
-  setStatus("processing")
+  setStatus(userId, "processing")
 
-  type Message = { role: string; content: string; name?: string; tool_call_id?: string }
+  type Message = { role: string; content: string; name?: string; tool_call_id?: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] }
   const messages: Message[] = [
     {
       role: "system",
@@ -162,12 +174,14 @@ Tiles: ${tileList || "none"}
 Available tags: ${tagList || "none"}
 
 - You can call multiple tools in parallel in a single message — do this whenever possible.
+- NEVER call done() in the same message as a search tool. Always wait for search results first, then act.
+- NEVER call create_thought in the same message as a search — wait for search results to confirm no duplicate exists first, unless the input is clearly new information with no ambiguity.
 - If the input mentions a known tag name, FIRST call search_by_tag with that tag to find related existing thoughts and the correct tile to use.
 - Always apply matching tags automatically. Do NOT repeat the tag/subject in the thought content.
-- Do NOT repeat tile context in the content (e.g. if in 'Tasks if Bored', don't say 'if I'm bored' or 'when bored').
+- Do NOT repeat tile context in the content (e.g. if in 'Tasks if Bored', don't say 'if I'm bored' or 'when bored'). If in 'Homework', don't say 'homework' in the thought.
 - Strip all redundant context — the thought should be the pure action/note only. e.g. "if I'm bored I can do in2it website development" tagged 'in2it' in 'Tasks if Bored' → content: "Website development".
-- Split compound inputs into multiple separate create_thought calls (one task = one thought).
-- If search returns no results, CREATE a new thought instead of giving up.
+- Split compound inputs into multiple separate create_thought calls.
+- If the input references a tile name or subject that matches an existing tile, call search_by_tile on that tile BEFORE deciding to create — the thought may already exist under a shorter name.
 - If input is ambiguous (could be a move instruction or new info), prefer CREATE.
 - Call done() in the SAME message as your last action that satisfies all of the user's request(s).`,
     },
@@ -188,7 +202,7 @@ Available tags: ${tagList || "none"}
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "llama-3.1-8b-instant",
+        model: "qwen/qwen3-32b",
         messages,
         tools: searchCount >= MAX_SEARCHES ? TOOLS.filter((t) => !t.function.name.startsWith("search_by")) : TOOLS,
         temperature: 0.1,
@@ -214,15 +228,15 @@ Available tags: ${tagList || "none"}
       if (res.status === 429) {
         const retryAfter = res.headers.get("retry-after")
         const wait = retryAfter ? Number(retryAfter) * 1000 : 10000
-        setStatus(wait > 60000 ? "limited" : "queued")
+        setStatus(userId, wait > 60000 ? "limited" : "queued")
         log(`⏳ Rate limited — waiting ${wait / 1000}s (reset: ${resetTokens})`)
         await new Promise((r) => setTimeout(r, wait))
-        setStatus("processing")
+        setStatus(userId, "processing")
         continue
       }
       if (res.status >= 400 && res.status < 500) {
         log(`❌ Non-retryable error ${res.status} — aborting`)
-        setStatus("idle")
+        setStatus(userId, "idle")
         return
       }
       messages.push({ role: "user", content: `Error: ${errMsg}. Try again.` })
@@ -230,9 +244,26 @@ Available tags: ${tagList || "none"}
     }
 
     const msg = data.choices[0].message
-    log(`💬 ${msg.tool_calls?.length ? `→ ${msg.tool_calls.map((c) => c.function.name).join(", ")}` : (msg.content ?? "").slice(0, 150)}`)
+    const MAX_TOOL_CALLS = 10
+    const rawCalls = msg.tool_calls ?? []
+    const seenCalls = new Set<string>()
+    const toolCalls = rawCalls
+      .filter((c) => {
+        const key = `${c.function.name}:${c.function.arguments}`
+        if (seenCalls.has(key)) return false
+        seenCalls.add(key)
+        return true
+      })
+      .slice(0, MAX_TOOL_CALLS)
+      .sort((a, b) => (a.function.name === "done" ? 1 : b.function.name === "done" ? -1 : 0))
+    const hasSearches = toolCalls.some((c) => c.function.name.startsWith("search"))
+    const filteredCalls = hasSearches ? toolCalls.filter((c) => c.function.name !== "done" && !c.function.name.startsWith("create") && !c.function.name.startsWith("update") && !c.function.name.startsWith("delete") && !c.function.name.startsWith("move")) : toolCalls
+    if (rawCalls.length > filteredCalls.length) {
+      log(`⚠️ Trimmed tool calls: ${rawCalls.length} → ${filteredCalls.length} (dupes/cap/search-action separation)`)
+    }
+    log(`💬 ${filteredCalls.length ? `→ ${filteredCalls.map((c) => c.function.name).join(", ")}` : (msg.content ?? "").slice(0, 150)}`)
 
-    if (!msg.tool_calls?.length) {
+    if (!filteredCalls.length) {
       log(`✅ Done: ${historyActions.join(" | ") || "no actions"}`)
       if (historyActions.length > 0) {
         await historyDb.log(userId, "ai.process",
@@ -240,13 +271,13 @@ Available tags: ${tagList || "none"}
           { input, actions: historyActions }
         )
       }
-      setStatus("idle")
+      setStatus(userId, "idle")
       return
     }
 
-    messages.push({ role: "assistant", content: msg.content ?? "" })
+    messages.push({ role: "assistant", content: msg.content ?? "", tool_calls: rawCalls } as Message)
 
-    for (const call of msg.tool_calls) {
+    for (const call of filteredCalls) {
       if (call.function.name === "done") {
         log(`✅ Done: ${historyActions.join(" | ") || "no actions"}`)
         if (historyActions.length > 0) {
@@ -255,7 +286,7 @@ Available tags: ${tagList || "none"}
             { input, actions: historyActions }
           )
         }
-        setStatus("idle")
+        setStatus(userId, "idle")
         return
       }
 
@@ -269,8 +300,9 @@ Available tags: ${tagList || "none"}
       try {
       if (call.function.name === "search_thoughts") {
         const query = String(args.query ?? "")
+        const keywords = query.toLowerCase().split(/\s+/).filter(Boolean)
         const results = allThoughts
-          .filter((t) => t.content.toLowerCase().includes(query.toLowerCase()))
+          .filter((t) => keywords.some((kw) => t.content.toLowerCase().includes(kw)))
           .slice(0, 8)
           .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => ti.id === t.tile_id)?.title ?? "?", tags: t.tags }))
         log(`🔍 search("${query}") → ${results.length} result(s)${results.length ? ": " + results.map((r) => `[${r.id}] "${r.content}"`).join(", ") : ""}`)
@@ -298,8 +330,8 @@ Available tags: ${tagList || "none"}
         log(`📂 search_by_tile(${tileId} "${tileName}") → ${results.length} result(s)`)
         searchCount++
         result = results.length
-          ? `Found: ${JSON.stringify(results)}. NOW call update_thought/delete_thought/move_thought immediately. Do not search again.`
-          : `No thoughts in tile ${tileId}`
+          ? `Found in tile "${tileName}": ${JSON.stringify(results)}. If any of these match what the user is referring to, call update_thought on it. Otherwise call create_thought.`
+          : `No thoughts in tile ${tileId}. Call create_thought.`
 
       } else if (call.function.name === "create_thought") {
         const tileId = Number(args.tile_id)
@@ -378,14 +410,16 @@ Available tags: ${tagList || "none"}
   }
 
   log("   ⚠️ Loop exhausted")
-  setStatus("idle")
+  setStatus(userId, "idle")
 }
 
 groqRoute.post("/process", async (c) => {
   const auth = getAuth(c)
   if (!auth?.userId) return c.json({ error: "Unauthorized" }, 401)
 
-  const { input, priority = "medium" } = await c.req.json() as { input: string; priority: string }
+  const { input: rawInput, priority = "medium" } = await c.req.json() as { input: string; priority: string }
+  const input = String(rawInput ?? "").slice(0, 500)
+  if (!input.trim()) return c.json({ error: "Empty input" }, 400)
   const max = CONCURRENCY[priority] ?? 2
   const jobId = crypto.randomUUID()
 
@@ -393,7 +427,7 @@ groqRoute.post("/process", async (c) => {
     running++
     classifyAndStore(input, auth.userId).catch(console.error).finally(() => running--)
   } else {
-    setStatus("queued")
+    setStatus(auth.userId, "queued")
     setTimeout(() => {
       running++
       classifyAndStore(input, auth.userId).catch(console.error).finally(() => running--)

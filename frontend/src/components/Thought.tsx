@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { createPortal } from "react-dom"
 import { useAuth } from "@clerk/clerk-react"
 import { createApi } from "../api/client"
@@ -24,7 +24,10 @@ export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: 
   const isNew = newThoughtIds.has(thought.id)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [localTags, setLocalTags] = useState(thought.tags)
-  const { editing, saving, content, saveEditing, startEditing, cancelEditing } = useThoughtEdit(thought)
+
+  useEffect(() => { setLocalTags(thought.tags) }, [thought.tags])
+  const { editing, saving, content, saveEditing, startEditing, setIntent, cancelEditing } = useThoughtEdit(thought)
+  const spanRef = useRef<HTMLSpanElement>(null)
 
   function remove(e: React.MouseEvent) {
     e.stopPropagation()
@@ -50,7 +53,7 @@ export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: 
         onClick={(e) => e.stopPropagation()}
         style={{
           display: "flex", alignItems: "center", gap: 6,
-          padding: "5px 8px", marginBottom: 2, fontSize: 13,
+          padding: "5px 8px", fontSize: 13,
           background: dragging ? "#f5f5f5" : "#fafafa",
           border: "1px solid #ebebeb", borderRadius: 6, cursor: "grab",
           opacity: dragging ? 0.4 : 1,
@@ -60,17 +63,17 @@ export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: 
         }}
       >
         <span style={{ color: "#ccc", flexShrink: 0, fontSize: 11 }}>⠿</span>
-        <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <span
-            contentEditable
+            ref={spanRef}
+            contentEditable={editing || undefined}
             suppressContentEditableWarning
-            onFocus={startEditing}
             onBlur={(e) => saveEditing(e.currentTarget.textContent ?? "")}
             onKeyDown={(e) => {
               if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur() }
               if (e.key === "Escape") { e.currentTarget.blur(); cancelEditing() }
             }}
-            onMouseDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => { e.stopPropagation(); setIntent(); startEditing(); requestAnimationFrame(() => spanRef.current?.focus()) }}
             style={{ color: "#1a1a1a", outline: "none", cursor: "text", userSelect: "text", fontSize: 13 }}
           >{content}</span>
         </div>
