@@ -142,15 +142,13 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   updateTag: async (id, name, color) => {
+    const oldTag = get().tags.find((t) => t.id === id)
     const tag = await api().tags.update(id, name, color)
     set((s) => ({
       tags: s.tags.map((t) => t.id === id ? tag : t),
       thoughts: s.thoughts.map((t) => ({
         ...t,
-        tags: t.tags.map((tg) => {
-          const old = s.tags.find((tag) => tag.id === id)
-          return old && tg === old.name ? name : tg
-        }),
+        tags: t.tags.map((tg) => oldTag && tg === oldTag.name ? name : tg),
       })),
     }))
   },

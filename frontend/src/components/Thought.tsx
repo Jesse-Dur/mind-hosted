@@ -1,4 +1,4 @@
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { createPortal } from "react-dom"
 import { useAuth } from "@clerk/clerk-react"
 import { createApi } from "../api/client"
@@ -24,6 +24,8 @@ export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: 
   const isNew = newThoughtIds.has(thought.id)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [localTags, setLocalTags] = useState(thought.tags)
+
+  useEffect(() => { setLocalTags(thought.tags) }, [thought.tags])
   const { editing, saving, content, saveEditing, startEditing, setIntent, cancelEditing } = useThoughtEdit(thought)
   const spanRef = useRef<HTMLSpanElement>(null)
 
