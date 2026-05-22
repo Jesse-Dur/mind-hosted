@@ -30,7 +30,7 @@ interface Store {
   setAiStatus: (status: AiStatus) => void
   addTile: (tile: Omit<Tile, "id" | "created_at">) => Promise<void>
   moveTileLocal: (id: number, data: Partial<Tile>) => void
-  updateTile: (id: number, data: Partial<Tile>) => void
+  updateTile: (id: number, data: Partial<Tile>) => Promise<void>
   removeTile: (id: number) => Promise<void>
   addThought: (thought: Omit<Thought, "id" | "created_at">) => Promise<void>
   updateThoughtContent: (id: number, content: string) => Promise<void>
@@ -102,7 +102,7 @@ export const useStore = create<Store>((set, get) => ({
 
   updateTile: (id, data) => {
     set((s) => ({ tiles: s.tiles.map((t) => (t.id === id ? { ...t, ...data } : t)) }))
-    api().tiles.update(id, data).catch(console.error)
+    return api().tiles.update(id, data).catch(console.error)
   },
 
   removeTile: async (id) => {
