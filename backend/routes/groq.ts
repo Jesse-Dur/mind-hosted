@@ -153,7 +153,7 @@ async function classifyAndStore(input: string, userId: string) {
   console.log(`\n🤖 [${reqId}] AI input: "${input.replace(/[\r\n]/g, " ")}"`)
   setStatus("processing")
 
-  type Message = { role: string; content: string; name?: string; tool_call_id?: string }
+  type Message = { role: string; content: string; name?: string; tool_call_id?: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] }
   const messages: Message[] = [
     {
       role: "system",
@@ -230,9 +230,23 @@ Available tags: ${tagList || "none"}
     }
 
     const msg = data.choices[0].message
-    log(`💬 ${msg.tool_calls?.length ? `→ ${msg.tool_calls.map((c) => c.function.name).join(", ")}` : (msg.content ?? "").slice(0, 150)}`)
+    const MAX_TOOL_CALLS = 10
+    const rawCalls = msg.tool_calls ?? []
+    const seenCalls = new Set<string>()
+    const toolCalls = rawCalls
+      .filter((c) => {
+        const key = `${c.function.name}:${c.function.arguments}`
+        if (seenCalls.has(key)) return false
+        seenCalls.add(key)
+        return true
+      })
+      .slice(0, MAX_TOOL_CALLS)
+    if (rawCalls.length > toolCalls.length) {
+      log(`⚠️ Trimmed tool calls: ${rawCalls.length} → ${toolCalls.length} (dupes/cap removed)`)
+    }
+    log(`💬 ${toolCalls.length ? `→ ${toolCalls.map((c) => c.function.name).join(", ")}` : (msg.content ?? "").slice(0, 150)}`)
 
-    if (!msg.tool_calls?.length) {
+    if (!toolCalls.length) {
       log(`✅ Done: ${historyActions.join(" | ") || "no actions"}`)
       if (historyActions.length > 0) {
         await historyDb.log(userId, "ai.process",
@@ -244,9 +258,9 @@ Available tags: ${tagList || "none"}
       return
     }
 
-    messages.push({ role: "assistant", content: msg.content ?? "" })
+    messages.push({ role: "assistant", content: msg.content ?? "", tool_calls: rawCalls } as Message)
 
-    for (const call of msg.tool_calls) {
+    for (const call of toolCalls) {
       if (call.function.name === "done") {
         log(`✅ Done: ${historyActions.join(" | ") || "no actions"}`)
         if (historyActions.length > 0) {
