@@ -43,7 +43,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "search_thoughts",
-      description: "Search existing thoughts by keyword. Use before update/delete/move.",
+      description: "Search existing thoughts by keyword. Use before update/delete/move. Use a single short keyword (e.g. 'physics', not 'physics homework') — thought content is concise and won't contain the full phrase.",
       parameters: {
         type: "object",
         properties: {
@@ -162,12 +162,14 @@ Tiles: ${tileList || "none"}
 Available tags: ${tagList || "none"}
 
 - You can call multiple tools in parallel in a single message — do this whenever possible.
+- NEVER call done() in the same message as a search tool. Always wait for search results first, then act.
+- NEVER call create_thought in the same message as a search — wait for search results to confirm no duplicate exists first, unless the input is clearly new information with no ambiguity.
 - If the input mentions a known tag name, FIRST call search_by_tag with that tag to find related existing thoughts and the correct tile to use.
 - Always apply matching tags automatically. Do NOT repeat the tag/subject in the thought content.
-- Do NOT repeat tile context in the content (e.g. if in 'Tasks if Bored', don't say 'if I'm bored' or 'when bored').
+- Do NOT repeat tile context in the content (e.g. if in 'Tasks if Bored', don't say 'if I'm bored' or 'when bored'). If in 'Homework', don't say 'homework' in the thought.
 - Strip all redundant context — the thought should be the pure action/note only. e.g. "if I'm bored I can do in2it website development" tagged 'in2it' in 'Tasks if Bored' → content: "Website development".
-- Split compound inputs into multiple separate create_thought calls (one task = one thought).
-- If search returns no results, CREATE a new thought instead of giving up.
+- Split compound inputs into multiple separate create_thought calls.
+- If the input references a tile name or subject that matches an existing tile, call search_by_tile on that tile BEFORE deciding to create — the thought may already exist under a shorter name.
 - If input is ambiguous (could be a move instruction or new info), prefer CREATE.
 - Call done() in the SAME message as your last action that satisfies all of the user's request(s).`,
     },
@@ -188,7 +190,7 @@ Available tags: ${tagList || "none"}
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "llama-3.1-8b-instant",
+        model: "qwen/qwen3-32b",
         messages,
         tools: searchCount >= MAX_SEARCHES ? TOOLS.filter((t) => !t.function.name.startsWith("search_by")) : TOOLS,
         temperature: 0.1,
@@ -241,12 +243,15 @@ Available tags: ${tagList || "none"}
         return true
       })
       .slice(0, MAX_TOOL_CALLS)
-    if (rawCalls.length > toolCalls.length) {
-      log(`⚠️ Trimmed tool calls: ${rawCalls.length} → ${toolCalls.length} (dupes/cap removed)`)
+      .sort((a, b) => (a.function.name === "done" ? 1 : b.function.name === "done" ? -1 : 0))
+    const hasSearches = toolCalls.some((c) => c.function.name.startsWith("search"))
+    const filteredCalls = hasSearches ? toolCalls.filter((c) => c.function.name !== "done" && !c.function.name.startsWith("create") && !c.function.name.startsWith("update") && !c.function.name.startsWith("delete") && !c.function.name.startsWith("move")) : toolCalls
+    if (rawCalls.length > filteredCalls.length) {
+      log(`⚠️ Trimmed tool calls: ${rawCalls.length} → ${filteredCalls.length} (dupes/cap/search-action separation)`)
     }
-    log(`💬 ${toolCalls.length ? `→ ${toolCalls.map((c) => c.function.name).join(", ")}` : (msg.content ?? "").slice(0, 150)}`)
+    log(`💬 ${filteredCalls.length ? `→ ${filteredCalls.map((c) => c.function.name).join(", ")}` : (msg.content ?? "").slice(0, 150)}`)
 
-    if (!toolCalls.length) {
+    if (!filteredCalls.length) {
       log(`✅ Done: ${historyActions.join(" | ") || "no actions"}`)
       if (historyActions.length > 0) {
         await historyDb.log(userId, "ai.process",
@@ -260,7 +265,7 @@ Available tags: ${tagList || "none"}
 
     messages.push({ role: "assistant", content: msg.content ?? "", tool_calls: rawCalls } as Message)
 
-    for (const call of toolCalls) {
+    for (const call of filteredCalls) {
       if (call.function.name === "done") {
         log(`✅ Done: ${historyActions.join(" | ") || "no actions"}`)
         if (historyActions.length > 0) {
@@ -283,8 +288,9 @@ Available tags: ${tagList || "none"}
       try {
       if (call.function.name === "search_thoughts") {
         const query = String(args.query ?? "")
+        const keywords = query.toLowerCase().split(/\s+/).filter(Boolean)
         const results = allThoughts
-          .filter((t) => t.content.toLowerCase().includes(query.toLowerCase()))
+          .filter((t) => keywords.some((kw) => t.content.toLowerCase().includes(kw)))
           .slice(0, 8)
           .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => ti.id === t.tile_id)?.title ?? "?", tags: t.tags }))
         log(`🔍 search("${query}") → ${results.length} result(s)${results.length ? ": " + results.map((r) => `[${r.id}] "${r.content}"`).join(", ") : ""}`)
@@ -312,8 +318,8 @@ Available tags: ${tagList || "none"}
         log(`📂 search_by_tile(${tileId} "${tileName}") → ${results.length} result(s)`)
         searchCount++
         result = results.length
-          ? `Found: ${JSON.stringify(results)}. NOW call update_thought/delete_thought/move_thought immediately. Do not search again.`
-          : `No thoughts in tile ${tileId}`
+          ? `Found in tile "${tileName}": ${JSON.stringify(results)}. If any of these match what the user is referring to, call update_thought on it. Otherwise call create_thought.`
+          : `No thoughts in tile ${tileId}. Call create_thought.`
 
       } else if (call.function.name === "create_thought") {
         const tileId = Number(args.tile_id)
