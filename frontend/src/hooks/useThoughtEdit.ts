@@ -7,24 +7,29 @@ export function useThoughtEdit(thought: Thought) {
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [content, setContent] = useState(thought.content)
-  const didFocus = useRef(false)
+  const intentToEdit = useRef(false)
 
   useEffect(() => {
     if (!editing) setContent(thought.content)
   }, [thought.content, editing])
 
   function startEditing() {
-    didFocus.current = false
+    if (!intentToEdit.current) return
     setEditing(true)
   }
 
+  function setIntent() {
+    intentToEdit.current = true
+  }
+
   function cancelEditing() {
-    didFocus.current = false
+    intentToEdit.current = false
     setEditing(false)
     setContent(thought.content)
   }
 
   function saveEditing(text: string) {
+    intentToEdit.current = false
     const trimmed = text.trim()
     setContent(trimmed || thought.content)
     setEditing(false)
@@ -38,5 +43,5 @@ export function useThoughtEdit(thought: Thought) {
     }
   }
 
-  return { editing, saving, content, saveEditing, startEditing, cancelEditing }
+  return { editing, saving, content, saveEditing, startEditing, setIntent, cancelEditing }
 }
