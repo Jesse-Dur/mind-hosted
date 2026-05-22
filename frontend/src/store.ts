@@ -16,6 +16,7 @@ interface Store {
   tags: Tag[]
   newThoughtIds: Set<number>
   thoughtStableKeys: Map<number, number>
+  inFlightMoves: Set<number>
   newestTileId: number | null
   spotlightOpen: boolean
   sidebarOpen: boolean
@@ -47,6 +48,7 @@ export const useStore = create<Store>((set, get) => ({
   tags: [],
   newThoughtIds: new Set<number>(),
   thoughtStableKeys: new Map<number, number>(),
+  inFlightMoves: new Set<number>(),
   newestTileId: null,
   spotlightOpen: false,
   sidebarOpen: false,
@@ -64,12 +66,13 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   loadThoughts: async () => {
-    const prev = useStore.getState().thoughts.map((t) => t.id)
+    const state = useStore.getState()
+    if (state.inFlightMoves.size > 0) return
+    const prev = state.thoughts.map((t) => t.id)
     const thoughts = await api().thoughts.list()
     const newIds = new Set(thoughts.filter((t) => !prev.includes(t.id)).map((t) => t.id))
-    // merge: keep optimistic tile_id for any thought that differs only in tile_id
-    // to avoid poll overwriting a cross-tile move before the DB confirms
     set((s) => {
+      if (s.inFlightMoves.size > 0) return s
       const merged = thoughts.map((t) => {
         const existing = s.thoughts.find((e) => e.id === t.id)
         if (existing && existing.tile_id !== t.tile_id) return existing
