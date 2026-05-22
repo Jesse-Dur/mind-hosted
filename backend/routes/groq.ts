@@ -385,7 +385,9 @@ groqRoute.post("/process", async (c) => {
   const auth = getAuth(c)
   if (!auth?.userId) return c.json({ error: "Unauthorized" }, 401)
 
-  const { input, priority = "medium" } = await c.req.json() as { input: string; priority: string }
+  const { input: rawInput, priority = "medium" } = await c.req.json() as { input: string; priority: string }
+  const input = String(rawInput ?? "").slice(0, 500)
+  if (!input.trim()) return c.json({ error: "Empty input" }, 400)
   const max = CONCURRENCY[priority] ?? 2
   const jobId = crypto.randomUUID()
 
