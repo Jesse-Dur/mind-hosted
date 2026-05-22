@@ -175,15 +175,14 @@ Available tags: ${tagList || "none"}
 
 - You can call multiple tools in parallel in a single message — do this whenever possible.
 - NEVER call done() in the same message as a search tool. Always wait for search results first, then act.
-- NEVER call create_thought in the same message as a search — wait for search results to confirm no duplicate exists first, unless the input is clearly new information with no ambiguity.
+- After completing all actions (create/update/delete/move), ALWAYS call done() in the same message as the last action.
 - If the input mentions a known tag name, FIRST call search_by_tag with that tag to find related existing thoughts and the correct tile to use.
 - Always apply matching tags automatically. Do NOT repeat the tag/subject in the thought content.
 - Do NOT repeat tile context in the content (e.g. if in 'Tasks if Bored', don't say 'if I'm bored' or 'when bored'). If in 'Homework', don't say 'homework' in the thought.
 - Strip all redundant context — the thought should be the pure action/note only. e.g. "if I'm bored I can do in2it website development" tagged 'in2it' in 'Tasks if Bored' → content: "Website development".
 - Split compound inputs into multiple separate create_thought calls.
 - If the input references a tile name or subject that matches an existing tile, call search_by_tile on that tile BEFORE deciding to create — the thought may already exist under a shorter name.
-- If input is ambiguous (could be a move instruction or new info), prefer CREATE.
-- Call done() in the SAME message as your last action that satisfies all of the user's request(s).`,
+- If input is ambiguous (could be a move instruction or new info), prefer CREATE.`,
     },
     { role: "user", content: input + inputTagHint },
   ]
@@ -212,6 +211,9 @@ Available tags: ${tagList || "none"}
 
     const data = await res.json() as {
       choices?: { message: { role: string; content: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[]
+      usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number; completion_tokens_details?: { reasoning_tokens?: number } }
+      prompt_eval_count?: number
+      eval_count?: number
       error?: { message: string }
     }
 
@@ -220,6 +222,14 @@ Available tags: ${tagList || "none"}
     const resetTokens = res.headers.get("x-ratelimit-reset-tokens")
     if (remainingReqs || remainingTokens) {
       log(`📊 rate limit — requests remaining: ${remainingReqs}, tokens remaining: ${remainingTokens}, reset: ${resetTokens}`)
+    }
+    if (data.usage || data.eval_count) {
+      const input = data.usage?.prompt_tokens ?? data.prompt_eval_count
+      const output = data.usage?.completion_tokens ?? data.eval_count
+      const reasoning = data.usage?.completion_tokens_details?.reasoning_tokens
+      const total = data.usage?.total_tokens ?? ((input ?? 0) + (output ?? 0))
+      const totalLabel = reasoning ? `total (incl. reasoning): ${total}` : `total (excl. reasoning): ${total}`
+      log(`🔢 input: ${input}, output: ${output}${reasoning ? `, reasoning: ${reasoning}` : ""}, ${totalLabel}`)
     }
 
     if (!data.choices?.[0]) {
@@ -326,7 +336,7 @@ Available tags: ${tagList || "none"}
       } else if (call.function.name === "search_by_tile") {
         const tileId = Number(args.tile_id)
         const results = (await thoughtsDb.list(userId, tileId)).slice(0, 20).map((t) => ({ id: t.id, content: t.content, tags: t.tags }))
-        const tileName = tiles.find((t) => t.id === tileId)?.title ?? tileId
+        const tileName = tiles.find((t) => Number(t.id) === tileId)?.title ?? tileId
         log(`📂 search_by_tile(${tileId} "${tileName}") → ${results.length} result(s)`)
         searchCount++
         result = results.length
@@ -339,16 +349,17 @@ Available tags: ${tagList || "none"}
         if (!tileId || !content) {
           result = "Error: missing tile_id or content"
         } else {
-          const validTile = tiles.find((t) => t.id === tileId)
+          const validTile = tiles.find((t) => Number(t.id) === tileId)
           if (!validTile) {
-            result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${t.id} ("${t.title}")`).join(", ")}`
+            log(`⚠️ create_thought: tile_id ${tileId} not found`)
+            result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
           } else {
             const validTags = ((args.tags as string[]) ?? []).filter((t) => tags.some((tag) => tag.name === t))
             const thought = await thoughtsDb.create({ tile_id: tileId, content, tags: validTags, sort_order: 0 }, userId, true)
             const action = `Created "${thought.content}" in "${validTile.title}"`
             historyActions.push(action)
             log(`✏️ ${action}`)
-            result = `Created thought id:${thought.id}`
+            result = `Created thought id:${thought.id}. Call done() now unless there are more thoughts to create from the user's input.`
           }
         }
 
@@ -383,9 +394,10 @@ Available tags: ${tagList || "none"}
         if (!id || !tileId) {
           result = "Error: missing ids"
         } else {
-          const validTile = tiles.find((t) => t.id === tileId)
+          const validTile = tiles.find((t) => Number(t.id) === tileId)
           if (!validTile) {
-            result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${t.id} ("${t.title}")`).join(", ")}`
+            log(`⚠️ move_thought: tile_id ${tileId} not found`)
+            result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
           } else {
             await thoughtsDb.move(id, tileId, userId)
             const action = `Moved thought ${id} to "${validTile.title}"`
@@ -405,7 +417,7 @@ Available tags: ${tagList || "none"}
     }
 
     if (historyActions.length > 0) {
-      messages.push({ role: "user", content: `Already completed this session: ${historyActions.join("; ")}. Do not repeat these. Call done() if finished.` })
+      messages.push({ role: "user", content: `Already completed this session: ${historyActions.join("; ")}. Do not repeat these actions. If the user's request is fully satisfied, you MUST call done() now.` })
     }
   }
 
