@@ -27,6 +27,7 @@ interface Store {
   loadThoughts: () => Promise<void>
   loadTags: () => Promise<void>
   loadAiStatus: () => Promise<void>
+  startAiPolling: () => void
   setAiStatus: (status: AiStatus) => void
   addTile: (tile: Omit<Tile, "id" | "created_at">) => Promise<void>
   moveTileLocal: (id: number, data: Partial<Tile>) => void
@@ -87,6 +88,18 @@ export const useStore = create<Store>((set, get) => ({
       const { status } = await api().ai.status()
       set({ aiStatus: status as AiStatus })
     } catch { /* ignore */ }
+  },
+
+  startAiPolling: () => {
+    let poll: ReturnType<typeof setInterval>
+    const safety = setTimeout(() => clearInterval(poll), 120000)
+    poll = setInterval(async () => {
+      try {
+        const { status } = await api().ai.status()
+        set({ aiStatus: status as AiStatus })
+        if (status === "idle") { clearInterval(poll); clearTimeout(safety) }
+      } catch { clearInterval(poll); clearTimeout(safety) }
+    }, 1000)
   },
 
   addTile: async (data) => {

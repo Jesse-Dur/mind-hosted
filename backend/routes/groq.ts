@@ -11,16 +11,28 @@ const CONCURRENCY: Record<string, number> = { low: 1, medium: 2, high: 4 }
 let running = 0
 
 export type AiStatus = "idle" | "processing" | "queued" | "limited"
-let aiStatus: AiStatus = "idle"
-let statusResetTimer: ReturnType<typeof setTimeout> | null = null
+const userStatus = new Map<string, AiStatus>()
+const userStatusTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-function setStatus(s: AiStatus, resetAfterMs?: number) {
-  aiStatus = s
-  if (statusResetTimer) clearTimeout(statusResetTimer)
-  if (resetAfterMs) statusResetTimer = setTimeout(() => { aiStatus = "idle" }, resetAfterMs)
+function setStatus(userId: string, s: AiStatus, resetAfterMs?: number) {
+  if (s === "idle") userStatus.delete(userId)
+  else userStatus.set(userId, s)
+  const existing = userStatusTimers.get(userId)
+  if (existing) clearTimeout(existing)
+  if (resetAfterMs) {
+    userStatusTimers.set(userId, setTimeout(() => { userStatus.delete(userId); userStatusTimers.delete(userId) }, resetAfterMs))
+  }
 }
 
-groqRoute.get("/status", (c) => c.json({ status: aiStatus }))
+function getStatus(userId: string): AiStatus {
+  return userStatus.get(userId) ?? "idle"
+}
+
+groqRoute.get("/status", (c) => {
+  const auth = getAuth(c)
+  if (!auth?.userId) return c.json({ status: "idle" })
+  return c.json({ status: getStatus(auth.userId) })
+})
 
 const TOOLS = [
   {
@@ -151,7 +163,7 @@ async function classifyAndStore(input: string, userId: string) {
   const log = (msg: string) => console.log(`[${reqId}] ${msg}`)
 
   console.log(`\n🤖 [${reqId}] AI input: "${input.replace(/[\r\n]/g, " ")}"`)
-  setStatus("processing")
+  setStatus(userId, "processing")
 
   type Message = { role: string; content: string; name?: string; tool_call_id?: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] }
   const messages: Message[] = [
@@ -216,15 +228,15 @@ Available tags: ${tagList || "none"}
       if (res.status === 429) {
         const retryAfter = res.headers.get("retry-after")
         const wait = retryAfter ? Number(retryAfter) * 1000 : 10000
-        setStatus(wait > 60000 ? "limited" : "queued")
+        setStatus(userId, wait > 60000 ? "limited" : "queued")
         log(`⏳ Rate limited — waiting ${wait / 1000}s (reset: ${resetTokens})`)
         await new Promise((r) => setTimeout(r, wait))
-        setStatus("processing")
+        setStatus(userId, "processing")
         continue
       }
       if (res.status >= 400 && res.status < 500) {
         log(`❌ Non-retryable error ${res.status} — aborting`)
-        setStatus("idle")
+        setStatus(userId, "idle")
         return
       }
       messages.push({ role: "user", content: `Error: ${errMsg}. Try again.` })
@@ -259,7 +271,7 @@ Available tags: ${tagList || "none"}
           { input, actions: historyActions }
         )
       }
-      setStatus("idle")
+      setStatus(userId, "idle")
       return
     }
 
@@ -274,7 +286,7 @@ Available tags: ${tagList || "none"}
             { input, actions: historyActions }
           )
         }
-        setStatus("idle")
+        setStatus(userId, "idle")
         return
       }
 
@@ -398,7 +410,7 @@ Available tags: ${tagList || "none"}
   }
 
   log("   ⚠️ Loop exhausted")
-  setStatus("idle")
+  setStatus(userId, "idle")
 }
 
 groqRoute.post("/process", async (c) => {
@@ -415,7 +427,7 @@ groqRoute.post("/process", async (c) => {
     running++
     classifyAndStore(input, auth.userId).catch(console.error).finally(() => running--)
   } else {
-    setStatus("queued")
+    setStatus(auth.userId, "queued")
     setTimeout(() => {
       running++
       classifyAndStore(input, auth.userId).catch(console.error).finally(() => running--)
