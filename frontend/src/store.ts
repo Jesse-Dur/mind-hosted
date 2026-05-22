@@ -8,6 +8,8 @@ let _getToken: GetToken = () => Promise.resolve(null)
 export function setGetToken(fn: GetToken) { _getToken = fn }
 const api = () => createApi(_getToken)
 
+export type AiStatus = "idle" | "processing" | "queued" | "limited"
+
 interface Store {
   tiles: Tile[]
   thoughts: Thought[]
@@ -17,12 +19,15 @@ interface Store {
   spotlightOpen: boolean
   sidebarOpen: boolean
   canvasHeight: number
+  aiStatus: AiStatus
   setSpotlightOpen: (open: boolean) => void
   setSidebarOpen: (open: boolean) => void
   setCanvasHeight: (h: number) => void
   loadTiles: () => Promise<void>
   loadThoughts: () => Promise<void>
   loadTags: () => Promise<void>
+  loadAiStatus: () => Promise<void>
+  setAiStatus: (status: AiStatus) => void
   addTile: (tile: Omit<Tile, "id" | "created_at">) => Promise<void>
   moveTileLocal: (id: number, data: Partial<Tile>) => void
   updateTile: (id: number, data: Partial<Tile>) => void
@@ -43,10 +48,12 @@ export const useStore = create<Store>((set, get) => ({
   spotlightOpen: false,
   sidebarOpen: false,
   canvasHeight: Number(localStorage.getItem("canvasHeight") ?? 1440),
+  aiStatus: "idle" as AiStatus,
 
   setSpotlightOpen: (open) => set({ spotlightOpen: open }),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setCanvasHeight: (h) => { localStorage.setItem("canvasHeight", String(h)); set({ canvasHeight: h }) },
+  setAiStatus: (status) => set({ aiStatus: status }),
 
   loadTiles: async () => {
     const tiles = await api().tiles.list()
@@ -73,6 +80,13 @@ export const useStore = create<Store>((set, get) => ({
   loadTags: async () => {
     const tags = await api().tags.list()
     set({ tags })
+  },
+
+  loadAiStatus: async () => {
+    try {
+      const { status } = await api().ai.status()
+      set({ aiStatus: status as AiStatus })
+    } catch { /* ignore */ }
   },
 
   addTile: async (data) => {

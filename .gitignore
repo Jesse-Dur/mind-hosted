@@ -39,6 +39,8 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Deployment docs with sensitive context
 DEPLOY.md
+VPS_SETUP.md
+ecosystem.config.js
 
 # AI context
 CLAUDE.md

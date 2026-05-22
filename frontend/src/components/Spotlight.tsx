@@ -16,7 +16,7 @@ const GROUP_HEADING: React.CSSProperties = {
 }
 
 export function Spotlight() {
-  const { tiles, thoughts, setSpotlightOpen, addTile } = useStore()
+  const { tiles, thoughts, setSpotlightOpen, addTile, setAiStatus } = useStore()
   const { getToken } = useAuth()
   const [showPast, setShowPast] = useState(false)
   const [pastTiles, setPastTiles] = useState<Tile[]>([])
@@ -61,6 +61,7 @@ export function Spotlight() {
   function handleAI() {
     const input = isAIMode ? query.slice(1).trim() : query.trim()
     if (!input) return
+    setAiStatus("processing")
     createApi(getToken).ai.process(input, "medium")
     setSpotlightOpen(false)
   }

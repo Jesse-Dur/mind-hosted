@@ -1,11 +1,15 @@
 import { useEffect } from "react"
-import { SignedIn, SignedOut, SignInButton } from "@clerk/clerk-react"
+import { SignedIn, SignedOut, SignInButton, useAuth } from "@clerk/clerk-react"
 import { Canvas } from "./components/Canvas"
 import { Sidebar } from "./components/Sidebar"
-import { useStore } from "./store"
+import { AiStatusPill } from "./components/AiStatusPill"
+import { useStore, setGetToken } from "./store"
 
 export default function App() {
+  const { getToken } = useAuth()
   const { loadTiles, loadThoughts, loadTags, setSpotlightOpen, sidebarOpen, setSidebarOpen } = useStore()
+
+  useEffect(() => { setGetToken(getToken) }, [getToken])
 
   useEffect(() => {
     loadTiles()
@@ -41,17 +45,20 @@ export default function App() {
       </SignedOut>
 
       <SignedIn>
-        <button
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          style={{ position: "fixed", top: 12, left: 12, zIndex: 50, background: "none", border: "none", cursor: "pointer", width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.15s ease", color: "#aaa" }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "#ebebeb")}
-          onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
-          title="Tags"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M2 4h12M2 8h8M2 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-        </button>
+        <div style={{ position: "fixed", top: 12, left: 12, zIndex: 50, display: "flex", alignItems: "center", gap: 6 }}>
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            style={{ background: "none", border: "none", cursor: "pointer", width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.15s ease", color: "#aaa" }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "#ebebeb")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+            title="Sidebar"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M2 4h12M2 8h8M2 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </button>
+          <AiStatusPill />
+        </div>
         <Sidebar />
         <Canvas />
       </SignedIn>

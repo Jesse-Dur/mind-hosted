@@ -60,6 +60,7 @@ export function createApi(getToken: GetToken) {
     ai: {
       process: (input: string, priority: "low" | "medium" | "high") =>
         req<{ job_id: string }>("/ai/process", getToken, { method: "POST", body: JSON.stringify({ input, priority }) }),
+      status: () => req<{ status: string }>("/ai/status", getToken),
     },
 
     history: {

@@ -10,6 +10,18 @@ export const groqRoute = new Hono()
 const CONCURRENCY: Record<string, number> = { low: 1, medium: 2, high: 4 }
 let running = 0
 
+export type AiStatus = "idle" | "processing" | "queued" | "limited"
+let aiStatus: AiStatus = "idle"
+let statusResetTimer: ReturnType<typeof setTimeout> | null = null
+
+function setStatus(s: AiStatus, resetAfterMs?: number) {
+  aiStatus = s
+  if (statusResetTimer) clearTimeout(statusResetTimer)
+  if (resetAfterMs) statusResetTimer = setTimeout(() => { aiStatus = "idle" }, resetAfterMs)
+}
+
+groqRoute.get("/status", (c) => c.json({ status: aiStatus }))
+
 const TOOLS = [
   {
     type: "function",
@@ -139,6 +151,7 @@ async function classifyAndStore(input: string, userId: string) {
   const log = (msg: string) => console.log(`[${reqId}] ${msg}`)
 
   console.log(`\n🤖 [${reqId}] AI input: "${input.replace(/[\r\n]/g, " ")}"`)
+  setStatus("processing")
 
   type Message = { role: string; content: string; name?: string; tool_call_id?: string }
   const messages: Message[] = [
@@ -201,12 +214,15 @@ Available tags: ${tagList || "none"}
       if (res.status === 429) {
         const retryAfter = res.headers.get("retry-after")
         const wait = retryAfter ? Number(retryAfter) * 1000 : 10000
+        setStatus(wait > 60000 ? "limited" : "queued")
         log(`⏳ Rate limited — waiting ${wait / 1000}s (reset: ${resetTokens})`)
         await new Promise((r) => setTimeout(r, wait))
+        setStatus("processing")
         continue
       }
       if (res.status >= 400 && res.status < 500) {
         log(`❌ Non-retryable error ${res.status} — aborting`)
+        setStatus("idle")
         return
       }
       messages.push({ role: "user", content: `Error: ${errMsg}. Try again.` })
@@ -224,6 +240,7 @@ Available tags: ${tagList || "none"}
           { input, actions: historyActions }
         )
       }
+      setStatus("idle")
       return
     }
 
@@ -238,6 +255,7 @@ Available tags: ${tagList || "none"}
             { input, actions: historyActions }
           )
         }
+        setStatus("idle")
         return
       }
 
@@ -286,11 +304,12 @@ Available tags: ${tagList || "none"}
       } else if (call.function.name === "create_thought") {
         const tileId = Number(args.tile_id)
         const content = String(args.content ?? "")
-        if (!tileId || !content) { result = "Error: missing tile_id or content"; }
-        else {
+        if (!tileId || !content) {
+          result = "Error: missing tile_id or content"
+        } else {
           const validTile = tiles.find((t) => t.id === tileId)
           if (!validTile) {
-            result = `Error: tile_id ${tileId} does not exist. Call search_tiles to get a valid tile_id.`
+            result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${t.id} ("${t.title}")`).join(", ")}`
           } else {
             const validTags = ((args.tags as string[]) ?? []).filter((t) => tags.some((tag) => tag.name === t))
             const thought = await thoughtsDb.create({ tile_id: tileId, content, tags: validTags, sort_order: 0 }, userId, true)
@@ -304,8 +323,9 @@ Available tags: ${tagList || "none"}
       } else if (call.function.name === "update_thought") {
         const id = Number(args.thought_id)
         const content = String(args.content ?? "")
-        if (!id || !content) { result = "Error: missing thought_id or content" }
-        else {
+        if (!id || !content) {
+          result = "Error: missing thought_id or content"
+        } else {
           const validTags = args.tags ? (args.tags as string[]).filter((t) => tags.some((tag) => tag.name === t)) : undefined
           await thoughtsDb.update(id, content, userId, validTags)
           const action = `Updated thought ${id} → "${content}"`
@@ -316,8 +336,9 @@ Available tags: ${tagList || "none"}
 
       } else if (call.function.name === "delete_thought") {
         const id = Number(args.thought_id)
-        if (!id) { result = "Error: missing thought_id" }
-        else {
+        if (!id) {
+          result = "Error: missing thought_id"
+        } else {
           await thoughtsDb.remove(id, userId)
           historyActions.push(`Deleted thought ${id}`)
           log(`🗑️ Deleted thought ${id}`)
@@ -327,11 +348,12 @@ Available tags: ${tagList || "none"}
       } else if (call.function.name === "move_thought") {
         const id = Number(args.thought_id)
         const tileId = Number(args.tile_id)
-        if (!id || !tileId) { result = "Error: missing ids" }
-        else {
+        if (!id || !tileId) {
+          result = "Error: missing ids"
+        } else {
           const validTile = tiles.find((t) => t.id === tileId)
           if (!validTile) {
-            result = `Error: tile_id ${tileId} does not exist. Call search_tiles to get a valid tile_id.`
+            result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${t.id} ("${t.title}")`).join(", ")}`
           } else {
             await thoughtsDb.move(id, tileId, userId)
             const action = `Moved thought ${id} to "${validTile.title}"`
@@ -356,6 +378,7 @@ Available tags: ${tagList || "none"}
   }
 
   log("   ⚠️ Loop exhausted")
+  setStatus("idle")
 }
 
 groqRoute.post("/process", async (c) => {
@@ -370,6 +393,7 @@ groqRoute.post("/process", async (c) => {
     running++
     classifyAndStore(input, auth.userId).catch(console.error).finally(() => running--)
   } else {
+    setStatus("queued")
     setTimeout(() => {
       running++
       classifyAndStore(input, auth.userId).catch(console.error).finally(() => running--)
