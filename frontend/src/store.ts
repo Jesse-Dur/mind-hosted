@@ -15,6 +15,7 @@ interface Store {
   thoughts: Thought[]
   tags: Tag[]
   newThoughtIds: Set<number>
+  thoughtStableKeys: Map<number, number>
   newestTileId: number | null
   spotlightOpen: boolean
   sidebarOpen: boolean
@@ -45,6 +46,7 @@ export const useStore = create<Store>((set, get) => ({
   thoughts: [],
   tags: [],
   newThoughtIds: new Set<number>(),
+  thoughtStableKeys: new Map<number, number>(),
   newestTileId: null,
   spotlightOpen: false,
   sidebarOpen: false,

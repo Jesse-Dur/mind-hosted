@@ -1,4 +1,5 @@
 import { useRef } from "react"
+import { useStore } from "../store"
 import { Thought } from "./Thought"
 import { ThoughtInput } from "./ThoughtInput"
 import { dragState } from "../utils/dragState"
@@ -8,6 +9,7 @@ import type { Thought as ThoughtType } from "../types"
 export function TileContent({ tileId, tileThoughts }: { tileId: number; tileThoughts: ThoughtType[] }) {
   const thoughtInputRef = useRef<HTMLInputElement>(null)
   const { orderedIds, draggingId, dropTarget, setDropTarget, onThoughtDragStart, onThoughtDragOver, onThoughtDrop, onTileContentDrop } = useTileThoughts(tileId, tileThoughts)
+  const { thoughtStableKeys } = useStore()
 
   const displayed = orderedIds.length ? orderedIds.map((id) => tileThoughts.find((t) => t.id === id)!).filter(Boolean) : tileThoughts
 
@@ -21,7 +23,7 @@ export function TileContent({ tileId, tileThoughts }: { tileId: number; tileThou
     >
       {displayed.map((t) => (
         <Thought
-          key={t.id}
+          key={thoughtStableKeys.get(t.id) ?? t.id}
           thought={t}
           onDragStart={onThoughtDragStart}
           onDragOver={onThoughtDragOver}
