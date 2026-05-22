@@ -51,7 +51,7 @@ export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: 
         onClick={(e) => e.stopPropagation()}
         style={{
           display: "flex", alignItems: "center", gap: 6,
-          padding: "5px 8px", marginBottom: 2, fontSize: 13,
+          padding: "5px 8px", fontSize: 13,
           background: dragging ? "#f5f5f5" : "#fafafa",
           border: "1px solid #ebebeb", borderRadius: 6, cursor: "grab",
           opacity: dragging ? 0.4 : 1,

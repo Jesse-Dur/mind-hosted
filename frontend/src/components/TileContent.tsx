@@ -13,7 +13,7 @@ export function TileContent({ tileId, tileThoughts }: { tileId: number; tileThou
 
   return (
     <div
-      style={{ padding: "6px 10px", flex: 1, overflowY: "auto", userSelect: "text", cursor: "text", background: dropTarget ? "rgba(124,58,237,0.04)" : undefined, transition: "background 0.15s ease" }}
+      style={{ padding: "6px 10px", flex: 1, overflowY: "auto", userSelect: "text", cursor: "text", background: dropTarget ? "rgba(124,58,237,0.04)" : undefined, transition: "background 0.15s ease", display: "flex", flexDirection: "column", gap: 2 }}
       onClick={(e) => { if (window.getSelection()?.toString()) return; thoughtInputRef.current?.focus() }}
       onDragOver={(e) => { e.preventDefault(); if (dragState.sourceTileId !== tileId) setDropTarget(true) }}
       onDragLeave={() => setDropTarget(false)}
