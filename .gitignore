@@ -41,6 +41,7 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 DEPLOY.md
 VPS_SETUP.md
 ecosystem.config.js
+backend/test/results-*.csv
 
 # AI context
 CLAUDE.md
