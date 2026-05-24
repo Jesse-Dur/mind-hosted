@@ -42,6 +42,7 @@ DEPLOY.md
 VPS_SETUP.md
 ecosystem.config.js
 backend/test/results-*.csv
+.amazonq/
 
 # AI context
 CLAUDE.md
