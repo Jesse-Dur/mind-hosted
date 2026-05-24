@@ -22,6 +22,8 @@ interface Store {
   sidebarOpen: boolean
   canvasHeight: number
   aiStatus: AiStatus
+  highlightedId: { type: "tile" | "thought"; id: number } | null
+  setHighlight: (type: "tile" | "thought", id: number) => void
   setSpotlightOpen: (open: boolean) => void
   setSidebarOpen: (open: boolean) => void
   setCanvasHeight: (h: number) => void
@@ -55,8 +57,13 @@ export const useStore = create<Store>((set, get) => ({
   canvasHeight: Number(localStorage.getItem("canvasHeight") ?? 1440),
   aiStatus: "idle" as AiStatus,
 
+  highlightedId: null,
   setSpotlightOpen: (open) => set({ spotlightOpen: open }),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
+  setHighlight: (type, id) => {
+    set({ highlightedId: { type, id } })
+    setTimeout(() => set({ highlightedId: null }), 3500)
+  },
   setCanvasHeight: (h) => { localStorage.setItem("canvasHeight", String(h)); set({ canvasHeight: h }) },
   setAiStatus: (status) => set({ aiStatus: status }),
 
@@ -102,7 +109,15 @@ export const useStore = create<Store>((set, get) => ({
       try {
         const { status } = await api().ai.status()
         set({ aiStatus: status as AiStatus })
-        if (status === "idle") { clearInterval(poll); clearTimeout(safety) }
+        if (status === "idle") {
+          clearInterval(poll)
+          clearTimeout(safety)
+          // AI finished — poll thoughts 3 times, 1s apart to catch changes fast
+          const { loadThoughts } = useStore.getState()
+          setTimeout(() => loadThoughts(), 500)
+          setTimeout(() => loadThoughts(), 1500)
+          setTimeout(() => loadThoughts(), 2500)
+        }
       } catch { clearInterval(poll); clearTimeout(safety) }
     }, 1000)
   },

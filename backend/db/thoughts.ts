@@ -37,27 +37,28 @@ export const thoughtsDb = {
     return row
   },
 
-  update: async (id: number, content: string, userId: string, tags?: string[]) => {
+  update: async (id: number, content: string, userId: string, tags?: string[], silent = false) => {
     const [old] = await sql<{ content: string }[]>`SELECT content FROM thoughts WHERE id = ${id} AND user_id = ${userId}`
     if (tags !== undefined) {
       await sql`UPDATE thoughts SET content = ${content}, tags = ${tags} WHERE id = ${id} AND user_id = ${userId}`
     } else {
       await sql`UPDATE thoughts SET content = ${content} WHERE id = ${id} AND user_id = ${userId}`
     }
-    await historyDb.log(userId, "thought.update", `Updated thought "${old?.content?.slice(0, 40) ?? id}" → "${content.slice(0, 40)}"`, { thought_id: id, old_content: old?.content, new_content: content })
+    if (!silent) await historyDb.log(userId, "thought.update", `Updated thought "${old?.content?.slice(0, 40) ?? id}" → "${content.slice(0, 40)}"`, { thought_id: id, old_content: old?.content, new_content: content })
   },
 
-  move: async (id: number, tile_id: number, userId: string) => {
+  move: async (id: number, tile_id: number, userId: string, silent = false) => {
     const [maxRow] = await sql<{ m: number | null }[]>`SELECT MAX(sort_order) as m FROM thoughts WHERE tile_id = ${tile_id} AND user_id = ${userId} AND deleted_at IS NULL`
     const sort_order = (maxRow?.m ?? -1) + 1
     await sql`UPDATE thoughts SET tile_id = ${tile_id}, sort_order = ${sort_order} WHERE id = ${id} AND user_id = ${userId}`
     const [tile] = await sql<{ title: string }[]>`SELECT title FROM tiles WHERE id = ${tile_id} AND user_id = ${userId}`
-    await historyDb.log(userId, "thought.move", `Moved thought to "${tile?.title ?? tile_id}"`, { thought_id: id, tile_id })
+    if (!silent) await historyDb.log(userId, "thought.move", `Moved thought to "${tile?.title ?? tile_id}"`, { thought_id: id, tile_id })
   },
 
-  remove: async (id: number, userId: string) => {
+  remove: async (id: number, userId: string, silent = false) => {
     const [row] = await sql<{ content: string }[]>`SELECT content FROM thoughts WHERE id = ${id} AND user_id = ${userId}`
+    if (!row) return // already deleted
     await sql`UPDATE thoughts SET deleted_at = NOW() WHERE id = ${id} AND user_id = ${userId}`
-    await historyDb.log(userId, "thought.delete", `Deleted thought "${row?.content?.slice(0, 40) ?? id}"`, { thought_id: id })
+    if (!silent) await historyDb.log(userId, "thought.delete", `Deleted thought "${row.content?.slice(0, 40) ?? id}"`, { thought_id: id, content: row.content })
   },
 }

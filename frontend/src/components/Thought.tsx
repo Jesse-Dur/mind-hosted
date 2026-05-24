@@ -19,9 +19,10 @@ interface Props {
 }
 
 export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: Props) {
-  const { newThoughtIds } = useStore()
+  const { newThoughtIds, highlightedId } = useStore()
   const { getToken } = useAuth()
   const isNew = newThoughtIds.has(thought.id)
+  const isHighlighted = highlightedId?.type === "thought" && Number(highlightedId.id) === Number(thought.id)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [localTags, setLocalTags] = useState(thought.tags)
 
@@ -42,7 +43,7 @@ export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: 
 
   return (
     <>
-      <style>{`@keyframes thoughtIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+      <style>{`@keyframes thoughtIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } } @keyframes thoughtHighlight { 0% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0) } 15% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0.03), 0 0 0 2px rgba(124,58,237,0.4) } 50% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0.03), 0 0 0 2px rgba(124,58,237,0.5) } 80% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0.03), 0 0 0 2px rgba(124,58,237,0.4) } 100% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0) } }`}</style>
       <div
         draggable={!editing}
         onDragStart={() => !editing && onDragStart(thought.id)}
@@ -59,7 +60,7 @@ export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: 
           opacity: dragging ? 0.4 : 1,
           transition: "opacity 0.15s ease, transform 0.12s ease",
           transform: dragging ? "scale(0.98)" : "scale(1)",
-          animation: isNew ? "thoughtIn 0.4s cubic-bezier(0.4,0,0.2,1)" : undefined,
+          animation: isHighlighted ? "thoughtHighlight 3s linear forwards" : isNew ? "thoughtIn 0.4s cubic-bezier(0.4,0,0.2,1)" : undefined,
         }}
       >
         <span style={{ color: "#ccc", flexShrink: 0, fontSize: 11 }}>⠿</span>

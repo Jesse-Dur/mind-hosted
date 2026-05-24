@@ -21,7 +21,7 @@ function formatTime(iso: string) {
   })
 }
 
-function ExpandDetail({ isAI, detail, visible }: { isAI: boolean; detail: Record<string, unknown>; visible: boolean }) {
+function ExpandDetail({ isAI, action, detail, visible }: { isAI: boolean; action: string; detail: Record<string, unknown>; visible: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
   const [height, setHeight] = useState(0)
 
@@ -29,34 +29,43 @@ function ExpandDetail({ isAI, detail, visible }: { isAI: boolean; detail: Record
     if (ref.current) setHeight(visible ? ref.current.scrollHeight : 0)
   }, [visible])
 
+  function renderDetail() {
+    if (isAI && detail.input) {
+      return (
+        <>
+          <p style={{ color: "#7c3aed", fontWeight: 700, marginBottom: 3, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>You said</p>
+          <p style={{ color: "#333", marginBottom: 8, fontStyle: "italic" }}>"{detail.input as string}"</p>
+          <p style={{ color: "#7c3aed", fontWeight: 700, marginBottom: 3, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>AI did</p>
+          {(Array.isArray(detail.actions) ? detail.actions as string[] : []).map((a, i) => (
+            <p key={i} style={{ color: "#333", marginBottom: 4 }}>• {a}</p>
+          ))}
+        </>
+      )
+    }
+    const rows: string[] = []
+    if (action === "thought.create") {
+      rows.push(`Added "${detail.content}"`)
+      if (Array.isArray(detail.tags) && (detail.tags as string[]).length > 0) rows.push(`Tags: ${(detail.tags as string[]).join(", ")}`)
+    } else if (action === "thought.update") {
+      if (detail.old_content) rows.push(`Before: "${detail.old_content}"`)
+      rows.push(`After: "${detail.new_content}"`)
+    } else if (action === "thought.delete") {
+      rows.push(`Deleted: "${detail.content}"`)
+    } else if (action === "thought.move") {
+      rows.push(`Moved to tile ${detail.tile_id}`)
+    } else if (action === "thought.tag") {
+      rows.push(`Tags: ${(detail.tags as string[] ?? []).join(", ") || "none"}`)
+    } else if (action === "tile.create" || action === "tile.update" || action === "tile.delete") {
+      rows.push(`Tile: "${detail.title}"`)
+    }
+    if (rows.length === 0) return <pre style={{ color: "#555", whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>{JSON.stringify(detail, null, 2)}</pre>
+    return <>{rows.map((r, i) => <p key={i} style={{ color: "#333", marginBottom: 4 }}>• {r}</p>)}</>
+  }
+
   return (
-    <div style={{ overflow: "hidden", height, transition: "height 0.2s cubic-bezier(0.4,0,0.2,1)", opacity: visible ? 1 : 0, transition2: "opacity 0.15s ease" } as React.CSSProperties}>
+    <div style={{ overflow: "hidden", height, transition: "height 0.2s cubic-bezier(0.4,0,0.2,1)", opacity: visible ? 1 : 0 } as React.CSSProperties}>
       <div ref={ref} style={{ background: "#fafafa", borderRadius: 6, padding: "8px 10px", fontSize: 11, marginTop: 8 }}>
-        {isAI && detail.input ? (
-          <>
-            <p style={{ color: "#7c3aed", fontWeight: 700, marginBottom: 3, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>You said</p>
-            <p style={{ color: "#333", marginBottom: 8, fontStyle: "italic" }}>"{detail.input as string}"</p>
-            <p style={{ color: "#7c3aed", fontWeight: 700, marginBottom: 3, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>AI did</p>
-            {Array.isArray(detail.actions)
-              ? (detail.actions as string[]).map((a, i) => (
-                  <p key={i} style={{ color: "#333", marginBottom: 4 }}>• {a}</p>
-                ))
-              : Array.isArray(detail.thoughts)
-                ? (detail.thoughts as { content: string; tags: string[]; tile_title: string }[]).map((t, i) => (
-                    <p key={i} style={{ color: "#333", marginBottom: 4 }}>
-                      • "{t.content}"
-                      {t.tags?.length > 0 && ` tagged [${t.tags.join(", ")}]`}
-                      {t.tile_title && ` in "${t.tile_title}"`}
-                    </p>
-                  ))
-                : <p style={{ color: "#333" }}>Created thought "{detail.content as string}"</p>
-            }
-          </>
-        ) : (
-          <pre style={{ color: "#555", whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>
-            {JSON.stringify(detail, null, 2)}
-          </pre>
-        )}
+        {renderDetail()}
       </div>
     </div>
   )
@@ -105,7 +114,7 @@ export function HistoryPanel({ active, sidebarOpen }: { active: boolean; sidebar
                 {isExpanded ? "hide" : "expand"}
               </button>
             </div>
-            <ExpandDetail isAI={isAI} detail={detail} visible={isExpanded} />
+            <ExpandDetail isAI={isAI} action={e.action} detail={detail} visible={isExpanded} />
           </div>
         )
       })}

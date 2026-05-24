@@ -8,28 +8,22 @@ import { MicButton } from "./MicButton"
 import type { Tile, Thought } from "../types"
 import { findEmptySpot } from "../utils/findEmptySpot"
 
-const ACTION_ITEM: React.CSSProperties = {
-  padding: "8px 12px", fontSize: 13, cursor: "pointer",
-  borderRadius: 6, margin: "0 6px", display: "flex", alignItems: "center", gap: 8,
-}
-const GROUP_HEADING: React.CSSProperties = {
-  padding: "6px 12px 2px", fontSize: 11, color: "#999", fontWeight: 600,
-  textTransform: "uppercase", letterSpacing: "0.05em",
-}
-
 export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onClose: () => void }) {
-  const { tiles, thoughts, setSpotlightOpen, addTile, setAiStatus, startAiPolling } = useStore()
+  const { tiles, thoughts, setSpotlightOpen, addTile, setAiStatus, startAiPolling, setHighlight } = useStore()
   const { getToken } = useAuth()
   const [showPast, setShowPast] = useState(false)
   const [pastTiles, setPastTiles] = useState<Tile[]>([])
   const [pastThoughts, setPastThoughts] = useState<Thought[]>([])
   const [query, setQuery] = useState("")
+  const inputRef = useRef<HTMLInputElement>(null)
+  const cmdkInputRef = useRef<HTMLInputElement>(null)
   const { micState, micError, handleMic, cancelRecording, stopForEditing, stopAndTranscribe } = useMicRecording(getToken, (text) => {
     setQuery((q) => (q ? q + " " : "> ") + text)
+    setTimeout(() => inputRef.current?.focus(), 50)
   })
   const openedByMicRef = useRef(openedByMic)
   const showRecordingHints = micState === "recording" || micState === "loading" || openedByMicRef.current
-  const showShortcutHint = micState === "idle" && !openedByMicRef.current
+  const showShortcutHint = micState === "idle" && !openedByMicRef.current && !query.trim()
   const isAIMode = query.startsWith(">")
   const AI_LIMIT = 500
   const aiInput = isAIMode ? query.slice(1).trim() : query.trim()
@@ -129,14 +123,28 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
           {/* Input row with mic button */}
           <div style={{ position: "relative", display: "flex", alignItems: "center", borderBottom: "1px solid #ebebeb" }}>
             <input
+              ref={inputRef}
               autoFocus
               value={query}
               onKeyDown={(e) => {
                 if (e.key === "Escape") { onClose() }
-                if (e.key === "Enter" && (isAIMode || highlightAI) && query.trim()) { e.preventDefault(); handleAI() }
+                if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                  e.preventDefault()
+                  cmdkInputRef.current?.dispatchEvent(new KeyboardEvent("keydown", { key: e.key, bubbles: true, cancelable: true }))
+                }
+                if (e.key === "Enter") {
+                  const selected = document.querySelector('[cmdk-item][aria-selected="true"]')
+                  if (selected) {
+                    e.preventDefault()
+                    cmdkInputRef.current?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
+                  } else if ((isAIMode || highlightAI) && query.trim()) {
+                    e.preventDefault()
+                    handleAI()
+                  }
+                }
               }}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search, '#tag' filter, 't' new tile, '>' AI…"
+              placeholder="Search, '#tag' filter, '>' AI…"
               disabled={micState === "transcribing"}
               style={{ flex: 1, background: "transparent", border: "none", color: isAIMode ? "#7c3aed" : "#1a1a1a", fontSize: 15, padding: "14px 16px", outline: "none" }}
             />
@@ -181,6 +189,18 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
             </div>
           </div>
 
+          {/* Nav hints — idle with content */}
+          <div style={{
+            maxHeight: micState === "idle" && !!query.trim() ? 32 : 0,
+            overflow: "hidden",
+            transition: "max-height 0.25s cubic-bezier(0.4,0,0.2,1)",
+          }}>
+            <div style={{ padding: "5px 16px", display: "flex", alignItems: "center", gap: 12, background: "#fafafa", borderBottom: "1px solid #f5f5f5" }}>
+              <span style={{ fontSize: 10, color: "#bbb" }}><kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px" }}>↑↓</kbd> navigate</span>
+              <span style={{ fontSize: 10, color: "#bbb" }}><kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px" }}>enter</kbd> select</span>
+            </div>
+          </div>
+
           {/* Past toggle */}
           <div style={{ padding: "6px 12px", borderBottom: "1px solid #f5f5f5", display: "flex", alignItems: "center", gap: 8 }}>
             <button
@@ -190,38 +210,27 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
             {showPast && <span style={{ fontSize: 11, color: "#bbb" }}>Showing past thoughts</span>}
           </div>
 
-          {/* Always-visible Actions — never filtered */}
-          <div style={{ borderBottom: "1px solid #f5f5f5", padding: "4px 0" }}>
-            <p style={GROUP_HEADING}>Actions</p>
-            <div
-              onClick={() => handleNewTile(query.trim() || undefined)}
-              style={ACTION_ITEM}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "#f0f0f0")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-            >
-              <span>＋</span>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{query.trim() && !isAIMode && !isTagMode ? `New tile "${query.trim()}"` : "New Tile"}</span>
-            </div>
-            <div
-              onClick={handleAI}
-              style={{ ...ACTION_ITEM, color: "#7c3aed", background: highlightAI ? "#f0f0f0" : "transparent", overflow: "hidden" }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "#f0f0f0")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = highlightAI ? "#f0f0f0" : "transparent")}
-            >
-              <span>✦</span>{aiLabel}
-            </div>
-          </div>
-
           {/* Searchable content via cmdk */}
           <Command>
-            <Command.Input value={isTagMode ? "" : query} onValueChange={setQuery} style={{ display: "none" }} />
-            <Command.List style={{ maxHeight: 280, overflowY: "auto" }}>
+            <Command.Input ref={cmdkInputRef} value={isTagMode ? "" : query} onValueChange={setQuery} style={{ display: "none" }} />
+            <Command.List style={{ maxHeight: 400, overflowY: "auto" }}>
               <Command.Empty style={{ padding: "12px 16px", color: "#999", fontSize: 13 }}>No matching tiles or thoughts</Command.Empty>
+
+              {/* Actions — always visible */}
+              <Command.Group forceMount heading="Actions">
+                <Command.Item value="__action__send_ai" onSelect={handleAI} style={{ color: "#7c3aed" }}>
+                  <span>✦</span>{aiLabel}
+                </Command.Item>
+                <Command.Item value="__action__new_tile" onSelect={() => handleNewTile(query.trim() || undefined)}>
+                  <span>＋</span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{query.trim() && !isAIMode && !isTagMode ? `New tile "${query.trim()}"` : "New Tile"}</span>
+                </Command.Item>
+              </Command.Group>
 
               {tiles.length > 0 && (
                 <Command.Group heading="Tiles">
                   {tiles.map((tile) => (
-                    <Command.Item key={tile.id} value={tile.title} onSelect={() => onClose()}>
+                    <Command.Item key={tile.id} value={tile.title} onSelect={() => { setHighlight("tile", tile.id); onClose() }}>
                       {tile.title}
                     </Command.Item>
                   ))}
@@ -233,7 +242,7 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
                   {(isTagMode ? tagFilteredThoughts : thoughts).map((t) => {
                     const tile = tiles.find((ti) => ti.id === t.tile_id)
                     return (
-                      <Command.Item key={t.id} value={t.content} onSelect={() => onClose()}>
+                      <Command.Item key={t.id} value={t.content} onSelect={() => { setHighlight("thought", t.id); onClose() }}>
                         <span style={{ flex: 1 }}>{t.content}</span>
                         {isTagMode && t.tags.map((tag) => (
                           <span key={tag} style={{ fontSize: 10, color: "#888", background: "#f0f0f0", borderRadius: 4, padding: "1px 5px" }}>{tag}</span>

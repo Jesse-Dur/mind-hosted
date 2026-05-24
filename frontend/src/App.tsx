@@ -4,20 +4,20 @@ import { Canvas } from "./components/Canvas"
 import { Sidebar } from "./components/Sidebar"
 import { Spotlight } from "./components/Spotlight"
 import { AiStatusPill } from "./components/AiStatusPill"
+import { LoadingScreen } from "./components/LoadingScreen"
 import { useStore, setGetToken } from "./store"
 
 export default function App() {
   const { getToken } = useAuth()
   const { loadTiles, loadThoughts, loadTags, setSpotlightOpen, spotlightOpen, sidebarOpen, setSidebarOpen } = useStore()
   const [openedByMic, setOpenedByMic] = useState(false)
+  const [loaded, setLoaded] = useState(false)
 
   useEffect(() => { setGetToken(getToken) }, [getToken])
 
   useEffect(() => {
-    loadTiles()
-    loadThoughts()
-    loadTags()
-    const poll = setInterval(loadThoughts, 5000)
+    Promise.all([loadTiles(), loadThoughts(), loadTags()]).then(() => setLoaded(true))
+    const poll = setInterval(loadThoughts, 15000)
     return () => clearInterval(poll)
   }, [loadTiles, loadThoughts, loadTags])
 
@@ -59,6 +59,7 @@ export default function App() {
       </SignedOut>
 
       <SignedIn>
+        <LoadingScreen loaded={loaded} />
         <div style={{ position: "fixed", top: 12, left: 12, zIndex: 50, display: "flex", alignItems: "center", gap: 6 }}>
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -67,7 +68,7 @@ export default function App() {
             onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
             title="Sidebar"
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ pointerEvents: "none" }}>
               <path d="M2 4h12M2 8h8M2 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
           </button>

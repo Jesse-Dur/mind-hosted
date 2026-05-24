@@ -193,6 +193,7 @@ Available tags: ${tagList || "none"}
   const historyActions: string[] = []
   let searchIterations = 0
   const MAX_SEARCH_ITERATIONS = 3
+  const executedCalls = new Set<string>() // dedup across iterations
 
   type SearchRecord = { tool: string; arg: string; results: string }
   const searchLog: SearchRecord[] = []
@@ -293,7 +294,17 @@ Available tags: ${tagList || "none"}
       .slice(0, MAX_TOOL_CALLS)
       .sort((a, b) => (a.function.name === "done" ? 1 : b.function.name === "done" ? -1 : 0))
     const hasSearches = toolCalls.some((c) => SEARCH_TOOLS.has(c.function.name))
-    const filteredCalls = hasSearches ? toolCalls.filter((c) => c.function.name !== "done" && !c.function.name.startsWith("create") && !c.function.name.startsWith("update") && !c.function.name.startsWith("delete") && !c.function.name.startsWith("move")) : toolCalls
+    const filteredCalls = hasSearches
+      ? toolCalls.filter((c) => c.function.name !== "done" && !c.function.name.startsWith("create") && !c.function.name.startsWith("update") && !c.function.name.startsWith("delete") && !c.function.name.startsWith("move"))
+      : toolCalls.filter((c) => {
+          if (c.function.name === "done") return true
+          try {
+            const parsed = JSON.parse(c.function.arguments)
+            const key = `${c.function.name}:${JSON.stringify(parsed, Object.keys(parsed).sort())}`
+            if (executedCalls.has(key)) { log(`⚠️ Skipping duplicate: ${c.function.name}`); return false }
+          } catch { /* if parse fails let it through */ }
+          return true
+        })
     if (rawCalls.length > filteredCalls.length) {
       log(`⚠️ Trimmed tool calls: ${rawCalls.length} → ${filteredCalls.length} (dupes/cap/search-action separation)`)
     }
@@ -404,7 +415,7 @@ Available tags: ${tagList || "none"}
             result = "Error: missing thought_id or content"
           } else {
             const validTags = args.tags ? (args.tags as string[]).filter((t) => tags.some((tag) => tag.name === t)) : undefined
-            await thoughtsDb.update(id, content, userId, validTags)
+            await thoughtsDb.update(id, content, userId, validTags, true)
             const action = `Updated thought ${id} → "${content}"`
             historyActions.push(action)
             log(`✏️ ${action}`)
@@ -416,9 +427,11 @@ Available tags: ${tagList || "none"}
           if (!id) {
             result = "Error: missing thought_id"
           } else {
-            await thoughtsDb.remove(id, userId)
-            historyActions.push(`Deleted thought ${id}`)
-            log(`🗑️ Deleted thought ${id}`)
+            const existing = allThoughts.find((t) => Number(t.id) === id)
+            await thoughtsDb.remove(id, userId, true)
+            const label = existing ? `"${existing.content.slice(0, 40)}"` : `thought ${id}`
+            historyActions.push(`Deleted ${label}`)
+            log(`🗑️ Deleted ${label}`)
             result = "Deleted"
           }
 
@@ -433,7 +446,7 @@ Available tags: ${tagList || "none"}
               log(`⚠️ move_thought: tile_id ${tileId} not found`)
               result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
             } else {
-              await thoughtsDb.move(id, tileId, userId)
+              await thoughtsDb.move(id, tileId, userId, true)
               const action = `Moved thought ${id} to "${validTile.title}"`
               historyActions.push(action)
               log(`📦 ${action}`)
@@ -447,7 +460,8 @@ Available tags: ${tagList || "none"}
         result = `Error executing ${call.function.name}: ${msg}. Try again with valid parameters.`
       }
 
-      // result captured in searchLog/historyActions for next iteration's session state
+      const callKey = `${call.function.name}:${JSON.stringify(JSON.parse(call.function.arguments), Object.keys(JSON.parse(call.function.arguments)).sort())}`
+      executedCalls.add(callKey)
     }
   }
 
