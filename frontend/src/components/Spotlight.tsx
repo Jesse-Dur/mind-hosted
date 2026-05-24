@@ -31,7 +31,7 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
   })
   const openedByMicRef = useRef(openedByMic)
   const showRecordingHints = micState === "recording" || micState === "loading" || openedByMicRef.current
-  const showShortcutHint = micState === "idle" && !openedByMicRef.current
+  const showShortcutHint = micState === "idle" && !openedByMicRef.current && !query.trim()
   const isAIMode = query.startsWith(">")
   const AI_LIMIT = 500
   const aiInput = isAIMode ? query.slice(1).trim() : query.trim()
@@ -181,6 +181,18 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
           }}>
             <div style={{ padding: "5px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fafafa", borderBottom: "1px solid #f5f5f5" }}>
               <span style={{ fontSize: 11, color: "#aaa" }}><kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px", fontSize: 10 }}>Ctrl+Shift+M</kbd> or <kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px", fontSize: 10 }}>⌘⇧M</kbd> to record</span>
+            </div>
+          </div>
+
+          {/* Nav hints — idle with content */}
+          <div style={{
+            maxHeight: micState === "idle" && !!query.trim() ? 32 : 0,
+            overflow: "hidden",
+            transition: "max-height 0.25s cubic-bezier(0.4,0,0.2,1)",
+          }}>
+            <div style={{ padding: "5px 16px", display: "flex", alignItems: "center", gap: 12, background: "#fafafa", borderBottom: "1px solid #f5f5f5" }}>
+              <span style={{ fontSize: 10, color: "#bbb" }}><kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px" }}>↑↓</kbd> navigate</span>
+              <span style={{ fontSize: 10, color: "#bbb" }}><kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px" }}>enter</kbd> send to AI</span>
             </div>
           </div>
 
