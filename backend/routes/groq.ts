@@ -299,7 +299,8 @@ Available tags: ${tagList || "none"}
       : toolCalls.filter((c) => {
           if (c.function.name === "done") return true
           try {
-            const key = `${c.function.name}:${JSON.stringify(JSON.parse(c.function.arguments))}`
+            const parsed = JSON.parse(c.function.arguments)
+            const key = `${c.function.name}:${JSON.stringify(parsed, Object.keys(parsed).sort())}`
             if (executedCalls.has(key)) { log(`⚠️ Skipping duplicate: ${c.function.name}`); return false }
           } catch { /* if parse fails let it through */ }
           return true
@@ -459,7 +460,7 @@ Available tags: ${tagList || "none"}
         result = `Error executing ${call.function.name}: ${msg}. Try again with valid parameters.`
       }
 
-      const callKey = `${call.function.name}:${JSON.stringify(JSON.parse(call.function.arguments))}`
+      const callKey = `${call.function.name}:${JSON.stringify(JSON.parse(call.function.arguments), Object.keys(JSON.parse(call.function.arguments)).sort())}`
       executedCalls.add(callKey)
     }
   }
