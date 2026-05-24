@@ -1,7 +1,6 @@
 import { useRef, useState, useEffect } from "react"
 import { useStore } from "../store"
 import { Tile } from "./Tile"
-import { Spotlight } from "./Spotlight"
 
 const GRID = 24
 const MIN = GRID * 4
@@ -13,7 +12,7 @@ function snap(n: number) {
 interface Draft { startX: number; startY: number; x: number; y: number; width: number; height: number }
 
 export function Canvas() {
-  const { tiles, addTile, spotlightOpen, newestTileId, canvasHeight } = useStore()
+  const { tiles, addTile, newestTileId, canvasHeight } = useStore()
   const CANVAS_H = canvasHeight
   const CANVAS_W = Math.floor(Math.round(canvasHeight * (16 / 9)) / GRID) * GRID
   const [draft, setDraft] = useState<Draft | null>(null)
@@ -103,7 +102,7 @@ export function Canvas() {
             pointerEvents: "none",
           }} />
         )}
-        {spotlightOpen && <Spotlight />}
+        
       </div>
     </div>
   )

@@ -63,6 +63,21 @@ export function createApi(getToken: GetToken) {
       status: () => req<{ status: string }>("/ai/status", getToken),
     },
 
+    whisper: {
+      transcribe: async (blob: Blob): Promise<{ text: string }> => {
+        const token = await getToken()
+        const form = new FormData()
+        form.append("audio", blob, "audio.webm")
+        const res = await fetch(`${BASE}/whisper/transcribe`, {
+          method: "POST",
+          headers: token ? { "Authorization": `Bearer ${token}` } : {},
+          body: form,
+        })
+        if (!res.ok) throw new Error(`API error ${res.status}: /whisper/transcribe`)
+        return res.json()
+      },
+    },
+
     history: {
       list: () => req<HistoryEvent[]>("/history", getToken),
     },
