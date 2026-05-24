@@ -2,6 +2,7 @@
   "name": "mind",
   "private": true,
   "scripts": {
+    "test:ai": "bun run backend/test/ai.test.ts",
     "dev": "concurrently -n backend,frontend -c cyan,magenta 'bun run backend/index.ts' 'bun run --cwd frontend dev'",
     "dev:backend": "bun run backend/index.ts",
     "dev:frontend": "bun run --cwd frontend dev",

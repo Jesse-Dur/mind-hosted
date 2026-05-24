@@ -39,7 +39,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "search_by_tag",
-      description: "Find all thoughts with a specific tag. Use when searching for things like 'physics' that might be a tag.",
+      description: "Find thoughts with a specific tag.",
       parameters: { type: "object", properties: { tag: { type: "string" } }, required: ["tag"] },
     },
   },
@@ -47,7 +47,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "search_by_tile",
-      description: "List all thoughts in a specific tile. Use when you know which tile to look in.",
+      description: "List all thoughts in a tile.",
       parameters: { type: "object", properties: { tile_id: { type: "number" } }, required: ["tile_id"] },
     },
   },
@@ -55,7 +55,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "search_thoughts",
-      description: "Search existing thoughts by keyword. Use before update/delete/move. Use a single short keyword (e.g. 'physics', not 'physics homework') — thought content is concise and won't contain the full phrase.",
+      description: "Search thoughts by keyword. A match means it exists — update rather than create. Use a single short keyword e.g. 'physics' not 'physics homework'.",
       parameters: {
         type: "object",
         properties: {
@@ -136,10 +136,13 @@ const TOOLS = [
   },
 ]
 
-async function classifyAndStore(input: string, userId: string) {
+const SEARCH_TOOLS = new Set(["search_by_tag", "search_by_tile", "search_thoughts"])
+
+export async function classifyAndStore(input: string, userId: string): Promise<{ totalInput: number; totalOutput: number; totalTokens: number; iterations: number }> {
+  const stats = { totalInput: 0, totalOutput: 0, totalTokens: 0, iterations: 0 }
   const tiles = await tilesDb.list(userId)
   const tags = await tagsDb.list(userId)
-  const tileList = tiles.map((t) => `id:${t.id} title:"${t.title}"`).join(", ")
+  const tileList = tiles.map((t) => `${t.id}:"${t.title}"`).join(", ")
   const tagList = tags.map((t) => t.name).join(", ")
 
   const allThoughts = await thoughtsDb.list(userId)
@@ -156,7 +159,7 @@ async function classifyAndStore(input: string, userId: string) {
         const mostCommonTileId = Number(Object.entries(tileCounts).sort((a, b) => b[1] - a[1])[0]![0])
         const tile = tiles.find((ti) => ti.id === mostCommonTileId)
         return `"${t.name}" (${taggedThoughts.length} existing thought(s), most commonly in tile "${tile?.title ?? "?"}" id:${mostCommonTileId})`
-      }).join(", ")} — use these tiles for new thoughts.`
+      }).join(", ")} — these tiles may be most appropriate for new thoughts.`
     : ""
 
   const reqId = Math.random().toString(36).slice(2, 6)
@@ -166,33 +169,53 @@ async function classifyAndStore(input: string, userId: string) {
   setStatus(userId, "processing")
 
   type Message = { role: string; content: string; name?: string; tool_call_id?: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] }
-  const messages: Message[] = [
+  const baseMessages: Message[] = [
     {
       role: "system",
       content: `You are a personal thought organiser assistant.
 Tiles: ${tileList || "none"}
 Available tags: ${tagList || "none"}
 
-- You can call multiple tools in parallel in a single message — do this whenever possible.
-- NEVER call done() in the same message as a search tool. Always wait for search results first, then act.
-- After completing all actions (create/update/delete/move), ALWAYS call done() in the same message as the last action.
-- If the input mentions a known tag name, FIRST call search_by_tag with that tag to find related existing thoughts and the correct tile to use.
-- Always apply matching tags automatically. Do NOT repeat the tag/subject in the thought content.
+- ALWAYS call done() in the SAME message as your last action, not separately.
+- Call multiple tools at once whenever possible. Particularly when searching initially. Call done() alongside your final CRUD toolcalls.
+- If the input mentions a known tag name, call search_by_tag with that tag to find useful context.
+- Always apply matching tags automatically. Do NOT repeat the tag/subject in the thought content if a tag already covers it. If no tag covers the subject, keep it in the content.
 - Do NOT repeat tile context in the content (e.g. if in 'Tasks if Bored', don't say 'if I'm bored' or 'when bored'). If in 'Homework', don't say 'homework' in the thought.
-- Strip all redundant context — the thought should be the pure action/note only. e.g. "if I'm bored I can do in2it website development" tagged 'in2it' in 'Tasks if Bored' → content: "Website development".
-- Split compound inputs into multiple separate create_thought calls.
-- If the input references a tile name or subject that matches an existing tile, call search_by_tile on that tile BEFORE deciding to create — the thought may already exist under a shorter name.
+- Strip all redundant context, the thought should be the pure action/note only. e.g. "if I'm bored I can do Sunny website development" tagged 'Sunny' in 'Tasks if Bored' → content: "Website development".
+- Create multiple thoughts if multiple tasks are mentioned.
+- If the input references a tile by name (e.g. 'shopping list', 'homework', 'tasks'), ALWAYS call search_by_tile first before creating — the item may already exist.
+- If the input adds detail to something that likely already exists (e.g. "My physics homework is questions 1-20" when a "Physics" thought exists → update it to "Physics: questions 1-20"), call update_thought rather than creating a new one.
 - If input is ambiguous (could be a move instruction or new info), prefer CREATE.`,
     },
     { role: "user", content: input + inputTagHint },
   ]
 
   const historyActions: string[] = []
-  let searchCount = 0
-  const MAX_SEARCHES = 2
+  let searchIterations = 0
+  const MAX_SEARCH_ITERATIONS = 3
+
+  type SearchRecord = { tool: string; arg: string; results: string }
+  const searchLog: SearchRecord[] = []
+
+  function buildSessionState(): Message | null {
+    if (historyActions.length === 0 && searchLog.length === 0) return null
+    const parts: string[] = []
+    if (searchLog.length > 0) {
+      parts.push("Search results:")
+      for (const s of searchLog) parts.push(`- ${s.tool}(${s.arg}): ${s.results}`)
+    }
+    if (historyActions.length > 0) {
+      parts.push("Completed actions (if original request is satisfied, call done() NOW):")
+      for (const a of historyActions) parts.push(`- ${a}`)
+    }
+    return { role: "user", content: parts.join("\n") }
+  }
 
   for (let i = 0; i < 8; i++) {
     log(`🔄 Iteration ${i + 1}...`)
+
+    const sessionMsg = buildSessionState()
+    const messages: Message[] = sessionMsg ? [...baseMessages, sessionMsg] : [...baseMessages]
 
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
@@ -203,7 +226,7 @@ Available tags: ${tagList || "none"}
       body: JSON.stringify({
         model: "qwen/qwen3-32b",
         messages,
-        tools: searchCount >= MAX_SEARCHES ? TOOLS.filter((t) => !t.function.name.startsWith("search_by")) : TOOLS,
+        tools: searchIterations >= MAX_SEARCH_ITERATIONS ? TOOLS.filter((t) => !SEARCH_TOOLS.has(t.function.name)) : TOOLS,
         temperature: 0.1,
       }),
       signal: AbortSignal.timeout(60000),
@@ -223,13 +246,17 @@ Available tags: ${tagList || "none"}
     if (remainingReqs || remainingTokens) {
       log(`📊 rate limit — requests remaining: ${remainingReqs}, tokens remaining: ${remainingTokens}, reset: ${resetTokens}`)
     }
+    stats.iterations++
     if (data.usage || data.eval_count) {
-      const input = data.usage?.prompt_tokens ?? data.prompt_eval_count
-      const output = data.usage?.completion_tokens ?? data.eval_count
-      const reasoning = data.usage?.completion_tokens_details?.reasoning_tokens
-      const total = data.usage?.total_tokens ?? ((input ?? 0) + (output ?? 0))
-      const totalLabel = reasoning ? `total (incl. reasoning): ${total}` : `total (excl. reasoning): ${total}`
-      log(`🔢 input: ${input}, output: ${output}${reasoning ? `, reasoning: ${reasoning}` : ""}, ${totalLabel}`)
+      const inp = data.usage?.prompt_tokens ?? data.prompt_eval_count ?? 0
+      const out = data.usage?.completion_tokens ?? data.eval_count ?? 0
+      const total = data.usage?.total_tokens ?? (inp + out)
+      const reasoningTokens = data.usage?.completion_tokens_details?.reasoning_tokens
+      stats.totalInput += inp
+      stats.totalOutput += out
+      stats.totalTokens += total
+      const totalLabel = reasoningTokens ? `total (incl. reasoning): ${total}` : `total (excl. reasoning): ${total}`
+      log(`🔢 input: ${inp}, output: ${out}${reasoningTokens ? `, reasoning: ${reasoningTokens}` : ""}, ${totalLabel}`)
     }
 
     if (!data.choices?.[0]) {
@@ -247,9 +274,8 @@ Available tags: ${tagList || "none"}
       if (res.status >= 400 && res.status < 500) {
         log(`❌ Non-retryable error ${res.status} — aborting`)
         setStatus(userId, "idle")
-        return
+        return stats
       }
-      messages.push({ role: "user", content: `Error: ${errMsg}. Try again.` })
       continue
     }
 
@@ -266,7 +292,7 @@ Available tags: ${tagList || "none"}
       })
       .slice(0, MAX_TOOL_CALLS)
       .sort((a, b) => (a.function.name === "done" ? 1 : b.function.name === "done" ? -1 : 0))
-    const hasSearches = toolCalls.some((c) => c.function.name.startsWith("search"))
+    const hasSearches = toolCalls.some((c) => SEARCH_TOOLS.has(c.function.name))
     const filteredCalls = hasSearches ? toolCalls.filter((c) => c.function.name !== "done" && !c.function.name.startsWith("create") && !c.function.name.startsWith("update") && !c.function.name.startsWith("delete") && !c.function.name.startsWith("move")) : toolCalls
     if (rawCalls.length > filteredCalls.length) {
       log(`⚠️ Trimmed tool calls: ${rawCalls.length} → ${filteredCalls.length} (dupes/cap/search-action separation)`)
@@ -282,10 +308,10 @@ Available tags: ${tagList || "none"}
         )
       }
       setStatus(userId, "idle")
-      return
+      return stats
     }
 
-    messages.push({ role: "assistant", content: msg.content ?? "", tool_calls: rawCalls } as Message)
+    if (hasSearches) searchIterations++
 
     for (const call of filteredCalls) {
       if (call.function.name === "done") {
@@ -297,132 +323,137 @@ Available tags: ${tagList || "none"}
           )
         }
         setStatus(userId, "idle")
-        return
+        return stats
       }
 
       let args: Record<string, unknown> = {}
-      try { args = JSON.parse(call.function.arguments) } catch { 
-        messages.push({ role: "tool", content: "Error: invalid JSON arguments", name: call.function.name, tool_call_id: call.id })
+      try { args = JSON.parse(call.function.arguments) } catch {
         continue
       }
       let result = ""
 
       try {
-      if (call.function.name === "search_thoughts") {
-        const query = String(args.query ?? "")
-        const keywords = query.toLowerCase().split(/\s+/).filter(Boolean)
-        const results = allThoughts
-          .filter((t) => keywords.some((kw) => t.content.toLowerCase().includes(kw)))
-          .slice(0, 8)
-          .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => ti.id === t.tile_id)?.title ?? "?", tags: t.tags }))
-        log(`🔍 search("${query}") → ${results.length} result(s)${results.length ? ": " + results.map((r) => `[${r.id}] "${r.content}"`).join(", ") : ""}`)
-        searchCount++
-        result = results.length
-          ? `Found: ${JSON.stringify(results)}. NOW call update_thought/delete_thought/move_thought immediately. Do not search again.`
-          : `No results for "${query}". Try search_by_tag or search_by_tile instead.`
+        if (call.function.name === "search_thoughts") {
+          const query = String(args.query ?? "")
+          const keywords = query.toLowerCase().split(/\s+/).filter(Boolean)
+          const results = allThoughts
+            .filter((t) => keywords.some((kw) => t.content.toLowerCase().includes(kw)))
+            .slice(0, 8)
+            .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => ti.id === t.tile_id)?.title ?? "?", tags: t.tags }))
+          log(`🔍 search("${query}") → ${results.length} result(s)${results.length ? ": " + results.map((r) => `[${r.id}] "${r.content}"`).join(", ") : ""}`)
+          const resultStr = results.length
+            ? results.map((r) => `id:${r.id} "${r.content}" (tile:"${r.tile_title}"${r.tags.length ? ` tags:[${r.tags.join(",")}]` : ""})`).join(", ")
+            : "no results"
+          searchLog.push({ tool: "search_thoughts", arg: `"${query}"`, results: resultStr })
+          result = results.length
+            ? `Found: ${JSON.stringify(results)}. NOW call update_thought/delete_thought/move_thought immediately. Do not search again.`
+            : `No results for "${query}". Call create_thought now — do not search again.`
 
-      } else if (call.function.name === "search_by_tag") {
-        const tag = String(args.tag ?? "")
-        const results = allThoughts
-          .filter((t) => t.tags.some((tg) => tg.toLowerCase().includes(tag.toLowerCase())))
-          .slice(0, 8)
-          .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => ti.id === t.tile_id)?.title ?? "?", tags: t.tags }))
-        log(`🏷️ search_by_tag("${tag}") → ${results.length} result(s)${results.length ? ": " + results.map((r) => `[${r.id}] "${r.content}"`).join(", ") : ""}`)
-        searchCount++
-        result = results.length
-          ? `Found: ${JSON.stringify(results)}. Use the same tile_id as these results for any new related thoughts. NOW act immediately.`
-          : `No thoughts tagged "${tag}"`
+        } else if (call.function.name === "search_by_tag") {
+          const tag = String(args.tag ?? "")
+          const results = allThoughts
+            .filter((t) => t.tags.some((tg) => tg.toLowerCase().includes(tag.toLowerCase())))
+            .slice(0, 8)
+            .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => ti.id === t.tile_id)?.title ?? "?", tags: t.tags }))
+          log(`🏷️ search_by_tag("${tag}") → ${results.length} result(s)${results.length ? ": " + results.map((r) => `[${r.id}] "${r.content}"`).join(", ") : ""}`)
+          const resultStr = results.length
+            ? results.map((r) => `id:${r.id} "${r.content}" (tile:"${r.tile_title}")`).join(", ")
+            : "no results"
+          searchLog.push({ tool: "search_by_tag", arg: `"${tag}"`, results: resultStr })
+          result = results.length
+            ? `Found: ${JSON.stringify(results)}. Use the same tile_id as these results for any new related thoughts. NOW act immediately.`
+            : `No thoughts tagged "${tag}"`
 
-      } else if (call.function.name === "search_by_tile") {
-        const tileId = Number(args.tile_id)
-        const results = (await thoughtsDb.list(userId, tileId)).slice(0, 20).map((t) => ({ id: t.id, content: t.content, tags: t.tags }))
-        const tileName = tiles.find((t) => Number(t.id) === tileId)?.title ?? tileId
-        log(`📂 search_by_tile(${tileId} "${tileName}") → ${results.length} result(s)`)
-        searchCount++
-        result = results.length
-          ? `Found in tile "${tileName}": ${JSON.stringify(results)}. If any of these match what the user is referring to, call update_thought on it. Otherwise call create_thought.`
-          : `No thoughts in tile ${tileId}. Call create_thought.`
+        } else if (call.function.name === "search_by_tile") {
+          const tileId = Number(args.tile_id)
+          const results = (await thoughtsDb.list(userId, tileId)).slice(0, 20).map((t) => ({ id: t.id, content: t.content, tags: t.tags }))
+          const tileName = tiles.find((t) => Number(t.id) === tileId)?.title ?? tileId
+          log(`📂 search_by_tile(${tileId} "${tileName}") → ${results.length} result(s)`)
+          const resultStr = results.length
+            ? results.map((r) => `id:${r.id} "${r.content}"${r.tags.length ? ` tags:[${r.tags.join(",")}]` : ""}`).join(", ")
+            : "no results"
+          searchLog.push({ tool: "search_by_tile", arg: `${tileId} "${tileName}"`, results: resultStr })
+          result = results.length
+            ? `Found in tile "${tileName}": ${JSON.stringify(results)}. If the user's input is about any of these subjects (even if adding new detail or context), call update_thought on the matching one. Only call create_thought if nothing is related.`
+            : `No thoughts in tile ${tileId}. Call create_thought.`
 
-      } else if (call.function.name === "create_thought") {
-        const tileId = Number(args.tile_id)
-        const content = String(args.content ?? "")
-        if (!tileId || !content) {
-          result = "Error: missing tile_id or content"
-        } else {
-          const validTile = tiles.find((t) => Number(t.id) === tileId)
-          if (!validTile) {
-            log(`⚠️ create_thought: tile_id ${tileId} not found`)
-            result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
+        } else if (call.function.name === "create_thought") {
+          const tileId = Number(args.tile_id)
+          const content = String(args.content ?? "")
+          if (!tileId || !content) {
+            result = "Error: missing tile_id or content"
           } else {
-            const validTags = ((args.tags as string[]) ?? []).filter((t) => tags.some((tag) => tag.name === t))
-            const thought = await thoughtsDb.create({ tile_id: tileId, content, tags: validTags, sort_order: 0 }, userId, true)
-            const action = `Created "${thought.content}" in "${validTile.title}"`
+            const validTile = tiles.find((t) => Number(t.id) === tileId)
+            if (!validTile) {
+              log(`⚠️ create_thought: tile_id ${tileId} not found`)
+              result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
+            } else {
+              const validTags = ((args.tags as string[]) ?? []).filter((t) => tags.some((tag) => tag.name === t))
+              const thought = await thoughtsDb.create({ tile_id: tileId, content, tags: validTags, sort_order: 0 }, userId, true)
+              const action = `Created "${thought.content}" in "${validTile.title}"`
+              historyActions.push(action)
+              log(`✏️ ${action}`)
+              result = `Created thought id:${thought.id}`
+            }
+          }
+
+        } else if (call.function.name === "update_thought") {
+          const id = Number(args.thought_id)
+          const content = String(args.content ?? "")
+          if (!id || !content) {
+            result = "Error: missing thought_id or content"
+          } else {
+            const validTags = args.tags ? (args.tags as string[]).filter((t) => tags.some((tag) => tag.name === t)) : undefined
+            await thoughtsDb.update(id, content, userId, validTags)
+            const action = `Updated thought ${id} → "${content}"`
             historyActions.push(action)
             log(`✏️ ${action}`)
-            result = `Created thought id:${thought.id}. Call done() now unless there are more thoughts to create from the user's input.`
+            result = "Updated"
           }
-        }
 
-      } else if (call.function.name === "update_thought") {
-        const id = Number(args.thought_id)
-        const content = String(args.content ?? "")
-        if (!id || !content) {
-          result = "Error: missing thought_id or content"
-        } else {
-          const validTags = args.tags ? (args.tags as string[]).filter((t) => tags.some((tag) => tag.name === t)) : undefined
-          await thoughtsDb.update(id, content, userId, validTags)
-          const action = `Updated thought ${id} → "${content}"`
-          historyActions.push(action)
-          log(`✏️ ${action}`)
-          result = "Updated"
-        }
-
-      } else if (call.function.name === "delete_thought") {
-        const id = Number(args.thought_id)
-        if (!id) {
-          result = "Error: missing thought_id"
-        } else {
-          await thoughtsDb.remove(id, userId)
-          historyActions.push(`Deleted thought ${id}`)
-          log(`🗑️ Deleted thought ${id}`)
-          result = "Deleted"
-        }
-
-      } else if (call.function.name === "move_thought") {
-        const id = Number(args.thought_id)
-        const tileId = Number(args.tile_id)
-        if (!id || !tileId) {
-          result = "Error: missing ids"
-        } else {
-          const validTile = tiles.find((t) => Number(t.id) === tileId)
-          if (!validTile) {
-            log(`⚠️ move_thought: tile_id ${tileId} not found`)
-            result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
+        } else if (call.function.name === "delete_thought") {
+          const id = Number(args.thought_id)
+          if (!id) {
+            result = "Error: missing thought_id"
           } else {
-            await thoughtsDb.move(id, tileId, userId)
-            const action = `Moved thought ${id} to "${validTile.title}"`
-            historyActions.push(action)
-            log(`📦 ${action}`)
-            result = "Moved"
+            await thoughtsDb.remove(id, userId)
+            historyActions.push(`Deleted thought ${id}`)
+            log(`🗑️ Deleted thought ${id}`)
+            result = "Deleted"
+          }
+
+        } else if (call.function.name === "move_thought") {
+          const id = Number(args.thought_id)
+          const tileId = Number(args.tile_id)
+          if (!id || !tileId) {
+            result = "Error: missing ids"
+          } else {
+            const validTile = tiles.find((t) => Number(t.id) === tileId)
+            if (!validTile) {
+              log(`⚠️ move_thought: tile_id ${tileId} not found`)
+              result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
+            } else {
+              await thoughtsDb.move(id, tileId, userId)
+              const action = `Moved thought ${id} to "${validTile.title}"`
+              historyActions.push(action)
+              log(`📦 ${action}`)
+              result = "Moved"
+            }
           }
         }
-      }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         log(`⚠️ Tool error (${call.function.name}): ${msg}`)
         result = `Error executing ${call.function.name}: ${msg}. Try again with valid parameters.`
       }
 
-      messages.push({ role: "tool", content: result, name: call.function.name, tool_call_id: call.id })
-    }
-
-    if (historyActions.length > 0) {
-      messages.push({ role: "user", content: `Already completed this session: ${historyActions.join("; ")}. Do not repeat these actions. If the user's request is fully satisfied, you MUST call done() now.` })
+      // result captured in searchLog/historyActions for next iteration's session state
     }
   }
 
   log("   ⚠️ Loop exhausted")
   setStatus(userId, "idle")
+  return stats
 }
 
 groqRoute.post("/process", async (c) => {

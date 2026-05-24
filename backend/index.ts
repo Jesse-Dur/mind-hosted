@@ -6,6 +6,7 @@ import { thoughtsRoute } from "./routes/thoughts"
 import { tagsRoute } from "./routes/tags"
 import { groqRoute } from "./routes/groq"
 import { historyRoute } from "./routes/history"
+import { whisperRoute } from "./routes/whisper"
 import "./db/client"
 
 const app = new Hono()
@@ -18,5 +19,6 @@ app.route("/api/thoughts", thoughtsRoute)
 app.route("/api/tags", tagsRoute)
 app.route("/api/ai", groqRoute)
 app.route("/api/history", historyRoute)
+app.route("/api/whisper", whisperRoute)
 
 export default { port: 3000, fetch: app.fetch }

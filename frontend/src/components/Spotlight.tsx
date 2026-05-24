@@ -1,8 +1,10 @@
 import { Command } from "cmdk"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useAuth } from "@clerk/clerk-react"
 import { useStore } from "../store"
 import { createApi } from "../api/client"
+import { useMicRecording } from "../hooks/useMicRecording"
+import { MicButton } from "./MicButton"
 import type { Tile, Thought } from "../types"
 import { findEmptySpot } from "../utils/findEmptySpot"
 
@@ -15,13 +17,19 @@ const GROUP_HEADING: React.CSSProperties = {
   textTransform: "uppercase", letterSpacing: "0.05em",
 }
 
-export function Spotlight() {
+export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onClose: () => void }) {
   const { tiles, thoughts, setSpotlightOpen, addTile, setAiStatus, startAiPolling } = useStore()
   const { getToken } = useAuth()
   const [showPast, setShowPast] = useState(false)
   const [pastTiles, setPastTiles] = useState<Tile[]>([])
   const [pastThoughts, setPastThoughts] = useState<Thought[]>([])
   const [query, setQuery] = useState("")
+  const { micState, micError, handleMic, cancelRecording, stopForEditing, stopAndTranscribe } = useMicRecording(getToken, (text) => {
+    setQuery((q) => (q ? q + " " : "> ") + text)
+  })
+  const openedByMicRef = useRef(openedByMic)
+  const showRecordingHints = micState === "recording" || micState === "loading" || openedByMicRef.current
+  const showShortcutHint = micState === "idle" && !openedByMicRef.current
   const isAIMode = query.startsWith(">")
   const AI_LIMIT = 500
   const aiInput = isAIMode ? query.slice(1).trim() : query.trim()
@@ -33,7 +41,6 @@ export function Spotlight() {
   const tagFilteredThoughts = isTagMode
     ? thoughts.filter((t) => t.tags.some((tag) => tag.toLowerCase().includes(tagSearch)))
     : thoughts
-
   const hasMatches = !query.trim() ||
     tiles.some((t) => t.title.toLowerCase().includes(query.toLowerCase())) ||
     thoughts.some((t) => t.content.toLowerCase().includes(query.toLowerCase()))
@@ -41,11 +48,35 @@ export function Spotlight() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setSpotlightOpen(false)
+      if (e.key === "Escape") {
+        if (micState === "recording" || micState === "loading") { cancelRecording(); return }
+        onClose()
+        return
+      }
+      if ((micState === "recording" || micState === "loading") && e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+        stopForEditing()
+      }
+    }
+    function onMicShortcut() {
+      if (micState === "idle") {
+        handleMic()
+      } else if (micState === "recording") {
+        stopAndTranscribe((text) => {
+          const input = text.trim()
+          setAiStatus("processing")
+          startAiPolling()
+          createApi(getToken).ai.process(input, "medium")
+          onClose()
+        })
+      }
     }
     window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [setSpotlightOpen])
+    window.addEventListener("mic-shortcut", onMicShortcut)
+    return () => {
+      window.removeEventListener("keydown", onKey)
+      window.removeEventListener("mic-shortcut", onMicShortcut)
+    }
+  }, [setSpotlightOpen, micState, cancelRecording, stopForEditing, stopAndTranscribe, handleMic, getToken, setAiStatus, startAiPolling])
 
   async function togglePast() {
     if (!showPast) {
@@ -60,7 +91,7 @@ export function Spotlight() {
   function handleNewTile(title?: string) {
     const { x, y } = findEmptySpot(tiles, 280, 200)
     addTile({ title: title ?? "New Tile", x, y, width: 280, height: 200, importance: 1, visible: true })
-    setSpotlightOpen(false)
+    onClose()
   }
 
   function handleAI() {
@@ -70,7 +101,7 @@ export function Spotlight() {
     setAiStatus("processing")
     startAiPolling()
     createApi(getToken).ai.process(input, "medium")
-    setSpotlightOpen(false)
+    onClose()
   }
 
   const aiLabel = isAIMode && query.slice(1).trim()
@@ -86,35 +117,69 @@ export function Spotlight() {
         [cmdk-item][aria-selected="true"] { background: #f0f0f0; color: #000; }
         [cmdk-group-heading] { padding: 6px 12px 2px; font-size: 11px; color: #999; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
         [cmdk-list] { padding: 6px 0; }
+        @keyframes micPulse { 0%,100% { opacity:1 } 50% { opacity:0.5 } }
+        @keyframes spin { to { transform: rotate(360deg) } }
       `}</style>
       <div
-        onClick={() => setSpotlightOpen(false)}
+        onMouseDown={() => onClose()}
         style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.2)", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 120, zIndex: 100 }}
       >
-        <div onClick={(e) => e.stopPropagation()} style={{ width: 560, background: "#fff", border: "1px solid #e0e0e0", borderRadius: 12, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.12)" }}>
+        <div onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} style={{ width: 560, background: "#fff", border: "1px solid #e0e0e0", borderRadius: 12, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.12)" }}>
 
-          {/* Input — outside Command so we control it */}
-          <input
-            autoFocus
-            value={query}
+          {/* Input row with mic button */}
+          <div style={{ position: "relative", display: "flex", alignItems: "center", borderBottom: "1px solid #ebebeb" }}>
+            <input
+              autoFocus
+              value={query}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") { onClose() }
+                if (e.key === "Enter" && (isAIMode || highlightAI) && query.trim()) { e.preventDefault(); handleAI() }
+              }}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search, '#tag' filter, 't' new tile, '>' AI…"
+              disabled={micState === "transcribing"}
+              style={{ flex: 1, background: "transparent", border: "none", color: isAIMode ? "#7c3aed" : "#1a1a1a", fontSize: 15, padding: "14px 16px", outline: "none" }}
+            />
+            <MicButton micState={micState} onMicClick={handleMic} />
+          </div>
 
-            onKeyDown={(e) => {
-              if (e.key === "Escape") { setSpotlightOpen(false) }
-              if (e.key === "Enter" && (isAIMode || highlightAI) && query.trim()) { e.preventDefault(); handleAI() }
-            }}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search, '#tag' filter, 't' new tile, '>' AI…"
-            style={{ width: "100%", background: "transparent", border: "none", borderBottom: "1px solid #ebebeb", color: isAIMode ? "#7c3aed" : "#1a1a1a", fontSize: 15, padding: "14px 16px", outline: "none" }}
-          />
-
-          {/* AI char counter + over-limit error */}
-          {(showCounter || isOverLimit) && (
-            <div style={{ padding: "4px 16px", display: "flex", alignItems: "center", justifyContent: "flex-end", minHeight: 24 }}>
-              <span style={{ fontSize: 12, fontWeight: 500, color: aiCharsLeft < 0 ? "#ef4444" : aiCharsLeft === 0 ? "#f97316" : "#999" }}>
-                AI Input Characters: {aiCharsLeft}
-              </span>
+          {/* Mic error + AI char counter */}
+          {(micError || showCounter || isOverLimit) && (
+            <div style={{ padding: "4px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 24 }}>
+              {micError
+                ? <span style={{ fontSize: 12, color: "#ef4444" }}>{micError}</span>
+                : <span />}
+              {(showCounter || isOverLimit) && (
+                <span style={{ fontSize: 12, fontWeight: 500, marginLeft: "auto", color: aiCharsLeft < 0 ? "#ef4444" : aiCharsLeft === 0 ? "#f97316" : "#999" }}>
+                  AI Input Characters: {aiCharsLeft}
+                </span>
+              )}
             </div>
           )}
+
+          {/* Recording hints */}
+          <div style={{
+            maxHeight: showRecordingHints ? 32 : 0,
+            overflow: "hidden",
+            transition: "max-height 0.25s cubic-bezier(0.4,0,0.2,1)",
+          }}>
+            <div style={{ padding: "5px 16px", display: "flex", alignItems: "center", gap: 12, background: "#fafafa", borderBottom: "1px solid #f5f5f5" }}>
+              <span style={{ fontSize: 10, color: "#bbb" }}><kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px" }}>⌘⇧M</kbd> send</span>
+              <span style={{ fontSize: 10, color: "#bbb" }}><kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px" }}>any key</kbd> edit</span>
+              <span style={{ fontSize: 10, color: "#bbb" }}><kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px" }}>esc</kbd> cancel</span>
+            </div>
+          </div>
+
+          {/* Mic shortcut hint */}
+          <div style={{
+            maxHeight: showShortcutHint ? 40 : 0,
+            overflow: "hidden",
+            transition: "max-height 0.25s cubic-bezier(0.4,0,0.2,1)",
+          }}>
+            <div style={{ padding: "5px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fafafa", borderBottom: "1px solid #f5f5f5" }}>
+              <span style={{ fontSize: 11, color: "#aaa" }}><kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px", fontSize: 10 }}>Ctrl+Shift+M</kbd> or <kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px", fontSize: 10 }}>⌘⇧M</kbd> to record</span>
+            </div>
+          </div>
 
           {/* Past toggle */}
           <div style={{ padding: "6px 12px", borderBottom: "1px solid #f5f5f5", display: "flex", alignItems: "center", gap: 8 }}>
@@ -156,7 +221,7 @@ export function Spotlight() {
               {tiles.length > 0 && (
                 <Command.Group heading="Tiles">
                   {tiles.map((tile) => (
-                    <Command.Item key={tile.id} value={tile.title} onSelect={() => setSpotlightOpen(false)}>
+                    <Command.Item key={tile.id} value={tile.title} onSelect={() => onClose()}>
                       {tile.title}
                     </Command.Item>
                   ))}
@@ -168,7 +233,7 @@ export function Spotlight() {
                   {(isTagMode ? tagFilteredThoughts : thoughts).map((t) => {
                     const tile = tiles.find((ti) => ti.id === t.tile_id)
                     return (
-                      <Command.Item key={t.id} value={t.content} onSelect={() => setSpotlightOpen(false)}>
+                      <Command.Item key={t.id} value={t.content} onSelect={() => onClose()}>
                         <span style={{ flex: 1 }}>{t.content}</span>
                         {isTagMode && t.tags.map((tag) => (
                           <span key={tag} style={{ fontSize: 10, color: "#888", background: "#f0f0f0", borderRadius: 4, padding: "1px 5px" }}>{tag}</span>
@@ -183,7 +248,7 @@ export function Spotlight() {
               {showPast && pastTiles.length > 0 && (
                 <Command.Group heading="Past Tiles">
                   {pastTiles.map((tile) => (
-                    <Command.Item key={`past-tile-${tile.id}`} value={tile.title} onSelect={() => setSpotlightOpen(false)}>
+                    <Command.Item key={`past-tile-${tile.id}`} value={tile.title} onSelect={() => onClose()}>
                       <span style={{ color: "#ccc" }}>↩</span> {tile.title}
                     </Command.Item>
                   ))}
@@ -193,7 +258,7 @@ export function Spotlight() {
               {showPast && pastThoughts.length > 0 && (
                 <Command.Group heading="Past Thoughts">
                   {pastThoughts.map((t) => (
-                    <Command.Item key={`past-thought-${t.id}`} value={t.content} onSelect={() => setSpotlightOpen(false)}>
+                    <Command.Item key={`past-thought-${t.id}`} value={t.content} onSelect={() => onClose()}>
                       <span style={{ color: "#ccc" }}>↩</span> {t.content}
                     </Command.Item>
                   ))}

@@ -1,13 +1,15 @@
-import { useEffect } from "react"
+import { useState, useEffect } from "react"
 import { SignedIn, SignedOut, SignInButton, useAuth } from "@clerk/clerk-react"
 import { Canvas } from "./components/Canvas"
 import { Sidebar } from "./components/Sidebar"
+import { Spotlight } from "./components/Spotlight"
 import { AiStatusPill } from "./components/AiStatusPill"
 import { useStore, setGetToken } from "./store"
 
 export default function App() {
   const { getToken } = useAuth()
-  const { loadTiles, loadThoughts, loadTags, setSpotlightOpen, sidebarOpen, setSidebarOpen } = useStore()
+  const { loadTiles, loadThoughts, loadTags, setSpotlightOpen, spotlightOpen, sidebarOpen, setSidebarOpen } = useStore()
+  const [openedByMic, setOpenedByMic] = useState(false)
 
   useEffect(() => { setGetToken(getToken) }, [getToken])
 
@@ -23,7 +25,19 @@ export default function App() {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault()
+        setOpenedByMic(false)
         setSpotlightOpen(true)
+      }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "M" || e.key === "m")) {
+        e.preventDefault()
+        const { spotlightOpen } = useStore.getState()
+        if (!spotlightOpen) {
+          setOpenedByMic(true)
+          setSpotlightOpen(true)
+          setTimeout(() => window.dispatchEvent(new CustomEvent("mic-shortcut")), 50)
+        } else {
+          window.dispatchEvent(new CustomEvent("mic-shortcut"))
+        }
       }
     }
     window.addEventListener("keydown", onKey)
@@ -61,6 +75,7 @@ export default function App() {
         </div>
         <Sidebar />
         <Canvas />
+        {spotlightOpen && <Spotlight openedByMic={openedByMic} onClose={() => { setSpotlightOpen(false); setOpenedByMic(false) }} />}
       </SignedIn>
     </>
   )
