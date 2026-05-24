@@ -24,8 +24,10 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
   const [pastTiles, setPastTiles] = useState<Tile[]>([])
   const [pastThoughts, setPastThoughts] = useState<Thought[]>([])
   const [query, setQuery] = useState("")
+  const inputRef = useRef<HTMLInputElement>(null)
   const { micState, micError, handleMic, cancelRecording, stopForEditing, stopAndTranscribe } = useMicRecording(getToken, (text) => {
     setQuery((q) => (q ? q + " " : "> ") + text)
+    setTimeout(() => inputRef.current?.focus(), 50)
   })
   const openedByMicRef = useRef(openedByMic)
   const showRecordingHints = micState === "recording" || micState === "loading" || openedByMicRef.current
@@ -129,6 +131,7 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
           {/* Input row with mic button */}
           <div style={{ position: "relative", display: "flex", alignItems: "center", borderBottom: "1px solid #ebebeb" }}>
             <input
+              ref={inputRef}
               autoFocus
               value={query}
               onKeyDown={(e) => {

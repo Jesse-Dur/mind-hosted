@@ -73,16 +73,17 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
 
     audioChunksRef.current = []
     silentStopRef.current = false
+    recordingStartRef.current = 0
     const recorder = new MediaRecorder(stream)
     mediaRecorderRef.current = recorder
 
     // collect audio chunks every 100ms to avoid losing the start of speech
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) {
-        // first real audio chunk confirms hardware is active — turn red now
-        if (mediaRecorderRef.current?.state === "recording" && micState !== "recording") {
-          setMicState("recording")
+        // first real audio chunk — turn red and start the duration clock
+        if (!recordingStartRef.current) {
           recordingStartRef.current = Date.now()
+          setMicState("recording")
         }
         audioChunksRef.current.push(e.data)
       }
