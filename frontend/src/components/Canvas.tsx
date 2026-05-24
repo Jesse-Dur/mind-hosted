@@ -72,7 +72,7 @@ export function Canvas() {
   }
 
   return (
-    <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: "#f5f5f5", display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: "#f5f5f5", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 0 }}>
       <div
         ref={canvasRef}
         onMouseDown={onMouseDown}
