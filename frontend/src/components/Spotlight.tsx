@@ -22,7 +22,7 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
     setTimeout(() => inputRef.current?.focus(), 50)
   })
   const openedByMicRef = useRef(openedByMic)
-  const showRecordingHints = micState === "recording" || micState === "loading" || openedByMicRef.current
+  const showRecordingHints = micState === "recording" || micState === "loading" || (openedByMicRef.current && !query.trim())
   const showShortcutHint = micState === "idle" && !openedByMicRef.current && !query.trim()
   const isAIMode = query.startsWith(">")
   const AI_LIMIT = 500
