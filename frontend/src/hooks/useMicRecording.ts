@@ -11,6 +11,8 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
   const audioChunksRef = useRef<Blob[]>([])
   const silenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  // flag to skip transcription when recording stops due to silence or cancellation
   const silentStopRef = useRef(false)
   const recordingStartRef = useRef<number>(0)
 
@@ -20,6 +22,13 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
     setTimeout(() => setMicError(null), 3000)
   }
 
+  // releases the microphone hardware — clears the browser recording indicator
+  function stopTracks() {
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+    streamRef.current = null
+  }
+
+  // stops the MediaRecorder (triggers onstop which handles cleanup and transcription)
   function stopRecording(silent = false) {
     if (silenceTimerRef.current) clearInterval(silenceTimerRef.current)
     silentStopRef.current = silent
@@ -31,18 +40,18 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
 
   async function startRecording() {
     if (!navigator.mediaDevices?.getUserMedia) return showError("Microphone not supported")
-    console.log("[mic] requesting getUserMedia...")
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
     } catch (e: unknown) {
       const name = (e as Error).name
-      console.log("[mic] error:", name, e)
       if (name === "NotAllowedError") return showError("Microphone access denied")
       if (name === "NotFoundError") return showError("No microphone found")
       return showError("Microphone unavailable")
     }
 
+    // use AnalyserNode to detect silence — auto-stop after 3s of no audio
     const audioCtx = new AudioContext()
     audioContextRef.current = audioCtx
     const analyser = audioCtx.createAnalyser()
@@ -67,11 +76,12 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
     const recorder = new MediaRecorder(stream)
     mediaRecorderRef.current = recorder
 
+    // collect audio chunks every 100ms to avoid losing the start of speech
     recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data) }
     recorder.onstop = async () => {
       if (silenceTimerRef.current) clearInterval(silenceTimerRef.current)
       audioCtx.close()
-      stream.getTracks().forEach((t) => t.stop())
+      stopTracks()
       if (silentStopRef.current) {
         silentStopRef.current = false
         return showError("No sound detected")
@@ -105,15 +115,18 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
     }
   }
 
+  // cancel without transcribing — used for ESC
   function cancelRecording() {
     if (silenceTimerRef.current) clearInterval(silenceTimerRef.current)
     silentStopRef.current = true
     if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop()
     audioContextRef.current?.close()
+    stopTracks()
     setMicState("idle")
     setMicError(null)
   }
 
+  // stop and transcribe into the input field for editing before sending
   function stopForEditing() {
     if (silenceTimerRef.current) clearInterval(silenceTimerRef.current)
     silentStopRef.current = false
@@ -125,13 +138,14 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
     }
   }
 
-  // stops recording and calls onDone with the transcribed text for immediate send
+  // stop, transcribe, and immediately send to AI without showing the text — used for Cmd+Shift+M shortcut
   function stopAndTranscribe(onDone: (text: string) => void) {
     if (mediaRecorderRef.current?.state !== "recording") return
     if (silenceTimerRef.current) clearInterval(silenceTimerRef.current)
     const recorder = mediaRecorderRef.current
     recorder.onstop = async () => {
       audioContextRef.current?.close()
+      stopTracks()
       const blob = new Blob(audioChunksRef.current, { type: "audio/webm" })
       if (blob.size < 1000) { showError("No audio detected"); return }
       setMicState("transcribing")
