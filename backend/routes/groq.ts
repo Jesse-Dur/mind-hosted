@@ -193,6 +193,7 @@ Available tags: ${tagList || "none"}
   const historyActions: string[] = []
   let searchIterations = 0
   const MAX_SEARCH_ITERATIONS = 3
+  const executedCalls = new Set<string>() // dedup across iterations
 
   type SearchRecord = { tool: string; arg: string; results: string }
   const searchLog: SearchRecord[] = []
@@ -293,7 +294,14 @@ Available tags: ${tagList || "none"}
       .slice(0, MAX_TOOL_CALLS)
       .sort((a, b) => (a.function.name === "done" ? 1 : b.function.name === "done" ? -1 : 0))
     const hasSearches = toolCalls.some((c) => SEARCH_TOOLS.has(c.function.name))
-    const filteredCalls = hasSearches ? toolCalls.filter((c) => c.function.name !== "done" && !c.function.name.startsWith("create") && !c.function.name.startsWith("update") && !c.function.name.startsWith("delete") && !c.function.name.startsWith("move")) : toolCalls
+    const filteredCalls = hasSearches
+      ? toolCalls.filter((c) => c.function.name !== "done" && !c.function.name.startsWith("create") && !c.function.name.startsWith("update") && !c.function.name.startsWith("delete") && !c.function.name.startsWith("move"))
+      : toolCalls.filter((c) => {
+          const key = `${c.function.name}:${c.function.arguments}`
+          if (c.function.name === "done") return true
+          if (executedCalls.has(key)) { log(`⚠️ Skipping duplicate cross-iteration call: ${c.function.name}`); return false }
+          return true
+        })
     if (rawCalls.length > filteredCalls.length) {
       log(`⚠️ Trimmed tool calls: ${rawCalls.length} → ${filteredCalls.length} (dupes/cap/search-action separation)`)
     }
@@ -448,6 +456,7 @@ Available tags: ${tagList || "none"}
       }
 
       // result captured in searchLog/historyActions for next iteration's session state
+      executedCalls.add(`${call.function.name}:${call.function.arguments}`)
     }
   }
 
