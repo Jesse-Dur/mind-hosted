@@ -102,7 +102,15 @@ export const useStore = create<Store>((set, get) => ({
       try {
         const { status } = await api().ai.status()
         set({ aiStatus: status as AiStatus })
-        if (status === "idle") { clearInterval(poll); clearTimeout(safety) }
+        if (status === "idle") {
+          clearInterval(poll)
+          clearTimeout(safety)
+          // AI finished — poll thoughts 3 times, 1s apart to catch changes fast
+          const { loadThoughts } = useStore.getState()
+          setTimeout(() => loadThoughts(), 500)
+          setTimeout(() => loadThoughts(), 1500)
+          setTimeout(() => loadThoughts(), 2500)
+        }
       } catch { clearInterval(poll); clearTimeout(safety) }
     }, 1000)
   },

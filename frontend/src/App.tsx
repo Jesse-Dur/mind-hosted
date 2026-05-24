@@ -17,7 +17,7 @@ export default function App() {
 
   useEffect(() => {
     Promise.all([loadTiles(), loadThoughts(), loadTags()]).then(() => setLoaded(true))
-    const poll = setInterval(loadThoughts, 5000)
+    const poll = setInterval(loadThoughts, 15000)
     return () => clearInterval(poll)
   }, [loadTiles, loadThoughts, loadTags])
 
