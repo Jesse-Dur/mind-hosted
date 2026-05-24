@@ -77,7 +77,16 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
     mediaRecorderRef.current = recorder
 
     // collect audio chunks every 100ms to avoid losing the start of speech
-    recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data) }
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        // first real audio chunk confirms hardware is active — turn red now
+        if (mediaRecorderRef.current?.state === "recording" && micState !== "recording") {
+          setMicState("recording")
+          recordingStartRef.current = Date.now()
+        }
+        audioChunksRef.current.push(e.data)
+      }
+    }
     recorder.onstop = async () => {
       if (silenceTimerRef.current) clearInterval(silenceTimerRef.current)
       audioCtx.close()
@@ -87,7 +96,7 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
         return showError("No sound detected")
       }
       const durationMs = Date.now() - recordingStartRef.current
-      if (durationMs < 2000) return showError("Recording too short (min 2 seconds)")
+      if (durationMs < 1000) return showError("Recording too short (min 1 second)")
       const blob = new Blob(audioChunksRef.current, { type: "audio/webm" })
       if (blob.size < 1000) return showError("No audio detected")
       setMicState("transcribing")
@@ -102,9 +111,7 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
       }
     }
 
-    recorder.start(100)
-    recordingStartRef.current = Date.now()
-    setMicState("recording")
+    recorder.start(50)
   }
 
   function handleMic() {
