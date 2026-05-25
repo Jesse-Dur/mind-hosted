@@ -8,7 +8,7 @@ import { LoadingScreen } from "./components/LoadingScreen"
 import { useStore, setGetToken } from "./store"
 
 export default function App() {
-  const { getToken } = useAuth()
+  const { getToken, isSignedIn } = useAuth()
   const { loadTiles, loadThoughts, loadTags, setSpotlightOpen, spotlightOpen, sidebarOpen, setSidebarOpen } = useStore()
   const [openedByMic, setOpenedByMic] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -16,10 +16,11 @@ export default function App() {
   useEffect(() => { setGetToken(getToken) }, [getToken])
 
   useEffect(() => {
+    if (!isSignedIn) return
     Promise.all([loadTiles(), loadThoughts(), loadTags()]).then(() => setLoaded(true))
     const poll = setInterval(loadThoughts, 15000)
     return () => clearInterval(poll)
-  }, [loadTiles, loadThoughts, loadTags])
+  }, [isSignedIn, loadTiles, loadThoughts, loadTags])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
