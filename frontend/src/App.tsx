@@ -8,7 +8,7 @@ import { LoadingScreen } from "./components/LoadingScreen"
 import { useStore, setGetToken } from "./store"
 
 export default function App() {
-  const { getToken, isSignedIn } = useAuth()
+  const { getToken, isSignedIn, isLoaded } = useAuth()
   const { loadTiles, loadThoughts, loadTags, setSpotlightOpen, spotlightOpen, sidebarOpen, setSidebarOpen } = useStore()
   const [openedByMic, setOpenedByMic] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -16,11 +16,12 @@ export default function App() {
   useEffect(() => { setGetToken(getToken) }, [getToken])
 
   useEffect(() => {
-    if (!isSignedIn) return
+    if (!isLoaded) return
+    if (!isSignedIn) { setLoaded(true); return }
     Promise.all([loadTiles(), loadThoughts(), loadTags()]).then(() => setLoaded(true))
     const poll = setInterval(loadThoughts, 15000)
     return () => clearInterval(poll)
-  }, [isSignedIn, loadTiles, loadThoughts, loadTags])
+  }, [isLoaded, isSignedIn, loadTiles, loadThoughts, loadTags])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -59,8 +60,8 @@ export default function App() {
         </div>
       </SignedOut>
 
+      <LoadingScreen loaded={loaded} />
       <SignedIn>
-        <LoadingScreen loaded={loaded} />
         <div style={{ position: "fixed", top: 12, left: 12, zIndex: 50, display: "flex", alignItems: "center", gap: 6 }}>
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
