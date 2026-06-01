@@ -50,6 +50,14 @@ export function Canvas() {
     setDraft({ startX: sx, startY: sy, x: sx, y: sy, width: GRID, height: GRID })
   }
 
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setDraft(null)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
   function onMouseMove(e: React.MouseEvent<HTMLDivElement>) {
     if (!draft) return
     const { x, y } = toCanvas(e.clientX, e.clientY)
