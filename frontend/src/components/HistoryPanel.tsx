@@ -73,18 +73,32 @@ function ExpandDetail({ isAI, action, detail, visible }: { isAI: boolean; action
 
 export function HistoryPanel({ active, sidebarOpen }: { active: boolean; sidebarOpen: boolean }) {
   const [events, setEvents] = useState<HistoryEvent[]>([])
+  const [loading, setLoading] = useState(false)
   const [expanded, setExpanded] = useState<number | null>(null)
   const { getToken } = useAuth()
 
   useEffect(() => {
-    if (active && sidebarOpen) createApi(getToken).history.list().then(setEvents)
+    if (active && sidebarOpen) {
+      setLoading(true)
+      createApi(getToken).history.list().then((e) => { setEvents(e); setLoading(false) })
+    }
   }, [active, sidebarOpen, getToken])
 
   return (
     <div style={{ flex: 1, overflowY: "auto" }}>
       <style>{`@keyframes historyIn { from { opacity:0; transform:translateY(4px) } to { opacity:1; transform:translateY(0) } }`}</style>
-      {events.length === 0 && <p style={{ fontSize: 12, color: "#ccc" }}>No history yet</p>}
-      {events.map((e, i) => {
+      {loading && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {[1,2,3,4].map((i) => (
+            <div key={i} style={{ borderBottom: "1px solid #f5f5f5", paddingBottom: 12 }}>
+              <div style={{ height: 10, width: 80, borderRadius: 4, background: "#f0f0f0", marginBottom: 6 }} />
+              <div style={{ height: 12, width: "60%", borderRadius: 4, background: "#f5f5f5" }} />
+            </div>
+          ))}
+        </div>
+      )}
+      {!loading && events.length === 0 && <p style={{ fontSize: 12, color: "#ccc" }}>No history yet</p>}
+      {!loading && events.map((e, i) => {
         const detail = (typeof e.detail === "string" ? JSON.parse(e.detail) : e.detail) as Record<string, unknown>
         const isExpanded = expanded === e.id
         const isAI = e.action === "ai.process"
