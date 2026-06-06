@@ -13,9 +13,9 @@
     "concurrently": "^9.2.1"
   },
   "dependencies": {
-    "@clerk/backend": "^3.4.11",
+    "@clerk/backend": "^3.5.0",
     "@clerk/hono": "^0.1.33",
-    "hono": "^4.12.16",
+    "hono": "^4.12.23",
     "postgres": "^3.4.9"
   }
 }
