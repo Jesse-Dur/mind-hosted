@@ -1,6 +1,6 @@
 import { Hono } from "hono"
 import { cors } from "hono/cors"
-import { clerkMiddleware } from "@hono/clerk-auth"
+import { clerkMiddleware } from "@clerk/hono"
 import { tilesRoute } from "./routes/tiles"
 import { thoughtsRoute } from "./routes/thoughts"
 import { tagsRoute } from "./routes/tags"

@@ -1,5 +1,5 @@
 import { Hono } from "hono"
-import { getAuth } from "@hono/clerk-auth"
+import { getAuth } from "@clerk/hono"
 import { historyDb } from "../db/history"
 
 export const historyRoute = new Hono()
