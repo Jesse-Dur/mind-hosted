@@ -5,23 +5,74 @@ import { Sidebar } from "./components/Sidebar"
 import { Spotlight } from "./components/Spotlight"
 import { AiStatusPill } from "./components/AiStatusPill"
 import { LoadingScreen } from "./components/LoadingScreen"
+import { TabBar } from "./components/TabBar"
+import { Tooltip } from "./components/Tooltip"
 import { useStore, setGetToken } from "./store"
 
 export default function App() {
   const { getToken, isSignedIn, isLoaded } = useAuth()
-  const { loadTiles, loadThoughts, loadTags, setSpotlightOpen, spotlightOpen, sidebarOpen, setSidebarOpen } = useStore()
+  const { loadTiles, loadThoughts, loadTags, loadCanvases, hydrateRemainingCanvases, setSpotlightOpen, spotlightOpen, sidebarOpen, setSidebarOpen, tabsVisible } = useStore()
   const [openedByMic, setOpenedByMic] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const [tabBarVisible, setTabBarVisible] = useState(tabsVisible)
+  const [tabBarAnimating, setTabBarAnimating] = useState(false)
+
+  // Delay unmount of TabBar so slide-out animation can play
+  useEffect(() => {
+    if (tabsVisible) {
+      setTabBarVisible(true)
+      setTabBarAnimating(false)
+    } else {
+      setTabBarAnimating(true)
+      const t = setTimeout(() => { setTabBarVisible(false); setTabBarAnimating(false) }, 180)
+      return () => clearTimeout(t)
+    }
+  }, [tabsVisible])
 
   useEffect(() => { setGetToken(getToken) }, [getToken])
 
   useEffect(() => {
     if (!isLoaded) return
     if (!isSignedIn) { setLoaded(true); return }
-    Promise.all([loadTiles(), loadThoughts(), loadTags()]).then(() => setLoaded(true))
+    let cancelled = false
+    let settleTimer: number | null = null
+    let cancelIdleHydration: (() => void) | null = null
+
+    async function boot() {
+      // Load canvases first so the restored tab id is known before canvas data is fetched.
+      const initialCanvasId = await loadCanvases()
+      if (cancelled) return
+
+      const initialCanvasData = initialCanvasId === null
+        ? Promise.resolve()
+        : Promise.all([loadTiles(initialCanvasId), loadThoughts(initialCanvasId)]).then(() => undefined)
+      await Promise.all([initialCanvasData, loadTags()])
+      if (cancelled) return
+
+      setLoaded(true)
+      settleTimer = window.setTimeout(() => {
+        const hydrate = () => {
+          if (!cancelled) hydrateRemainingCanvases().catch(console.error)
+        }
+        if ("requestIdleCallback" in window) {
+          const idleId = window.requestIdleCallback(hydrate, { timeout: 1000 })
+          cancelIdleHydration = () => window.cancelIdleCallback(idleId)
+        } else {
+          const fallbackTimer = window.setTimeout(hydrate, 0)
+          cancelIdleHydration = () => window.clearTimeout(fallbackTimer)
+        }
+      }, 350)
+    }
+
+    boot().catch(console.error)
     const poll = setInterval(loadThoughts, 15000)
-    return () => clearInterval(poll)
-  }, [isLoaded, isSignedIn, loadTiles, loadThoughts, loadTags])
+    return () => {
+      cancelled = true
+      if (settleTimer !== null) window.clearTimeout(settleTimer)
+      cancelIdleHydration?.()
+      clearInterval(poll)
+    }
+  }, [isLoaded, isSignedIn, loadCanvases, loadTiles, loadThoughts, loadTags, hydrateRemainingCanvases])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -62,22 +113,27 @@ export default function App() {
 
       <LoadingScreen loaded={loaded} />
       <SignedIn>
-        <div style={{ position: "fixed", top: 12, left: 12, zIndex: 50, display: "flex", alignItems: "center", gap: 6 }}>
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            style={{ background: "none", border: "none", cursor: "pointer", width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.15s ease", color: "#aaa" }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "#ebebeb")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
-            title="Sidebar"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ pointerEvents: "none" }}>
-              <path d="M2 4h12M2 8h8M2 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            </svg>
-          </button>
-          <AiStatusPill />
-        </div>
         <Sidebar />
-        <Canvas />
+        {tabBarVisible && <TabBar slidingOut={tabBarAnimating} />}
+        {!tabsVisible && (
+          <div style={{ position: "fixed", top: 12, left: 12, zIndex: 50, display: "flex", alignItems: "center", gap: 6 }}>
+            <Tooltip label="Sidebar" placement="bottom" align="start">
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                style={{ background: "none", border: "none", cursor: "pointer", width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.15s ease", color: "#aaa" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#ebebeb")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+                aria-label="Sidebar"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ pointerEvents: "none" }}>
+                  <path d="M2 4h12M2 8h8M2 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+              </button>
+            </Tooltip>
+            <AiStatusPill />
+          </div>
+        )}
+        <Canvas tabBarVisible={tabsVisible} />
         {spotlightOpen && <Spotlight openedByMic={openedByMic} onClose={() => { setSpotlightOpen(false); setOpenedByMic(false) }} />}
       </SignedIn>
     </>

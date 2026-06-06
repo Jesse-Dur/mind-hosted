@@ -45,5 +45,5 @@ backend/test/results-*.csv
 .amazonq/
 
 # AI context
-CLAUDE.md
 HANDOFF.md
+AGENTS.md

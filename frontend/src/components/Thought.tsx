@@ -1,7 +1,5 @@
 import { useState, useRef, useEffect } from "react"
 import { createPortal } from "react-dom"
-import { useAuth } from "@clerk/clerk-react"
-import { createApi } from "../api/client"
 import { useStore } from "../store"
 import { TagMenu } from "./TagMenu"
 import { CloseButton } from "./CloseButton"
@@ -12,15 +10,15 @@ import type { Thought as ThoughtType } from "../types"
 
 interface Props {
   thought: ThoughtType
-  onDragStart: (id: number) => void
-  onDragOver: (id: number) => void
+  onDragStart: (id: number, point: { clientX: number; clientY: number }) => void
+  onDragMove: (clientX: number, clientY: number) => void
+  onDragOver: (id: number, placement: "before" | "after") => void
   onDrop: () => void
   dragging: boolean
 }
 
-export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: Props) {
-  const { newThoughtIds, highlightedId } = useStore()
-  const { getToken } = useAuth()
+export function Thought({ thought, onDragStart, onDragMove, onDragOver, onDrop, dragging }: Props) {
+  const { newThoughtIds, highlightedId, removeThought, updateThoughtTags } = useStore()
   const isNew = newThoughtIds.has(thought.id)
   const isHighlighted = highlightedId?.type === "thought" && Number(highlightedId.id) === Number(thought.id)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -32,13 +30,12 @@ export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: 
 
   function remove(e: React.MouseEvent) {
     e.stopPropagation()
-    useStore.setState((s) => ({ thoughts: s.thoughts.filter((t) => t.id !== thought.id) }))
-    createApi(getToken).thoughts.remove(thought.id).catch(console.error)
+    removeThought(thought.id)
   }
 
   async function onTagUpdate(tags: string[]) {
     setLocalTags(tags)
-    await createApi(getToken).thoughts.updateTags(thought.id, tags)
+    await updateThoughtTags(thought.id, tags)
   }
 
   return (
@@ -46,10 +43,27 @@ export function Thought({ thought, onDragStart, onDragOver, onDrop, dragging }: 
       <style>{`@keyframes thoughtIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } } @keyframes thoughtHighlight { 0% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0) } 15% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0.03), 0 0 0 2px rgba(124,58,237,0.4) } 50% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0.03), 0 0 0 2px rgba(124,58,237,0.5) } 80% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0.03), 0 0 0 2px rgba(124,58,237,0.4) } 100% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0) } }`}</style>
       <div
         draggable={!editing}
-        onDragStart={() => !editing && onDragStart(thought.id)}
+        onDragStart={(e) => {
+          if (editing) return
+          e.dataTransfer.effectAllowed = "move"
+          onDragStart(thought.id, { clientX: e.clientX, clientY: e.clientY })
+        }}
+        onDrag={(e) => {
+          if (e.clientX === 0 && e.clientY === 0) return
+          onDragMove(e.clientX, e.clientY)
+        }}
         onDragEnd={onDrop}
-        onDragOver={(e) => { e.preventDefault(); onDragOver(thought.id) }}
-        onDrop={onDrop}
+        onDragOver={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          const rect = e.currentTarget.getBoundingClientRect()
+          onDragOver(thought.id, e.clientY < rect.top + rect.height / 2 ? "before" : "after")
+        }}
+        onDrop={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          onDrop()
+        }}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY }) }}
         onClick={(e) => e.stopPropagation()}
         style={{

@@ -377,7 +377,7 @@ Available tags: ${tagList || "none"}
 
         } else if (call.function.name === "search_by_tile") {
           const tileId = Number(args.tile_id)
-          const results = (await thoughtsDb.list(userId, tileId)).slice(0, 20).map((t) => ({ id: t.id, content: t.content, tags: t.tags }))
+          const results = (await thoughtsDb.list(userId, { tileId })).slice(0, 20).map((t) => ({ id: t.id, content: t.content, tags: t.tags }))
           const tileName = tiles.find((t) => Number(t.id) === tileId)?.title ?? tileId
           log(`📂 search_by_tile(${tileId} "${tileName}") → ${results.length} result(s)`)
           const resultStr = results.length
@@ -446,7 +446,7 @@ Available tags: ${tagList || "none"}
               log(`⚠️ move_thought: tile_id ${tileId} not found`)
               result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
             } else {
-              await thoughtsDb.move(id, tileId, userId, true)
+              await thoughtsDb.move(id, tileId, userId, undefined, true)
               const action = `Moved thought ${id} to "${validTile.title}"`
               historyActions.push(action)
               log(`📦 ${action}`)

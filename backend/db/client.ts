@@ -4,9 +4,19 @@ if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set")
 export const sql = postgres(process.env.DATABASE_URL)
 
 await sql.unsafe(`
+  CREATE TABLE IF NOT EXISTS canvases (
+    id BIGSERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT 'Home',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_favourite BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
   CREATE TABLE IF NOT EXISTS tiles (
     id BIGSERIAL PRIMARY KEY,
     user_id TEXT NOT NULL,
+    canvas_id BIGINT REFERENCES canvases(id) ON DELETE SET NULL,
     title TEXT NOT NULL DEFAULT 'New Tile',
     x INTEGER NOT NULL DEFAULT 0,
     y INTEGER NOT NULL DEFAULT 0,
@@ -36,6 +46,9 @@ await sql.unsafe(`
     color TEXT NOT NULL DEFAULT '#444',
     UNIQUE(user_id, name)
   );
+
+  ALTER TABLE tiles ADD COLUMN IF NOT EXISTS canvas_id BIGINT REFERENCES canvases(id) ON DELETE SET NULL;
+  ALTER TABLE canvases ADD COLUMN IF NOT EXISTS is_favourite BOOLEAN NOT NULL DEFAULT FALSE;
 
   CREATE TABLE IF NOT EXISTS history (
     id BIGSERIAL PRIMARY KEY,

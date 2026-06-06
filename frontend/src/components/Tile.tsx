@@ -1,20 +1,29 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useStore } from "../store"
 import { TileHeader } from "./TileHeader"
 import { TileContent } from "./TileContent"
 import { useTileDrag } from "../hooks/useTileDrag"
-import type { Tile as TileType } from "../types"
+import { getCrossCanvasDrag, subscribeCrossCanvasDrag } from "../utils/crossCanvasDrag"
+import type { Thought, Tile as TileType } from "../types"
 
-export function Tile({ tile, scale = 1 }: { tile: TileType; isNew?: boolean; scale?: number }) {
-  const { thoughts, highlightedId } = useStore()
+export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: Thought[]; isNew?: boolean; scale?: number }) {
+  const { highlightedId } = useStore()
   const [editing, setEditing] = useState(false)
   const isHighlighted = highlightedId?.type === "tile" && Number(highlightedId.id) === Number(tile.id)
+  const [isDragging, setIsDragging] = useState(() => {
+    const session = getCrossCanvasDrag()
+    return session?.kind === "tile" && session.tile.id === tile.id
+  })
+
+  useEffect(() => subscribeCrossCanvasDrag((session) => {
+    setIsDragging(session?.kind === "tile" && session.tile.id === tile.id)
+  }), [tile.id])
 
   const tileThoughts = thoughts
     .filter((t) => t.tile_id === tile.id)
     .sort((a, b) => a.sort_order - b.sort_order)
 
-  const { onDragDown, onResizeDown } = useTileDrag(tile, scale)
+  const { onDragDown, onResizeDown } = useTileDrag(tile, tileThoughts, scale)
 
   return (
     <>
@@ -32,7 +41,12 @@ export function Tile({ tile, scale = 1 }: { tile: TileType; isNew?: boolean; sca
           flexDirection: "column",
           backdropFilter: "blur(8px)",
           userSelect: "none",
-          animation: isHighlighted ? "tileHighlight 3s linear forwards" : undefined,
+          opacity: isDragging ? 0.72 : 1,
+          boxShadow: isDragging ? "0 14px 32px rgba(0,0,0,0.16)" : undefined,
+          transition: "opacity 0.15s ease, box-shadow 0.15s ease",
+          animation: isHighlighted && !isDragging ? "tileHighlight 3s linear forwards" : undefined,
+          pointerEvents: "auto",
+          zIndex: isDragging ? 20 : undefined,
         }}
       >
         <TileHeader tile={tile} onDragDown={onDragDown} editing={editing} setEditing={setEditing} />

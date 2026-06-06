@@ -7,6 +7,9 @@ const ACTION_LABELS: Record<string, string> = {
   "tile.create": "Created tile",
   "tile.rename": "Renamed tile",
   "tile.delete": "Deleted tile",
+  "canvas.create": "Created Canvas",
+  "canvas.rename": "Renamed Canvas",
+  "canvas.delete": "Deleted Canvas",
   "thought.create": "Added thought",
   "thought.update": "Edited thought",
   "thought.tag": "Tagged thought",
@@ -57,6 +60,11 @@ function ExpandDetail({ isAI, action, detail, visible }: { isAI: boolean; action
       rows.push(`Tags: ${(detail.tags as string[] ?? []).join(", ") || "none"}`)
     } else if (action === "tile.create" || action === "tile.update" || action === "tile.delete") {
       rows.push(`Tile: "${detail.title}"`)
+    } else if (action === "canvas.create" || action === "canvas.delete") {
+      rows.push(`Canvas: "${detail.name}"`)
+    } else if (action === "canvas.rename") {
+      rows.push(`Before: "${detail.old_name}"`)
+      rows.push(`After: "${detail.name}"`)
     }
     if (rows.length === 0) return <pre style={{ color: "#555", whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>{JSON.stringify(detail, null, 2)}</pre>
     return <>{rows.map((r, i) => <p key={i} style={{ color: "#333", margin: i === rows.length - 1 ? 0 : "0 0 5px" }}>• {r}</p>)}</>

@@ -9,9 +9,10 @@ import type { Tile, Thought } from "../types"
 import { findEmptySpot } from "../utils/findEmptySpot"
 
 export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onClose: () => void }) {
-  const { tiles, thoughts, setSpotlightOpen, addTile, setAiStatus, startAiPolling, setHighlight } = useStore()
+  const { tiles, thoughts, tileCache, thoughtCache, addTile, processAiInput, setHighlight, setActiveCanvas, activeCanvasId } = useStore()
   const { getToken } = useAuth()
   const [showPast, setShowPast] = useState(false)
+  const [allTabs, setAllTabs] = useState(false)
   const [pastTiles, setPastTiles] = useState<Tile[]>([])
   const [pastThoughts, setPastThoughts] = useState<Thought[]>([])
   const [query, setQuery] = useState("")
@@ -32,12 +33,18 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
   const isOverLimit = aiCharsLeft < 0
   const isTagMode = query.startsWith("#")
   const tagSearch = isTagMode ? query.slice(1).toLowerCase() : ""
+  const cachedTiles = [...new Map([...tileCache.values()].flat().map((t) => [t.id, t])).values()]
+  const cachedThoughts = [...new Map([...thoughtCache.values()].flat().map((t) => [t.id, t])).values()]
+  // All Tabs uses warmed caches; active mode stays limited to the visible canvas.
+  const visibleTiles = allTabs ? cachedTiles : tiles.filter((t) => t.canvas_id === activeCanvasId)
+  const visibleThoughts = allTabs ? cachedThoughts : thoughts.filter((t) => visibleTiles.some((ti) => ti.id === t.tile_id))
   const tagFilteredThoughts = isTagMode
-    ? thoughts.filter((t) => t.tags.some((tag) => tag.toLowerCase().includes(tagSearch)))
-    : thoughts
+    ? visibleThoughts.filter((t) => t.tags.some((tag) => tag.toLowerCase().includes(tagSearch)))
+    : visibleThoughts
+
   const hasMatches = !query.trim() ||
-    tiles.some((t) => t.title.toLowerCase().includes(query.toLowerCase())) ||
-    thoughts.some((t) => t.content.toLowerCase().includes(query.toLowerCase()))
+    visibleTiles.some((t) => t.title.toLowerCase().includes(query.toLowerCase())) ||
+    visibleThoughts.some((t) => t.content.toLowerCase().includes(query.toLowerCase()))
   const highlightAI = !hasMatches || isAIMode
 
   useEffect(() => {
@@ -57,9 +64,7 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
       } else if (micState === "recording") {
         stopAndTranscribe((text) => {
           const input = text.trim()
-          setAiStatus("processing")
-          startAiPolling()
-          createApi(getToken).ai.process(input, "medium")
+          processAiInput(input, "medium")
           onClose()
         })
       }
@@ -70,7 +75,7 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
       window.removeEventListener("keydown", onKey)
       window.removeEventListener("mic-shortcut", onMicShortcut)
     }
-  }, [setSpotlightOpen, micState, cancelRecording, stopForEditing, stopAndTranscribe, handleMic, getToken, setAiStatus, startAiPolling])
+  }, [micState, cancelRecording, stopForEditing, stopAndTranscribe, handleMic, onClose, processAiInput])
 
   async function togglePast() {
     if (!showPast) {
@@ -84,7 +89,7 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
 
   function handleNewTile(title?: string) {
     const { x, y } = findEmptySpot(tiles, 280, 200)
-    addTile({ title: title ?? "New Tile", x, y, width: 280, height: 200, importance: 1, visible: true })
+    addTile({ title: title ?? "New Tile", x, y, width: 280, height: 200, importance: 1, visible: true, canvas_id: activeCanvasId })
     onClose()
   }
 
@@ -92,9 +97,32 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
     const input = isAIMode ? query.slice(1).trim() : query.trim()
     if (!input) return
     if (input.length > AI_LIMIT) { return }
-    setAiStatus("processing")
-    startAiPolling()
-    createApi(getToken).ai.process(input, "medium")
+    processAiInput(input, "medium")
+    onClose()
+  }
+
+  function switchToResultCanvas(canvasId: number | null) {
+    // Search results can come from warmed caches, so switch tabs before highlighting off-canvas matches.
+    if (canvasId !== null && canvasId !== activeCanvasId) setActiveCanvas(canvasId)
+  }
+
+  function handleTileSelect(tile: Tile) {
+    switchToResultCanvas(tile.canvas_id)
+    setHighlight("tile", tile.id)
+    onClose()
+  }
+
+  function getThoughtCanvasId(thought: Thought, parentTile?: Tile) {
+    if (parentTile?.canvas_id !== null && parentTile?.canvas_id !== undefined) return parentTile.canvas_id
+    for (const [canvasId, cachedThoughts] of thoughtCache) {
+      if (cachedThoughts.some((cachedThought) => cachedThought.id === thought.id)) return canvasId
+    }
+    return null
+  }
+
+  function handleThoughtSelect(thought: Thought, parentTile?: Tile) {
+    switchToResultCanvas(getThoughtCanvasId(thought, parentTile))
+    setHighlight("thought", thought.id)
     onClose()
   }
 
@@ -201,12 +229,16 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
             </div>
           </div>
 
-          {/* Past toggle */}
+          {/* Past + All Tabs toggles */}
           <div style={{ padding: "6px 12px", borderBottom: "1px solid #f5f5f5", display: "flex", alignItems: "center", gap: 8 }}>
             <button
               onClick={togglePast}
               style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 99, border: "1px solid", borderColor: showPast ? "#1a1a1a" : "#e0e0e0", background: showPast ? "#1a1a1a" : "transparent", color: showPast ? "#fff" : "#999", cursor: "pointer", transition: "background 0.15s ease, color 0.15s ease, border-color 0.15s ease" }}
             >Past</button>
+            <button
+              onClick={() => setAllTabs((v) => !v)}
+              style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 99, border: "1px solid", borderColor: allTabs ? "#1a1a1a" : "#e0e0e0", background: allTabs ? "#1a1a1a" : "transparent", color: allTabs ? "#fff" : "#999", cursor: "pointer", transition: "background 0.15s ease, color 0.15s ease, border-color 0.15s ease" }}
+            >All Tabs</button>
             {showPast && <span style={{ fontSize: 11, color: "#bbb" }}>Showing past thoughts</span>}
           </div>
 
@@ -227,22 +259,22 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
                 </Command.Item>
               </Command.Group>
 
-              {tiles.length > 0 && (
+              {visibleTiles.length > 0 && (
                 <Command.Group heading="Tiles">
-                  {tiles.map((tile) => (
-                    <Command.Item key={tile.id} value={tile.title} onSelect={() => { setHighlight("tile", tile.id); onClose() }}>
+                  {visibleTiles.map((tile) => (
+                    <Command.Item key={tile.id} value={tile.title} onSelect={() => handleTileSelect(tile)}>
                       {tile.title}
                     </Command.Item>
                   ))}
                 </Command.Group>
               )}
 
-              {(isTagMode ? tagFilteredThoughts : thoughts).length > 0 && (
+              {(isTagMode ? tagFilteredThoughts : visibleThoughts).length > 0 && (
                 <Command.Group heading={isTagMode ? `Thoughts tagged #${tagSearch || "…"}` : "Thoughts"}>
-                  {(isTagMode ? tagFilteredThoughts : thoughts).map((t) => {
-                    const tile = tiles.find((ti) => ti.id === t.tile_id)
+                  {(isTagMode ? tagFilteredThoughts : visibleThoughts).map((t) => {
+                    const tile = visibleTiles.find((ti) => ti.id === t.tile_id)
                     return (
-                      <Command.Item key={t.id} value={t.content} onSelect={() => { setHighlight("thought", t.id); onClose() }}>
+                      <Command.Item key={t.id} value={t.content} onSelect={() => handleThoughtSelect(t, tile)}>
                         <span style={{ flex: 1 }}>{t.content}</span>
                         {isTagMode && t.tags.map((tag) => (
                           <span key={tag} style={{ fontSize: 10, color: "#888", background: "#f0f0f0", borderRadius: 4, padding: "1px 5px" }}>{tag}</span>
