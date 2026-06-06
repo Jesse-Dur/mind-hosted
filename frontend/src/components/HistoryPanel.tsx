@@ -59,13 +59,15 @@ function ExpandDetail({ isAI, action, detail, visible }: { isAI: boolean; action
       rows.push(`Tile: "${detail.title}"`)
     }
     if (rows.length === 0) return <pre style={{ color: "#555", whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>{JSON.stringify(detail, null, 2)}</pre>
-    return <>{rows.map((r, i) => <p key={i} style={{ color: "#333", marginBottom: 4 }}>• {r}</p>)}</>
+    return <>{rows.map((r, i) => <p key={i} style={{ color: "#333", margin: i === rows.length - 1 ? 0 : "0 0 5px" }}>• {r}</p>)}</>
   }
 
   return (
     <div style={{ overflow: "hidden", height, transition: "height 0.2s cubic-bezier(0.4,0,0.2,1)", opacity: visible ? 1 : 0 } as React.CSSProperties}>
-      <div ref={ref} style={{ background: "#fafafa", borderRadius: 6, padding: "8px 10px", fontSize: 11, marginTop: 8 }}>
-        {renderDetail()}
+      <div ref={ref} style={{ paddingTop: 8 }}>
+        <div style={{ background: "#fafafa", borderRadius: 6, padding: "8px 10px", fontSize: 11 }}>
+          {renderDetail()}
+        </div>
       </div>
     </div>
   )
