@@ -1,4 +1,4 @@
-import type { Tile, Thought, Tag, HistoryEvent } from "../types"
+import type { Tile, Thought, Tag, HistoryPage } from "../types"
 
 const BASE = "/api"
 
@@ -79,7 +79,11 @@ export function createApi(getToken: GetToken) {
     },
 
     history: {
-      list: () => req<HistoryEvent[]>("/history", getToken),
+      list: (cursor?: string | null, limit = 50) => {
+        const params = new URLSearchParams({ limit: String(limit) })
+        if (cursor) params.set("cursor", cursor)
+        return req<HistoryPage>(`/history?${params.toString()}`, getToken)
+      },
     },
   }
 }

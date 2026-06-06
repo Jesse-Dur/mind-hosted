@@ -40,3 +40,9 @@ export interface HistoryEvent {
   detail: string | Record<string, unknown>
   created_at: string
 }
+
+export interface HistoryPage {
+  events: HistoryEvent[]
+  nextCursor: string | null
+  hasMore: boolean
+}

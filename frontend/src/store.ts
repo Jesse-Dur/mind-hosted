@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import type { Tile, Thought, Tag } from "./types"
+import type { Tile, Thought, Tag, HistoryEvent } from "./types"
 import { createApi } from "./api/client"
 
 type GetToken = () => Promise<string | null>
@@ -10,10 +10,32 @@ const api = () => createApi(_getToken)
 
 export type AiStatus = "idle" | "processing" | "queued" | "limited"
 
+function historyTime(event: HistoryEvent) {
+  return new Date(event.created_at).getTime()
+}
+
+function sortHistoryEvents(a: HistoryEvent, b: HistoryEvent) {
+  return historyTime(b) - historyTime(a) || b.id - a.id
+}
+
+function mergeHistoryEvents(current: HistoryEvent[], incoming: HistoryEvent[]) {
+  const byId = new Map<number, HistoryEvent>()
+  for (const event of current) byId.set(event.id, event)
+  for (const event of incoming) byId.set(event.id, event)
+  return Array.from(byId.values()).sort(sortHistoryEvents)
+}
+
 interface Store {
   tiles: Tile[]
   thoughts: Thought[]
   tags: Tag[]
+  historyEvents: HistoryEvent[]
+  historyNextCursor: string | null
+  historyHasMore: boolean
+  historyLoaded: boolean
+  historyRefreshing: boolean
+  historyLoadingMore: boolean
+  newHistoryIds: Set<number>
   newThoughtIds: Set<number>
   thoughtStableKeys: Map<number, number>
   inFlightMoves: Set<number>
@@ -30,6 +52,8 @@ interface Store {
   loadTiles: () => Promise<void>
   loadThoughts: () => Promise<void>
   loadTags: () => Promise<void>
+  refreshHistory: () => Promise<void>
+  loadMoreHistory: () => Promise<void>
   loadAiStatus: () => Promise<void>
   startAiPolling: () => void
   setAiStatus: (status: AiStatus) => void
@@ -48,6 +72,13 @@ export const useStore = create<Store>((set, get) => ({
   tiles: [],
   thoughts: [],
   tags: [],
+  historyEvents: [],
+  historyNextCursor: null,
+  historyHasMore: false,
+  historyLoaded: false,
+  historyRefreshing: false,
+  historyLoadingMore: false,
+  newHistoryIds: new Set<number>(),
   newThoughtIds: new Set<number>(),
   thoughtStableKeys: new Map<number, number>(),
   inFlightMoves: new Set<number>(),
@@ -93,6 +124,67 @@ export const useStore = create<Store>((set, get) => ({
   loadTags: async () => {
     const tags = await api().tags.list()
     set({ tags })
+  },
+
+  refreshHistory: async () => {
+    if (get().historyRefreshing) return
+    set({ historyRefreshing: true })
+
+    let insertedIds = new Set<number>()
+    try {
+      const page = await api().history.list(null)
+      set((s) => {
+        const knownIds = new Set(s.historyEvents.map((event) => event.id))
+        const shouldAnimate = s.historyLoaded
+        insertedIds = shouldAnimate
+          ? new Set(page.events.filter((event) => !knownIds.has(event.id)).map((event) => event.id))
+          : new Set<number>()
+        const useLatestPageCursor = !s.historyLoaded || (!s.historyHasMore && page.hasMore)
+
+        return {
+          historyEvents: mergeHistoryEvents(s.historyEvents, page.events),
+          historyNextCursor: useLatestPageCursor ? page.nextCursor : s.historyNextCursor,
+          historyHasMore: useLatestPageCursor ? page.hasMore : s.historyHasMore,
+          historyLoaded: true,
+          newHistoryIds: insertedIds.size > 0 ? new Set([...s.newHistoryIds, ...insertedIds]) : s.newHistoryIds,
+        }
+      })
+    } catch (error) {
+      console.error(error)
+    } finally {
+      set({ historyRefreshing: false })
+    }
+
+    if (insertedIds.size > 0) {
+      setTimeout(() => {
+        set((s) => {
+          const next = new Set(s.newHistoryIds)
+          for (const id of insertedIds) next.delete(id)
+          return { newHistoryIds: next }
+        })
+      }, 1200)
+    }
+  },
+
+  loadMoreHistory: async () => {
+    const state = get()
+    if (state.historyLoadingMore || !state.historyHasMore || !state.historyNextCursor) return
+    const cursor = state.historyNextCursor
+    set({ historyLoadingMore: true })
+
+    try {
+      const page = await api().history.list(cursor)
+      set((s) => ({
+        historyEvents: mergeHistoryEvents(s.historyEvents, page.events),
+        historyNextCursor: page.nextCursor,
+        historyHasMore: page.hasMore,
+        historyLoaded: true,
+      }))
+    } catch (error) {
+      console.error(error)
+    } finally {
+      set({ historyLoadingMore: false })
+    }
   },
 
   loadAiStatus: async () => {

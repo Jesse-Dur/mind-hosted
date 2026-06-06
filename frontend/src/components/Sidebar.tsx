@@ -59,7 +59,7 @@ export function Sidebar() {
         </div>
 
         {activeTab === "tags" && <TagsPanel />}
-        {activeTab === "history" && <HistoryPanel active={activeTab === "history"} sidebarOpen={sidebarOpen} />}
+        {activeTab === "history" && <HistoryPanel sidebarOpen={sidebarOpen} />}
         {activeTab === "settings" && <SettingsPanel />}
       </div>
     </>
