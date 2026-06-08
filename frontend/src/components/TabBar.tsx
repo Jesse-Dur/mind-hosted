@@ -6,6 +6,7 @@ import { TabBarOutline } from "./TabBarOutline"
 import { Tooltip } from "./Tooltip"
 import { getTabShortcutAction, newCanvasShortcutLabel, tabShortcutLabel } from "../utils/tabShortcuts"
 import { getCrossCanvasDrag, moveCrossCanvasDrag, setCrossCanvasDragEnteredCanvas, subscribeCrossCanvasDrag, subscribeCrossCanvasDragPointer } from "../utils/crossCanvasDrag"
+import { canvasIdentityKey } from "../utils/canvasIdentity"
 import type { Canvas } from "../types"
 import type { CanvasDeleteOptions } from "../api/client"
 
@@ -45,12 +46,12 @@ type CanvasOrderUpdate = Pick<Canvas, "id" | "sort_order" | "is_favourite">
 export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
   const { canvases, activeCanvasId, setActiveCanvas, addCanvas, updateCanvas, removeCanvas, reorderCanvases, setSidebarOpen, sidebarOpen, aiStatus } = useStore()
   const aiExpanded = aiStatus !== "idle"
-  const [renamingId, setRenamingId] = useState<number | null>(null)
+  const [renamingKey, setRenamingKey] = useState<string | null>(null)
   const [selectRenameText, setSelectRenameText] = useState(false)
   const [renameValue, setRenameValue] = useState("")
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; canvas: Canvas } | null>(null)
   const [deleteCanvas, setDeleteCanvas] = useState<Canvas | null>(null)
-  const [newTabId, setNewTabId] = useState<number | null>(null)
+  const [newTabKey, setNewTabKey] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const [dragPreview, setDragPreview] = useState<DragPreview | null>(null)
@@ -86,7 +87,7 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (contextMenu || renamingId) return
+      if (contextMenu || renamingKey) return
       const action = getTabShortcutAction(e)
       if (!action) return
       e.preventDefault()
@@ -101,7 +102,7 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [activeCanvasId, canvases, contextMenu, renamingId])
+  }, [activeCanvasId, canvases, contextMenu, renamingKey])
 
   useEffect(() => {
     if (!contextMenu) return
@@ -111,10 +112,10 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
   }, [contextMenu])
 
   useEffect(() => {
-    if (renamingId === null) return
+    if (renamingKey === null) return
     renameRef.current?.focus()
     if (selectRenameText) renameRef.current?.select()
-  }, [renamingId, selectRenameText])
+  }, [renamingKey, selectRenameText])
 
   useEffect(() => () => dragCleanupRef.current?.(), [])
 
@@ -209,32 +210,36 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
     armCrossDragHover(canvasId)
   }
 
-  async function handleNewTab() {
-    const tempId = -Date.now()
-    setNewTabId(tempId)
-    setTimeout(() => setNewTabId(null), 350)
-    try {
-      const canvas = await addCanvas("New Canvas")
-      setActiveCanvas(canvas.id)
-      setRenamingId(canvas.id)
-      setSelectRenameText(true)
-      setRenameValue("New Canvas")
-      setTimeout(() => scrollRef.current?.scrollTo({ left: 0, behavior: "smooth" }), 50)
-    } catch (error) {
+  function handleNewTab() {
+    const { canvas, persisted } = addCanvas("New Canvas")
+    const canvasKey = canvasIdentityKey(canvas)
+    setNewTabKey(canvasKey)
+    setTimeout(() => setNewTabKey((current) => current === canvasKey ? null : current), 350)
+    setActiveCanvas(canvas.id)
+    setRenamingKey(canvasKey)
+    setSelectRenameText(true)
+    setRenameValue(canvas.name)
+    setTimeout(() => scrollRef.current?.scrollTo({ left: 0, behavior: "smooth" }), 50)
+    persisted.catch((error) => {
       console.error(error)
-    }
+      setRenamingKey((current) => current === canvasKey ? null : current)
+      setNewTabKey((current) => current === canvasKey ? null : current)
+    })
   }
 
   function startRename(canvas: Canvas) {
-    setRenamingId(canvas.id)
+    setRenamingKey(canvasIdentityKey(canvas))
     setSelectRenameText(false)
     setRenameValue(canvas.name)
     setContextMenu(null)
   }
 
   function commitRename() {
-    if (renamingId !== null && renameValue.trim()) updateCanvas(renamingId, { name: renameValue.trim() })
-    setRenamingId(null)
+    const canvas = renamingKey === null
+      ? null
+      : useStore.getState().canvases.find((item) => canvasIdentityKey(item) === renamingKey) ?? null
+    if (canvas !== null && renameValue.trim()) updateCanvas(canvas.id, { name: renameValue.trim() })
+    setRenamingKey(null)
     setSelectRenameText(false)
   }
 
@@ -358,9 +363,9 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
   }
 
   function onTabPointerDown(e: React.PointerEvent<HTMLDivElement>, canvas: Canvas) {
-    if (e.button !== 0 || renamingId === canvas.id) return
+    if (e.button !== 0 || renamingKey === canvasIdentityKey(canvas)) return
     // Tab clicks prevent native blur for drag support, so save an active rename before switching.
-    if (renamingId !== null) commitRename()
+    if (renamingKey !== null) commitRename()
     e.preventDefault()
     dragCleanupRef.current?.()
     const rect = tabRefs.current.get(canvas.id)?.getBoundingClientRect()
@@ -499,13 +504,14 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
         {/* Tabs scroll area — bounded so it can't overlap left controls or + button */}
         <div ref={scrollRef} className="tabbar-scroll" style={{ position: "absolute", top: 0, left: leftWidth, right: 32, display: "flex", alignItems: "flex-start", overflowX: "auto", justifyContent: "flex-end", gap: 1, zIndex: 2, pointerEvents: "none" }}>
           {displayCanvases.map((canvas, index) => {
+            const canvasKey = canvasIdentityKey(canvas)
             const isActive = canvas.id === activeCanvasId
-            const isNew = canvas.id === newTabId
+            const isNew = canvasKey === newTabKey
             const isDragging = canvas.id === draggingId
             const isCrossDragHover = canvas.id === crossDragHoverId
             const dragPlaceholderFavourite = isDragging ? dragPreviewFavourite : canvas.is_favourite
             return (
-              <Tooltip key={canvas.stableKey ?? canvas.id} label={tabShortcutLabel(index)} placement="bottom" disabled={contextMenu !== null || renamingId === canvas.id || isDragging}>
+              <Tooltip key={canvasKey} label={tabShortcutLabel(index)} placement="bottom" disabled={contextMenu !== null || renamingKey === canvasKey || isDragging}>
                 <div
                   ref={(el) => {
                     if (el) tabRefs.current.set(canvas.id, el)
@@ -520,12 +526,12 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
                     moveCrossCanvasDrag(e.clientX, e.clientY)
                   }}
                   onDoubleClick={() => startRename(canvas)}
-                  onContextMenu={(e) => { 
-                  e.preventDefault()
-                  const menuWidth = 160
-                  const x = e.clientX + menuWidth > window.innerWidth ? e.clientX - menuWidth : e.clientX
-                  setContextMenu({ x, y: e.clientY, canvas })
-                }}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    const menuWidth = 160
+                    const x = e.clientX + menuWidth > window.innerWidth ? e.clientX - menuWidth : e.clientX
+                    setContextMenu({ x, y: e.clientY, canvas })
+                  }}
                   style={{
                     display: isDragging ? "grid" : "flex",
                     gridTemplateColumns: isDragging ? dragGridColumns : undefined,
@@ -553,12 +559,12 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
                   }}
                 >
                   <span style={{ position: "absolute", right: 0, top: BAR_H, bottom: 0, width: 1, background: "#ddd6fe", pointerEvents: "none" }} />
-                  {renamingId === canvas.id
+                  {renamingKey === canvasKey
                     ? <>
                         {canvas.is_favourite && <span style={{ fontSize: 9, color: "#f59e0b" }}>★</span>}
                         <span style={{ position: "relative", display: "inline-flex", alignItems: "center", minWidth: 40 }}>
                           <span aria-hidden style={{ visibility: "hidden", fontSize: 12, fontWeight: 600, whiteSpace: "pre", padding: "0 2px" }}>{renameValue || " "}</span>
-                        <input ref={renameRef} value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onBlur={commitRename} onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") { setRenamingId(null); setSelectRenameText(false) } }} onClick={(e) => e.stopPropagation()} style={{ position: "absolute", inset: 0, border: "none", outline: "none", background: "transparent", fontSize: 12, fontWeight: 600, color: "#1a1a1a", width: "100%" }} />
+                          <input ref={renameRef} value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onBlur={commitRename} onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") { setRenamingKey(null); setSelectRenameText(false) } }} onClick={(e) => e.stopPropagation()} style={{ position: "absolute", inset: 0, border: "none", outline: "none", background: "transparent", fontSize: 12, fontWeight: 600, color: "#1a1a1a", width: "100%" }} />
                         </span>
                       </>
                     : isDragging

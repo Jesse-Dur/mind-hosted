@@ -2,6 +2,24 @@ import type { Canvas } from "../types"
 import type { CanvasSlice, StoreSlice } from "./types"
 import { getApi } from "./apiAuth"
 import { getStoredActiveCanvasId, readStoredActiveCanvasId, writeStoredActiveCanvasId } from "./storage"
+import { isTemporaryCanvasId } from "../utils/canvasIdentity"
+
+type CanvasPersistUpdate = Partial<Pick<Canvas, "name" | "sort_order" | "is_favourite">>
+
+let temporaryCanvasSequence = 0
+
+function createTemporaryCanvasId() {
+  temporaryCanvasSequence += 1
+  return -(Date.now() * 1000 + temporaryCanvasSequence)
+}
+
+function buildPersistUpdate(serverCanvas: Canvas, localCanvas: Canvas) {
+  const update: CanvasPersistUpdate = {}
+  if (localCanvas.name !== serverCanvas.name) update.name = localCanvas.name
+  if (localCanvas.sort_order !== serverCanvas.sort_order) update.sort_order = localCanvas.sort_order
+  if (localCanvas.is_favourite !== serverCanvas.is_favourite) update.is_favourite = localCanvas.is_favourite
+  return update
+}
 
 export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
   canvases: [],
@@ -39,17 +57,19 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
   },
 
   setActiveCanvas: (id) => {
-    writeStoredActiveCanvasId(id)
     const { tileCache, thoughtCache } = get()
-    // Serve cached canvas data instantly, then still refresh in background.
+    if (!isTemporaryCanvasId(id)) writeStoredActiveCanvasId(id)
+    // Serve cached canvas data instantly. Temporary canvases only exist locally
+    // until creation settles, so fetching them would produce rejected requests.
     set({ activeCanvasId: id, tiles: tileCache.get(id) ?? [], thoughts: thoughtCache.get(id) ?? [] })
+    if (isTemporaryCanvasId(id)) return
     void get().loadTiles(id)
     void get().loadThoughts(id)
   },
 
-  addCanvas: async (name) => {
+  addCanvas: (name) => {
     const { canvases } = get()
-    const tempId = -Date.now()
+    const tempId = createTemporaryCanvasId()
     const stableKey = `canvas-${tempId}`
     const tempCanvas: Canvas = {
       id: tempId,
@@ -65,23 +85,65 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
       thoughtCache: new Map(s.thoughtCache).set(tempId, []),
     }))
 
-    try {
-      const canvas = await getApi().canvases.create(name, canvases.length)
+    const persisted = getApi().canvases.create(name, canvases.length).then(async (canvas) => {
+      let localCanvas: Canvas = { ...canvas, stableKey }
       set((s) => {
         const tileCache = new Map(s.tileCache)
         const thoughtCache = new Map(s.thoughtCache)
-        tileCache.set(canvas.id, tileCache.get(tempId) ?? [])
-        thoughtCache.set(canvas.id, thoughtCache.get(tempId) ?? [])
+        const tempTiles = tileCache.get(tempId) ?? []
+        const tempThoughts = thoughtCache.get(tempId) ?? []
+        const optimisticCanvas = s.canvases.find((item) => item.id === tempId) ?? tempCanvas
+        localCanvas = {
+          ...canvas,
+          name: optimisticCanvas.name,
+          sort_order: optimisticCanvas.sort_order,
+          is_favourite: optimisticCanvas.is_favourite,
+          stableKey,
+        }
+
+        tileCache.set(canvas.id, tempTiles)
+        thoughtCache.set(canvas.id, tempThoughts)
         tileCache.delete(tempId)
         thoughtCache.delete(tempId)
+        if (s.activeCanvasId === tempId) writeStoredActiveCanvasId(canvas.id)
+
         return {
-          canvases: s.canvases.map((item) => item.id === tempId ? { ...canvas, stableKey } : item),
+          canvases: s.canvases.map((item) => item.id === tempId ? localCanvas : item),
+          activeCanvasId: s.activeCanvasId === tempId ? canvas.id : s.activeCanvasId,
+          tiles: s.activeCanvasId === tempId ? tempTiles : s.tiles,
+          thoughts: s.activeCanvasId === tempId ? tempThoughts : s.thoughts,
           tileCache,
           thoughtCache,
         }
       })
-      return { ...canvas, stableKey }
-    } catch (error) {
+
+      const update = buildPersistUpdate(canvas, localCanvas)
+      if (Object.keys(update).length === 0) return localCanvas
+
+      try {
+        const savedCanvas = await getApi().canvases.update(canvas.id, update)
+        let displayedCanvas = { ...savedCanvas, stableKey }
+        set((s) => {
+          const currentCanvas = s.canvases.find((item) => item.id === canvas.id)
+          displayedCanvas = currentCanvas
+            ? {
+                ...savedCanvas,
+                name: currentCanvas.name,
+                sort_order: currentCanvas.sort_order,
+                is_favourite: currentCanvas.is_favourite,
+                stableKey,
+              }
+            : displayedCanvas
+          return {
+            canvases: s.canvases.map((item) => item.id === canvas.id ? displayedCanvas : item),
+          }
+        })
+        return displayedCanvas
+      } catch (error) {
+        console.error(error)
+        return localCanvas
+      }
+    }).catch((error) => {
       set((s) => {
         const tileCache = new Map(s.tileCache)
         const thoughtCache = new Map(s.thoughtCache)
@@ -103,11 +165,14 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
         }
       })
       throw error
-    }
+    })
+
+    return { canvas: tempCanvas, persisted }
   },
 
   updateCanvas: async (id, data) => {
     set((s) => ({ canvases: s.canvases.map((canvas) => canvas.id === id ? { ...canvas, ...data } : canvas) }))
+    if (isTemporaryCanvasId(id)) return
     getApi().canvases.update(id, data).catch(console.error)
   },
 
@@ -119,7 +184,8 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
         return update ? { ...canvas, ...update } : canvas
       }),
     }))
-    getApi().canvases.reorder(updates).catch(console.error)
+    const persistedUpdates = updates.filter((update) => !isTemporaryCanvasId(update.id))
+    if (persistedUpdates.length > 0) getApi().canvases.reorder(persistedUpdates).catch(console.error)
   },
 
   removeCanvas: async (id, options) => {

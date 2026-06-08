@@ -1,5 +1,6 @@
 import type { CanvasDataSlice, StoreSlice } from "./types"
 import { getApi } from "./apiAuth"
+import { isTemporaryCanvasId } from "../utils/canvasIdentity"
 
 export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => ({
   tileCache: new Map(),
@@ -11,7 +12,7 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
     const state = get()
     if (state.inFlightTileMoves.size > 0) return
     const targetCanvasId = canvasId ?? state.activeCanvasId
-    if (targetCanvasId === null) {
+    if (targetCanvasId === null || isTemporaryCanvasId(targetCanvasId)) {
       set({ tiles: [] })
       return
     }
@@ -31,7 +32,7 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
     const state = get()
     if (state.inFlightMoves.size > 0 || state.inFlightTileMoves.size > 0) return
     const targetCanvasId = canvasId ?? state.activeCanvasId
-    if (targetCanvasId === null) {
+    if (targetCanvasId === null || isTemporaryCanvasId(targetCanvasId)) {
       set({ thoughts: [] })
       return
     }
@@ -65,7 +66,7 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
 
   hydrateRemainingCanvases: async (refresh = false) => {
     const { canvases, activeCanvasId, tileCache, thoughtCache } = get()
-    const ids = canvases.map((canvas) => canvas.id).filter((id) => id !== activeCanvasId)
+    const ids = canvases.map((canvas) => canvas.id).filter((id) => id !== activeCanvasId && !isTemporaryCanvasId(id))
     const missing = ids.filter((id) => refresh || !tileCache.has(id) || !thoughtCache.has(id))
     await Promise.all(missing.map(async (id) => {
       const [tiles, thoughts] = await Promise.all([

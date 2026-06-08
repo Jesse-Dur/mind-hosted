@@ -2,7 +2,8 @@ import { useRef, useState, useEffect } from "react"
 import { useStore } from "../store"
 import { Tile } from "./Tile"
 import { getCrossCanvasDrag, subscribeCrossCanvasDrag, subscribeCrossCanvasDragPointer, type CrossCanvasDragSession } from "../utils/crossCanvasDrag"
-import type { Thought, Tile as TileType } from "../types"
+import { canvasIdentityKey } from "../utils/canvasIdentity"
+import type { Canvas as CanvasType, Thought, Tile as TileType } from "../types"
 
 const GRID = 24
 const MIN = GRID * 4
@@ -21,8 +22,13 @@ function mergeThoughts(primary: Thought[], fallback: Thought[]) {
   return [...byId.values()]
 }
 
+function getActiveCanvasKey(canvases: CanvasType[], activeCanvasId: number | null) {
+  const canvas = activeCanvasId === null ? undefined : canvases.find((item) => item.id === activeCanvasId)
+  return canvas ? canvasIdentityKey(canvas) : activeCanvasId === null ? null : `canvas-${activeCanvasId}`
+}
+
 export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
-  const { tiles, thoughts, addTile, newestTileId, canvasHeight, activeCanvasId } = useStore()
+  const { tiles, thoughts, addTile, newestTileId, canvasHeight, activeCanvasId, canvases } = useStore()
   const TAB_OFFSET = tabBarVisible ? 36 : 0
   const CANVAS_H = canvasHeight
   const CANVAS_W = Math.floor(Math.round(canvasHeight * (16 / 9)) / GRID) * GRID
@@ -32,7 +38,8 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
   const [displayedThoughts, setDisplayedThoughts] = useState(thoughts)
   const [visible, setVisible] = useState(true)
   const canvasRef = useRef<HTMLDivElement>(null)
-  const prevCanvasId = useRef(activeCanvasId)
+  const activeCanvasKey = getActiveCanvasKey(canvases, activeCanvasId)
+  const prevCanvasKey = useRef(activeCanvasKey)
   const transitioning = useRef(false)
   const [immuneTileSession, setImmuneTileSession] = useState<TileDragSession | null>(() => {
     const session = getCrossCanvasDrag()
@@ -52,8 +59,8 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
   }), [])
 
   useEffect(() => {
-    if (prevCanvasId.current === activeCanvasId) return
-    prevCanvasId.current = activeCanvasId
+    if (prevCanvasKey.current === activeCanvasKey) return
+    prevCanvasKey.current = activeCanvasKey
     transitioning.current = true
     setVisible(false)
     const t = setTimeout(() => {
@@ -65,7 +72,7 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
       if (getCrossCanvasDrag()?.kind !== "tile") setImmuneTileSession(null)
     }, 150)
     return () => clearTimeout(t)
-  }, [activeCanvasId])
+  }, [activeCanvasKey])
 
   // Only sync displayed tiles when not mid-transition
   useEffect(() => {

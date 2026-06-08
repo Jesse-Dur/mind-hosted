@@ -6,6 +6,11 @@ export type AiStatus = "idle" | "processing" | "queued" | "limited"
 export type CanvasOrderUpdate = Pick<Canvas, "id" | "sort_order" | "is_favourite">
 export type AiPriority = "low" | "medium" | "high"
 
+export type CanvasCreation = {
+  canvas: Canvas
+  persisted: Promise<Canvas>
+}
+
 export type ThoughtMoveOptions = {
   sourceCanvasId?: number | null
   targetCanvasId?: number | null
@@ -30,7 +35,7 @@ export interface CanvasSlice {
   activeCanvasId: number | null
   loadCanvases: () => Promise<number | null>
   setActiveCanvas: (id: number) => void
-  addCanvas: (name: string) => Promise<Canvas>
+  addCanvas: (name: string) => CanvasCreation
   updateCanvas: (id: number, data: Partial<Pick<Canvas, "name" | "sort_order" | "is_favourite">>) => Promise<void>
   removeCanvas: (id: number, options: CanvasDeleteOptions) => Promise<void>
   reorderCanvases: (updates: CanvasOrderUpdate[]) => void
