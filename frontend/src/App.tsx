@@ -8,6 +8,7 @@ import { LoadingScreen } from "./components/LoadingScreen"
 import { TabBar } from "./components/TabBar"
 import { Tooltip } from "./components/Tooltip"
 import { useStore, setGetToken } from "./store"
+import { scheduleIdleTask } from "./utils/scheduleIdleTask"
 
 export default function App() {
   const { getToken, isSignedIn, isLoaded } = useAuth()
@@ -54,13 +55,7 @@ export default function App() {
         const hydrate = () => {
           if (!cancelled) hydrateRemainingCanvases().catch(console.error)
         }
-        if ("requestIdleCallback" in window) {
-          const idleId = window.requestIdleCallback(hydrate, { timeout: 1000 })
-          cancelIdleHydration = () => window.cancelIdleCallback(idleId)
-        } else {
-          const fallbackTimer = window.setTimeout(hydrate, 0)
-          cancelIdleHydration = () => window.clearTimeout(fallbackTimer)
-        }
+        cancelIdleHydration = scheduleIdleTask(hydrate)
       }, 350)
     }
 
