@@ -1,4 +1,4 @@
-import type { Canvas } from "../types"
+import type { Canvas, Tile } from "../types"
 import type { CanvasSlice, StoreSlice } from "./types"
 import { getApi } from "./apiAuth"
 import { getStoredActiveCanvasId, readStoredActiveCanvasId, writeStoredActiveCanvasId } from "./storage"
@@ -19,6 +19,10 @@ function buildPersistUpdate(serverCanvas: Canvas, localCanvas: Canvas) {
   if (localCanvas.sort_order !== serverCanvas.sort_order) update.sort_order = localCanvas.sort_order
   if (localCanvas.is_favourite !== serverCanvas.is_favourite) update.is_favourite = localCanvas.is_favourite
   return update
+}
+
+function adoptTemporaryCanvasTiles(tiles: Tile[], temporaryCanvasId: number, savedCanvasId: number) {
+  return tiles.map((tile) => tile.canvas_id === temporaryCanvasId ? { ...tile, canvas_id: savedCanvasId } : tile)
 }
 
 export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
@@ -90,7 +94,9 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
       set((s) => {
         const tileCache = new Map(s.tileCache)
         const thoughtCache = new Map(s.thoughtCache)
-        const tempTiles = tileCache.get(tempId) ?? []
+        // Tiles created while the canvas is still temporary need the real parent id
+        // before their own optimistic persistence can be sent to the API.
+        const tempTiles = adoptTemporaryCanvasTiles(tileCache.get(tempId) ?? [], tempId, canvas.id)
         const tempThoughts = thoughtCache.get(tempId) ?? []
         const optimisticCanvas = s.canvases.find((item) => item.id === tempId) ?? tempCanvas
         localCanvas = {

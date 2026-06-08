@@ -67,6 +67,8 @@ export interface ThoughtSlice {
   inFlightMoves: Set<number>
   addThought: (thought: Omit<Thought, "id" | "created_at">) => Promise<void>
   addThoughtToTile: (tileId: number, content: string, tags: string[]) => Promise<void>
+  adoptTemporaryTileThoughts: (temporaryTileId: number, savedTileId: number) => Promise<void>
+  discardThoughtsForTile: (tileId: number) => void
   moveThoughtToTile: (id: number, tileId: number, options?: ThoughtMoveOptions) => Promise<void>
   removeThought: (id: number) => void
   updateThoughtContent: (id: number, content: string) => Promise<void>

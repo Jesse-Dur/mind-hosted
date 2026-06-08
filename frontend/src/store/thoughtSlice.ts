@@ -12,16 +12,29 @@ import {
   visibleThoughts,
 } from "./cacheHelpers"
 import { clearLatestThoughtMove, isLatestThoughtMove, nextThoughtMoveVersion } from "./moveVersions"
+import { createTemporaryId, isTemporaryId } from "../utils/optimisticIdentity"
 
 function optimisticThought(tileId: number, content: string, tags: string[], sortOrder: number): Thought {
   return {
-    id: -Date.now(),
+    id: createTemporaryId(),
     tile_id: tileId,
     content,
     tags,
     sort_order: sortOrder,
     created_at: new Date().toISOString(),
   }
+}
+
+function replaceThoughtId(list: Thought[], temporaryThoughtId: number, thought: Thought) {
+  return list.map((item) => item.id === temporaryThoughtId ? thought : item)
+}
+
+function retileThoughts(list: Thought[], temporaryTileId: number, savedTileId: number, pendingIds: Set<number>) {
+  return list.map((thought) => {
+    if (thought.tile_id !== temporaryTileId) return thought
+    pendingIds.add(thought.id)
+    return { ...thought, tile_id: savedTileId }
+  })
 }
 
 export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
@@ -37,6 +50,7 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
       if (activeCanvasId !== null) thoughtCache.set(activeCanvasId, [...(thoughtCache.get(activeCanvasId) ?? []), tempThought])
       return { thoughts: [...s.thoughts, tempThought], thoughtCache }
     })
+    if (isTemporaryId(data.tile_id)) return
 
     const thought = await getApi().thoughts.create(data)
     set((s) => {
@@ -50,7 +64,7 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
 
   addThoughtToTile: async (tileId, content, tags) => {
     const state = get()
-    const stableKey = Date.now()
+    const stableKey = createTemporaryId()
     const maxOrder = Math.max(-1, ...state.thoughts.filter((thought) => thought.tile_id === tileId).map((thought) => thought.sort_order))
     const tempThought = optimisticThought(tileId, content, tags, maxOrder + 1)
     const activeCanvasId = state.activeCanvasId
@@ -64,6 +78,7 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
         thoughtStableKeys: new Map(s.thoughtStableKeys).set(tempThought.id, stableKey),
       }
     })
+    if (isTemporaryId(tileId)) return
 
     try {
       const thought = await getApi().thoughts.create({ tile_id: tileId, content, tags, sort_order: 0 })
@@ -92,12 +107,100 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
     }
   },
 
+  adoptTemporaryTileThoughts: async (temporaryTileId, savedTileId) => {
+    const pendingIds = new Set<number>()
+    set((s) => {
+      const thoughtCache = new Map(s.thoughtCache)
+      for (const [canvasId, thoughts] of thoughtCache) {
+        thoughtCache.set(canvasId, retileThoughts(thoughts, temporaryTileId, savedTileId, pendingIds))
+      }
+      return {
+        thoughts: retileThoughts(s.thoughts, temporaryTileId, savedTileId, pendingIds),
+        thoughtCache,
+      }
+    })
+
+    for (const temporaryThoughtId of pendingIds) {
+      const latest = findThoughtInState(temporaryThoughtId, get().thoughts, get().thoughtCache)
+      if (!latest || latest.tile_id !== savedTileId || !isTemporaryId(latest.id)) continue
+
+      try {
+        const savedThought = await getApi().thoughts.create({
+          tile_id: savedTileId,
+          content: latest.content,
+          tags: latest.tags,
+          sort_order: latest.sort_order,
+        })
+        let displayedThought: Thought | null = null
+        set((s) => {
+          const currentThought = findThoughtInState(temporaryThoughtId, s.thoughts, s.thoughtCache)
+          const keys = new Map(s.thoughtStableKeys)
+          const stableKey = keys.get(temporaryThoughtId)
+          keys.delete(temporaryThoughtId)
+          if (!currentThought) return { thoughtStableKeys: keys }
+
+          const nextThought: Thought = {
+            ...savedThought,
+            content: currentThought.content,
+            tags: currentThought.tags,
+            sort_order: currentThought.sort_order,
+          }
+          displayedThought = nextThought
+          if (stableKey !== undefined) keys.set(savedThought.id, stableKey)
+
+          const thoughtCache = new Map(s.thoughtCache)
+          for (const [canvasId, thoughts] of thoughtCache) {
+            thoughtCache.set(canvasId, replaceThoughtId(thoughts, temporaryThoughtId, nextThought))
+          }
+          return {
+            thoughts: replaceThoughtId(s.thoughts, temporaryThoughtId, nextThought),
+            thoughtCache,
+            thoughtStableKeys: keys,
+          }
+        })
+
+        if (!displayedThought) {
+          getApi().thoughts.remove(savedThought.id).catch(console.error)
+          continue
+        }
+        if (displayedThought.content !== savedThought.content) {
+          getApi().thoughts.updateContent(savedThought.id, displayedThought.content).catch(console.error)
+        }
+        if (displayedThought.tags.join("\u0000") !== savedThought.tags.join("\u0000")) {
+          getApi().thoughts.updateTags(savedThought.id, displayedThought.tags).catch(console.error)
+        }
+      } catch (error) {
+        console.error(error)
+      }
+    }
+  },
+
+  discardThoughtsForTile: (tileId) => {
+    set((s) => {
+      const removedIds = new Set(s.thoughts.filter((thought) => thought.tile_id === tileId).map((thought) => thought.id))
+      const thoughtCache = new Map(s.thoughtCache)
+      for (const [canvasId, thoughts] of thoughtCache) {
+        const removedCachedIds = thoughts.filter((thought) => thought.tile_id === tileId).map((thought) => thought.id)
+        for (const id of removedCachedIds) removedIds.add(id)
+        thoughtCache.set(canvasId, thoughts.filter((thought) => thought.tile_id !== tileId))
+      }
+      const keys = new Map(s.thoughtStableKeys)
+      for (const id of removedIds) keys.delete(id)
+      return {
+        thoughts: s.thoughts.filter((thought) => thought.tile_id !== tileId),
+        thoughtCache,
+        thoughtStableKeys: keys,
+      }
+    })
+  },
+
   moveThoughtToTile: async (id, tileId, options) => {
     const initial = get()
     const thought = findThoughtInState(id, initial.thoughts, initial.thoughtCache)
     if (!thought || (thought.tile_id === tileId && (!options?.orderedIds || options.orderedIds.length === 0))) return
 
     const version = nextThoughtMoveVersion(id)
+    const temporaryMove = isTemporaryId(id) || isTemporaryId(tileId)
     const sourceCanvasId = options?.sourceCanvasId ?? findThoughtCanvasId(id, initial.thoughtCache) ?? initial.activeCanvasId
     const targetCanvasId = options?.targetCanvasId ?? initial.activeCanvasId
     const targetTileThoughts = findThoughtsForTile(tileId, initial.thoughts, initial.thoughtCache)
@@ -134,9 +237,14 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
       return {
         thoughts: visibleThoughts(s.activeCanvasId, thoughtCache, fallbackThoughts),
         thoughtCache,
-        inFlightMoves: new Set(s.inFlightMoves).add(id),
+        inFlightMoves: temporaryMove ? s.inFlightMoves : new Set(s.inFlightMoves).add(id),
       }
     })
+
+    if (temporaryMove) {
+      clearLatestThoughtMove(id, version)
+      return
+    }
 
     try {
       await getApi().thoughts.move(id, tileId, finalIds)
@@ -180,8 +288,11 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
     set((s) => {
       const thoughtCache = new Map(s.thoughtCache)
       for (const [canvasId, thoughts] of thoughtCache) thoughtCache.set(canvasId, thoughts.filter((thought) => thought.id !== id))
-      return { thoughts: s.thoughts.filter((thought) => thought.id !== id), thoughtCache }
+      const keys = new Map(s.thoughtStableKeys)
+      keys.delete(id)
+      return { thoughts: s.thoughts.filter((thought) => thought.id !== id), thoughtCache, thoughtStableKeys: keys }
     })
+    if (isTemporaryId(id)) return
     getApi().thoughts.remove(id).catch(console.error)
   },
 
@@ -193,6 +304,7 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
       }
       return { thoughts: s.thoughts.map((thought) => thought.id === id ? { ...thought, content } : thought), thoughtCache }
     })
+    if (isTemporaryId(id)) return
     getApi().thoughts.updateContent(id, content).catch(console.error)
   },
 
@@ -204,6 +316,7 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
       }
       return { thoughts: s.thoughts.map((thought) => thought.id === id ? { ...thought, tags } : thought), thoughtCache }
     })
+    if (isTemporaryId(id)) return
     await getApi().thoughts.updateTags(id, tags)
   },
 })

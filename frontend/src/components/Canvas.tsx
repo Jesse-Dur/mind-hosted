@@ -3,6 +3,7 @@ import { useStore } from "../store"
 import { Tile } from "./Tile"
 import { getCrossCanvasDrag, subscribeCrossCanvasDrag, subscribeCrossCanvasDragPointer, type CrossCanvasDragSession } from "../utils/crossCanvasDrag"
 import { canvasIdentityKey } from "../utils/canvasIdentity"
+import { optimisticIdentityKey } from "../utils/optimisticIdentity"
 import type { Canvas as CanvasType, Thought, Tile as TileType } from "../types"
 
 const GRID = 24
@@ -190,11 +191,11 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
         {/* Tiles fade independently — dot grid stays visible during transition */}
         <div style={{ opacity: visible ? 1 : 0, transition: "opacity 0.15s ease", position: "absolute", inset: 0, pointerEvents: "none" }}>
           {displayedTiles.filter((t) => t.visible && t.id !== immuneTileId).map((tile) => (
-            <Tile key={tile.id} tile={tile} thoughts={displayedThoughts} isNew={tile.id === newestTileId} scale={scale} />
+            <Tile key={optimisticIdentityKey(tile, "tile")} tile={tile} thoughts={displayedThoughts} isNew={tile.id === newestTileId} scale={scale} />
           ))}
         </div>
         {immuneTile?.visible && (
-          <Tile key={`immune-${immuneTile.id}`} tile={immuneTile} thoughts={immuneThoughts} isNew={immuneTile.id === newestTileId} scale={scale} />
+          <Tile key={`immune-${optimisticIdentityKey(immuneTile, "tile")}`} tile={immuneTile} thoughts={immuneThoughts} isNew={immuneTile.id === newestTileId} scale={scale} />
         )}
         {draft && (
           <div style={{

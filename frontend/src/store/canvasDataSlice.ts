@@ -1,6 +1,7 @@
 import type { CanvasDataSlice, StoreSlice } from "./types"
 import { getApi } from "./apiAuth"
 import { isTemporaryCanvasId } from "../utils/canvasIdentity"
+import { isTemporaryId } from "../utils/optimisticIdentity"
 
 export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => ({
   tileCache: new Map(),
@@ -23,8 +24,11 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
     // The active arrays are a view of the per-canvas cache, not separate source data.
     set((s) => {
       const tileCache = new Map(s.tileCache)
-      tileCache.set(targetCanvasId, tiles)
-      return s.activeCanvasId === targetCanvasId ? { tiles, tileCache } : { tileCache }
+      const existingTiles = s.activeCanvasId === targetCanvasId ? s.tiles : tileCache.get(targetCanvasId) ?? []
+      const optimisticTiles = existingTiles.filter((tile) => isTemporaryId(tile.id))
+      const mergedTiles = [...optimisticTiles, ...tiles]
+      tileCache.set(targetCanvasId, mergedTiles)
+      return s.activeCanvasId === targetCanvasId ? { tiles: mergedTiles, tileCache } : { tileCache }
     })
   },
 
@@ -50,15 +54,18 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
 
     set((s) => {
       const thoughtCache = new Map(s.thoughtCache)
+      const existingThoughts = s.activeCanvasId === targetCanvasId ? s.thoughts : thoughtCache.get(targetCanvasId) ?? []
+      const optimisticThoughts = existingThoughts.filter((thought) => isTemporaryId(thought.id) || isTemporaryId(thought.tile_id))
       const merged = thoughts.map((thought) => {
-        const existing = (s.activeCanvasId === targetCanvasId ? s.thoughts : thoughtCache.get(targetCanvasId) ?? [])
-          .find((item) => item.id === thought.id)
+        const existing = existingThoughts.find((item) => item.id === thought.id)
         if (existing && existing.tile_id !== thought.tile_id) return existing
         return thought
       })
-      thoughtCache.set(targetCanvasId, merged)
+      const serverIds = new Set(merged.map((thought) => thought.id))
+      const visibleThoughts = [...optimisticThoughts.filter((thought) => !serverIds.has(thought.id)), ...merged]
+      thoughtCache.set(targetCanvasId, visibleThoughts)
       return s.activeCanvasId === targetCanvasId
-        ? { thoughts: merged, thoughtCache, newThoughtIds: newIds }
+        ? { thoughts: visibleThoughts, thoughtCache, newThoughtIds: newIds }
         : { thoughtCache }
     })
     if (newIds.size > 0) setTimeout(() => set({ newThoughtIds: new Set() }), 1000)
@@ -80,11 +87,18 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
       }
 
       set((s) => {
-        const nextTileCache = new Map(s.tileCache).set(id, tiles)
-        const nextThoughtCache = new Map(s.thoughtCache).set(id, thoughts)
+        const existingTiles = s.activeCanvasId === id ? s.tiles : s.tileCache.get(id) ?? []
+        const existingThoughts = s.activeCanvasId === id ? s.thoughts : s.thoughtCache.get(id) ?? []
+        const optimisticTiles = existingTiles.filter((tile) => isTemporaryId(tile.id))
+        const optimisticThoughts = existingThoughts.filter((thought) => isTemporaryId(thought.id) || isTemporaryId(thought.tile_id))
+        const serverThoughtIds = new Set(thoughts.map((thought) => thought.id))
+        const nextTiles = [...optimisticTiles, ...tiles]
+        const nextThoughts = [...optimisticThoughts.filter((thought) => !serverThoughtIds.has(thought.id)), ...thoughts]
+        const nextTileCache = new Map(s.tileCache).set(id, nextTiles)
+        const nextThoughtCache = new Map(s.thoughtCache).set(id, nextThoughts)
         const visible = s.activeCanvasId === id
         return visible
-          ? { tiles, thoughts, tileCache: nextTileCache, thoughtCache: nextThoughtCache }
+          ? { tiles: nextTiles, thoughts: nextThoughts, tileCache: nextTileCache, thoughtCache: nextThoughtCache }
           : { tileCache: nextTileCache, thoughtCache: nextThoughtCache }
       })
     }))

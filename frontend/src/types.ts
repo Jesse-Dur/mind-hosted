@@ -18,6 +18,7 @@ export interface Tile {
   importance: number
   visible: boolean
   created_at: string
+  stableKey?: string
 }
 
 export interface Thought {
@@ -27,6 +28,7 @@ export interface Thought {
   tags: string[]
   sort_order: number
   created_at: string
+  stableKey?: string
 }
 
 export interface Tag {

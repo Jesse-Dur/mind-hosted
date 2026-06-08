@@ -48,7 +48,7 @@ export function ThoughtInput({ tileId, inputRef }: { tileId: number; inputRef?: 
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (!value.trim() || tileId < 0) return
+    if (!value.trim()) return
     const { content, tags: parsedTags } = parseInput(value, tags.map((t) => t.name))
     const trimmed = content || value.trim()
     setValue("")
@@ -63,9 +63,8 @@ export function ThoughtInput({ tileId, inputRef }: { tileId: number; inputRef?: 
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={onKeyDown}
-        placeholder={tileId < 0 ? "Saving tile…" : "Add a thought… (#tag to tag)"}
-        disabled={tileId < 0}
-        style={{ width: "100%", background: "transparent", border: "none", borderTop: "1px solid #ebebeb", color: "#999", fontSize: 12, padding: "5px 0", outline: "none", opacity: tileId < 0 ? 0.4 : 1 }}
+        placeholder="Add a thought… (#tag to tag)"
+        style={{ width: "100%", background: "transparent", border: "none", borderTop: "1px solid #ebebeb", color: "#999", fontSize: 12, padding: "5px 0", outline: "none" }}
       />
       {suggestion && (
         <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #e8e8e8", borderRadius: 6, padding: "3px 8px", fontSize: 11, color: "#888", boxShadow: "0 2px 8px rgba(0,0,0,0.08)", whiteSpace: "nowrap", zIndex: 10 }}>
