@@ -1,90 +1,209 @@
-import { useState, useRef } from "react"
-import { useAuth } from "@clerk/clerk-react"
+import { useEffect, useRef, useState } from "react"
 import { useStore } from "../store"
-import { createApi } from "../api/client"
 import { dragState } from "../utils/dragState"
+import {
+  beginCrossCanvasDrag,
+  endCrossCanvasDrag,
+  getCrossCanvasDrag,
+  moveCrossCanvasDrag,
+  setThoughtDragTargetTile,
+  subscribeCrossCanvasDrag,
+} from "../utils/crossCanvasDrag"
 import type { Thought } from "../types"
+
+type ThoughtPlacement = "before" | "after"
+type InsertTarget = { overId: number | null; placement: ThoughtPlacement }
+
+function sameIds(a: number[], b: number[]) {
+  return a.length === b.length && a.every((id, index) => id === b[index])
+}
+
+function hiddenThoughtIdForTile(tileId: number) {
+  const session = getCrossCanvasDrag()
+  return session?.kind === "thought" && session.sourceTileId === tileId && session.targetTileId !== tileId
+    ? session.thought.id
+    : null
+}
 
 export function useTileThoughts(tileId: number, tileThoughts: Thought[]) {
   const [orderedIds, setOrderedIds] = useState<number[]>([])
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const [dropTarget, setDropTarget] = useState(false)
+  const [hiddenThoughtId, setHiddenThoughtId] = useState<number | null>(() => hiddenThoughtIdForTile(tileId))
+  const [previewThought, setPreviewThought] = useState<Thought | null>(() => {
+    const session = getCrossCanvasDrag()
+    return session?.kind === "thought" && session.targetTileId === tileId ? session.thought : null
+  })
   const dragThought = useRef<number | null>(null)
-  const { getToken } = useAuth()
+  const nativeDragCleanup = useRef<(() => void) | null>(null)
+  const moveThoughtToTile = useStore((s) => s.moveThoughtToTile)
 
-  function onThoughtDragStart(id: number) {
-    dragThought.current = id
-    dragState.thoughtId = id
-    dragState.sourceTileId = tileId
-    dragState.clearDragging = () => { setDraggingId(null); setOrderedIds([]); dragState.clearDragging = null }
-    setDraggingId(id)
-    setOrderedIds(tileThoughts.map((t) => t.id))
+  function clearPreview() {
+    setDraggingId(null)
+    setOrderedIds([])
+    setDropTarget(false)
+    setPreviewThought(null)
   }
 
-  function onThoughtDragOver(overId: number) {
-    if (!dragThought.current || dragThought.current === overId) return
-    setOrderedIds((ids) => {
-      const arr = [...ids]
-      const from = arr.indexOf(dragThought.current!)
-      const to = arr.indexOf(overId)
-      if (from === -1 || to === -1) return ids
-      arr.splice(from, 1)
-      arr.splice(to, 0, dragThought.current!)
-      return arr
-    })
+  useEffect(() => subscribeCrossCanvasDrag((session) => {
+    const nextHiddenThoughtId = hiddenThoughtIdForTile(tileId)
+    setHiddenThoughtId((current) => current === nextHiddenThoughtId ? current : nextHiddenThoughtId)
+
+    if (session?.kind === "thought" && session.targetTileId === tileId) return
+    clearPreview()
+  }), [tileId])
+
+  function clearNativeDragFallback() {
+    nativeDragCleanup.current?.()
+    nativeDragCleanup.current = null
   }
 
-  function moveToTile(id: number, destTileId: number) {
-    useStore.setState((s) => {
-      const maxOrder = Math.max(-1, ...s.thoughts.filter((t) => t.tile_id === destTileId && t.id !== id).map((t) => t.sort_order))
-      return {
-        thoughts: s.thoughts.map((t) => t.id === id ? { ...t, tile_id: destTileId, sort_order: maxOrder + 1 } : t),
-        inFlightMoves: new Set(s.inFlightMoves).add(id),
-      }
-    })
-    createApi(getToken).thoughts.move(id, destTileId)
-      .finally(() => {
-        useStore.setState((s) => { const m = new Set(s.inFlightMoves); m.delete(id); return { inFlightMoves: m } })
-        if (useStore.getState().inFlightMoves.size === 0) useStore.getState().loadThoughts()
-      })
-  }
-
-  function onThoughtDrop() {
-    const srcTile = dragState.sourceTileId
-    const id = dragState.thoughtId
-    const wasCrossTile = srcTile !== null && srcTile !== tileId
+  function clearDragSession() {
+    const clearDragging = dragState.clearDragging
     dragThought.current = null
     dragState.thoughtId = null
     dragState.sourceTileId = null
-    setDraggingId(null)
-    setOrderedIds([])
-    if (wasCrossTile && id) {
-      moveToTile(id, tileId)
+    dragState.sourceCanvasId = null
+    dragState.clearDragging = null
+    clearDragging?.()
+    clearNativeDragFallback()
+    clearPreview()
+    endCrossCanvasDrag()
+  }
+
+  function registerNativeDragFallback(id: number) {
+    clearNativeDragFallback()
+    const finish = () => {
+      clearNativeDragFallback()
+      if (dragState.thoughtId !== id) return
+      clearDragSession()
+    }
+    window.addEventListener("dragend", finish, { once: true })
+    window.addEventListener("drop", finish, { once: true })
+    nativeDragCleanup.current = () => {
+      window.removeEventListener("dragend", finish)
+      window.removeEventListener("drop", finish)
+    }
+  }
+
+  function onThoughtDragStart(id: number, point: { clientX: number; clientY: number }) {
+    const sourceCanvasId = useStore.getState().activeCanvasId
+    const thought = tileThoughts.find((item) => item.id === id)
+    dragThought.current = id
+    dragState.thoughtId = id
+    dragState.sourceTileId = tileId
+    dragState.sourceCanvasId = sourceCanvasId
+    dragState.clearDragging = () => {
+      setDraggingId(null)
+      setOrderedIds([])
+      setDropTarget(false)
+      dragState.clearDragging = null
+    }
+    setDraggingId(id)
+    setOrderedIds(tileThoughts.map((t) => t.id))
+    registerNativeDragFallback(id)
+    if (thought) {
+      beginCrossCanvasDrag({
+        kind: "thought",
+        thought,
+        sourceTileId: tileId,
+        sourceCanvasId,
+        targetTileId: tileId,
+        clientX: point.clientX,
+        clientY: point.clientY,
+        enteredCanvasId: null,
+      })
+    }
+  }
+
+  function buildPreviewIds(currentIds: number[], id: number, insert: InsertTarget) {
+    if (insert.overId === id) return currentIds.length > 0 ? currentIds : tileThoughts.map((thought) => thought.id)
+
+    const base = (currentIds.length > 0 ? currentIds : tileThoughts.map((thought) => thought.id))
+      .filter((thoughtId) => thoughtId !== id)
+    const next = [...base]
+    const overIndex = insert.overId === null ? -1 : next.indexOf(insert.overId)
+    const insertIndex = overIndex === -1
+      ? next.length
+      : insert.placement === "before" ? overIndex : overIndex + 1
+    next.splice(insertIndex, 0, id)
+    return next
+  }
+
+  function activatePreview(insert: InsertTarget) {
+    const id = dragState.thoughtId
+    const session = getCrossCanvasDrag()
+    if (!id || session?.kind !== "thought") return
+
+    setThoughtDragTargetTile(tileId)
+    setPreviewThought((current) => current?.id === session.thought.id ? current : session.thought)
+    setDraggingId((current) => current === id ? current : id)
+    setDropTarget(dragState.sourceTileId !== tileId)
+    setOrderedIds((currentIds) => {
+      const nextIds = buildPreviewIds(currentIds, id, insert)
+      return sameIds(currentIds, nextIds) ? currentIds : nextIds
+    })
+  }
+
+  function finalOrderedIds(id: number) {
+    const ids = orderedIds.length > 0
+      ? orderedIds
+      : [...tileThoughts.map((thought) => thought.id).filter((thoughtId) => thoughtId !== id), id]
+    return ids.includes(id) ? ids : [...ids, id]
+  }
+
+  function commitPlacement() {
+    const srcTile = dragState.sourceTileId
+    const id = dragState.thoughtId
+    const sourceCanvasId = dragState.sourceCanvasId
+    if (!id) {
+      clearDragSession()
       return
     }
-    if (!orderedIds.length) return
-    const ids = [...orderedIds]
-    useStore.setState((s) => {
-      const notInTile = s.thoughts.filter((t) => t.tile_id !== tileId)
-      const inTile = s.thoughts.filter((t) => t.tile_id === tileId)
-      const reordered = ids.map((id, i) => ({ ...inTile.find((t) => t.id === id)!, sort_order: i })).filter(Boolean)
-      const untouched = inTile.filter((t) => !ids.includes(t.id))
-      return { thoughts: [...notInTile, ...reordered, ...untouched] }
-    })
-    Promise.all(ids.map((id, i) => createApi(getToken).thoughts.reorder(id, i))).catch(console.error)
+
+    const ids = finalOrderedIds(id)
+    const currentIds = tileThoughts.map((thought) => thought.id)
+    const changedOrder = !sameIds(ids, currentIds)
+    clearDragSession()
+    if (srcTile !== tileId || changedOrder) {
+      void moveThoughtToTile(id, tileId, {
+        sourceCanvasId,
+        targetCanvasId: useStore.getState().activeCanvasId,
+        orderedIds: ids,
+      })
+    }
+  }
+
+  function onThoughtDragOver(overId: number, placement: ThoughtPlacement) {
+    activatePreview({ overId, placement })
+  }
+
+  function onTileContentDragOver() {
+    activatePreview({ overId: null, placement: "after" })
+  }
+
+  function onThoughtDrop() {
+    commitPlacement()
   }
 
   async function onTileContentDrop(e: React.DragEvent) {
     e.preventDefault()
-    setDropTarget(false)
-    const id = dragState.thoughtId
-    const srcTile = dragState.sourceTileId
-    if (!id || srcTile === tileId || srcTile === null) return
-    dragState.thoughtId = null
-    dragState.sourceTileId = null
-    dragState.clearDragging?.()
-    moveToTile(id, tileId)
+    e.stopPropagation()
+    commitPlacement()
   }
 
-  return { orderedIds, draggingId, dropTarget, setDropTarget, onThoughtDragStart, onThoughtDragOver, onThoughtDrop, onTileContentDrop }
+  return {
+    orderedIds,
+    draggingId,
+    dropTarget,
+    hiddenThoughtId,
+    previewThought,
+    setDropTarget,
+    onThoughtDragStart,
+    onThoughtDragOver,
+    onThoughtDrop,
+    onTileContentDragOver,
+    onTileContentDrop,
+    onThoughtDragMove: moveCrossCanvasDrag,
+  }
 }

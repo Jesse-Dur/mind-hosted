@@ -69,6 +69,7 @@ cd frontend && bun install && cd ..
 | `DATABASE_URL` | Neon Postgres connection string |
 | `GROQ_API_KEY` | Groq API key |
 | `CLERK_SECRET_KEY` | Clerk secret key |
+| `CLERK_PUBLISHABLE_KEY` | Clerk publishable key (backend) |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk publishable key (frontend) |
 
 ### Running

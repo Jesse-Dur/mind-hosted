@@ -10,7 +10,7 @@ const GRID = 24
 function snap(n: number) { return Math.round(n / GRID) * GRID }
 
 export function SettingsPanel() {
-  const { canvasHeight, setCanvasHeight, tiles, updateTile } = useStore()
+  const { canvasHeight, setCanvasHeight, tabsVisible, setTabsVisible, tiles, updateTile } = useStore()
   const idx = OPTIONS.findIndex(o => o.value === canvasHeight) ?? 1
   const CANVAS_W = Math.round(canvasHeight * (16 / 9))
 
@@ -29,6 +29,20 @@ export function SettingsPanel() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <p style={{ fontSize: 11, color: "#ccc", textAlign: "right", marginBottom: -8 }}>v{__APP_VERSION__}</p>
+
+      <div>
+        <p style={{ fontSize: 11, fontWeight: 700, color: "#aaa", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 12 }}>Tab Bar</p>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 13, color: "#333" }}>Show tab bar</span>
+          <button
+            onClick={() => setTabsVisible(!tabsVisible)}
+            style={{ width: 36, height: 20, borderRadius: 99, border: "none", cursor: "pointer", background: tabsVisible ? "#1a1a1a" : "#ddd", transition: "background 0.2s", position: "relative" }}
+          >
+            <span style={{ position: "absolute", top: 2, left: tabsVisible ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+          </button>
+        </div>
+      </div>
+
       <div>
         <p style={{ fontSize: 11, fontWeight: 700, color: "#aaa", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 16 }}>Canvas Size</p>
 

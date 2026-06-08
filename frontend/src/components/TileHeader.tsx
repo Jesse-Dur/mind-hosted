@@ -1,12 +1,34 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useStore } from "../store"
 import { CloseButton } from "./CloseButton"
 import { SavingSpinner } from "./SavingSpinner"
+import { isTemporaryId } from "../utils/optimisticIdentity"
 import type { Tile } from "../types"
 
 export function TileHeader({ tile, onDragDown, editing, setEditing }: { tile: Tile; onDragDown: (e: React.MouseEvent) => void; editing: boolean; setEditing: (v: boolean) => void }) {
   const { updateTile, removeTile } = useStore()
   const [saving, setSaving] = useState(false)
+  const [title, setTitle] = useState(tile.title)
+
+  useEffect(() => {
+    if (!editing) setTitle(tile.title)
+  }, [editing, tile.title])
+
+  function commitTitle(value: string) {
+    const nextTitle = value
+    setTitle(nextTitle)
+    if (nextTitle === tile.title) return
+
+    const save = updateTile(tile.id, { title: nextTitle })
+    if (isTemporaryId(tile.id)) return
+
+    setSaving(true)
+    const start = Date.now()
+    save.finally(() => {
+      const elapsed = Date.now() - start
+      setTimeout(() => setSaving(false), Math.max(0, 500 - elapsed))
+    })
+  }
 
   return (
     <div style={{ display: "flex", alignItems: "center", borderBottom: "1px solid #ebebeb", flexShrink: 0 }}>
@@ -19,18 +41,11 @@ export function TileHeader({ tile, onDragDown, editing, setEditing }: { tile: Ti
       >
         <span onMouseDown={(e) => { if (editing) (document.activeElement as HTMLElement)?.blur(); onDragDown(e) }} style={{ color: "#ccc", fontSize: 11, flexShrink: 0, cursor: "grab", userSelect: "none" }}>⠿</span>
         <input
-          defaultValue={tile.title}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
           onFocus={() => setEditing(true)}
           onBlur={(e) => {
-            const t = e.currentTarget.value
-            if (t !== tile.title) {
-              setSaving(true)
-              const start = Date.now()
-              updateTile(tile.id, { title: t }).finally(() => {
-                const elapsed = Date.now() - start
-                setTimeout(() => setSaving(false), Math.max(0, 500 - elapsed))
-              })
-            }
+            commitTitle(e.currentTarget.value)
             setEditing(false)
           }}
           onKeyDown={(e) => {

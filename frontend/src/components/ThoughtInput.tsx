@@ -1,6 +1,4 @@
 import { useState, useRef } from "react"
-import { useAuth } from "@clerk/clerk-react"
-import { createApi } from "../api/client"
 import { useStore } from "../store"
 
 function parseInput(value: string, knownTags: string[]): { content: string; tags: string[] } {
@@ -22,8 +20,7 @@ function parseInput(value: string, knownTags: string[]): { content: string; tags
 export function ThoughtInput({ tileId, inputRef }: { tileId: number; inputRef?: React.RefObject<HTMLInputElement | null> }) {
   const [value, setValue] = useState("")
   const [suggestion, setSuggestion] = useState<string | null>(null)
-  const { tags } = useStore()
-  const { getToken } = useAuth()
+  const { tags, addThoughtToTile } = useStore()
   const localRef = useRef<HTMLInputElement>(null)
   const ref = inputRef ?? localRef
 
@@ -49,26 +46,14 @@ export function ThoughtInput({ tileId, inputRef }: { tileId: number; inputRef?: 
     }
   }
 
-  async function submit(e: React.FormEvent) {
+  function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (!value.trim() || tileId < 0) return
+    if (!value.trim()) return
     const { content, tags: parsedTags } = parseInput(value, tags.map((t) => t.name))
     const trimmed = content || value.trim()
     setValue("")
     setSuggestion(null)
-    const tempId = -Date.now()
-    const stableKey = Date.now()
-    const maxOrder = Math.max(-1, ...useStore.getState().thoughts.filter((t) => t.tile_id === tileId).map((t) => t.sort_order))
-    const tempSortOrder = maxOrder + 1
-    useStore.setState((s) => ({ thoughts: [...s.thoughts, { id: tempId, tile_id: tileId, content: trimmed, tags: parsedTags, sort_order: tempSortOrder, created_at: new Date().toISOString() }], thoughtStableKeys: new Map(s.thoughtStableKeys).set(tempId, stableKey) }))
-    createApi(getToken).thoughts.create({ tile_id: tileId, content: trimmed, tags: parsedTags, sort_order: 0 })
-      .then((t) => useStore.setState((s) => {
-        const keys = new Map(s.thoughtStableKeys)
-        keys.delete(tempId)
-        keys.set(t.id, stableKey)
-        return { thoughts: s.thoughts.map((th) => th.id === tempId ? t : th), thoughtStableKeys: keys }
-      }))
-      .catch(() => useStore.setState((s) => ({ thoughts: s.thoughts.filter((th) => th.id !== tempId) })))
+    void addThoughtToTile(tileId, trimmed, parsedTags)
   }
 
   return (
@@ -78,9 +63,8 @@ export function ThoughtInput({ tileId, inputRef }: { tileId: number; inputRef?: 
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={onKeyDown}
-        placeholder={tileId < 0 ? "Saving tile…" : "Add a thought… (#tag to tag)"}
-        disabled={tileId < 0}
-        style={{ width: "100%", background: "transparent", border: "none", borderTop: "1px solid #ebebeb", color: "#999", fontSize: 12, padding: "5px 0", outline: "none", opacity: tileId < 0 ? 0.4 : 1 }}
+        placeholder="Add a thought… (#tag to tag)"
+        style={{ width: "100%", background: "transparent", border: "none", borderTop: "1px solid #ebebeb", color: "#999", fontSize: 12, padding: "5px 0", outline: "none" }}
       />
       {suggestion && (
         <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: "1px solid #e8e8e8", borderRadius: 6, padding: "3px 8px", fontSize: 11, color: "#888", boxShadow: "0 2px 8px rgba(0,0,0,0.08)", whiteSpace: "nowrap", zIndex: 10 }}>

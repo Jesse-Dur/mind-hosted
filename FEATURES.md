@@ -62,6 +62,16 @@
 - "Deal with later" mode — unorganised thoughts go to a default catch-all tile
 - Thoughts in catch-all tile are unorganised until processed
 
+## Tabs
+- Multiple canvases via a tab bar at the top of the screen
+- Tabs are scrollable horizontally
+- Right-click a tab to favourite it — favourited tabs are pinned to the front
+- Double-click a tab to rename it inline
+- `+` button to create a new tab
+- Keyboard shortcuts: `Ctrl+Alt/Option+1/2/3` to jump to tab by index, `Ctrl+Alt/Option+.` next tab, `Ctrl+Alt/Option+,` prev tab, `Ctrl+Alt/Option+N` to create a new tab
+- Toggle tab bar visibility in Settings to save screen real estate
+- Spotlight searches active tab by default, with an "All Tabs" toggle pill
+
 ## Future Features
 - Mark a tile as the default "random thoughts" destination for uncertain AI inputs
 - AI thinking indicator — subtle UI element showing when AI is processing, with option to expand and see the full thinking loop (tool calls, search results, iterations)

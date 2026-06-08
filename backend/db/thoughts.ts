@@ -2,16 +2,46 @@ import { sql } from "./client"
 import { historyDb } from "./history"
 import type { Thought } from "../types"
 
+export type ThoughtCreate = Omit<Thought, "id" | "created_at">
+
+export class ThoughtTileNotFoundError extends Error {
+  constructor() {
+    super("Tile not found")
+  }
+}
+
+type IdRow = { id: number | string }
+
+async function assertTileBelongsToUser(tileId: number, userId: string) {
+  const [tile] = await sql<{ id: number }[]>`SELECT id FROM tiles WHERE id = ${tileId} AND user_id = ${userId} AND deleted_at IS NULL`
+  if (!tile) throw new ThoughtTileNotFoundError()
+}
+
 export const thoughtsDb = {
-  list: async (userId: string, tileId?: number) =>
-    tileId
-      ? sql<Thought[]>`SELECT * FROM thoughts WHERE user_id = ${userId} AND tile_id = ${tileId} AND deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC`
-      : sql<Thought[]>`SELECT * FROM thoughts WHERE user_id = ${userId} AND deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC`,
+  list: async (userId: string, scope: { tileId?: number; canvasId?: number } = {}) => {
+    if (scope.tileId !== undefined) {
+      return sql<Thought[]>`SELECT * FROM thoughts WHERE user_id = ${userId} AND tile_id = ${scope.tileId} AND deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC`
+    }
+    if (scope.canvasId !== undefined) {
+      return sql<Thought[]>`
+        SELECT thoughts.* FROM thoughts
+        JOIN tiles ON tiles.id = thoughts.tile_id AND tiles.user_id = ${userId}
+        WHERE thoughts.user_id = ${userId}
+          AND tiles.canvas_id = ${scope.canvasId}
+          AND thoughts.deleted_at IS NULL
+          AND tiles.deleted_at IS NULL
+        ORDER BY thoughts.sort_order ASC, thoughts.created_at ASC
+      `
+    }
+    return sql<Thought[]>`SELECT * FROM thoughts WHERE user_id = ${userId} AND deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC`
+  },
 
   listPast: async (userId: string) =>
     sql<Thought[]>`SELECT * FROM thoughts WHERE user_id = ${userId} AND deleted_at IS NOT NULL ORDER BY deleted_at DESC`,
 
-  create: async (data: Omit<Thought, "id" | "created_at">, userId: string, silent = false) => {
+  create: async (data: ThoughtCreate, userId: string, silent = false) => {
+    await assertTileBelongsToUser(data.tile_id, userId)
+
     const [maxRow] = await sql<{ m: number | null }[]>`SELECT MAX(sort_order) as m FROM thoughts WHERE tile_id = ${data.tile_id} AND user_id = ${userId}`
     const sort_order = (maxRow?.m ?? -1) + 1
     const [thought] = await sql<Thought[]>`
@@ -47,12 +77,41 @@ export const thoughtsDb = {
     if (!silent) await historyDb.log(userId, "thought.update", `Updated thought "${old?.content?.slice(0, 40) ?? id}" → "${content.slice(0, 40)}"`, { thought_id: id, old_content: old?.content, new_content: content })
   },
 
-  move: async (id: number, tile_id: number, userId: string, silent = false) => {
-    const [maxRow] = await sql<{ m: number | null }[]>`SELECT MAX(sort_order) as m FROM thoughts WHERE tile_id = ${tile_id} AND user_id = ${userId} AND deleted_at IS NULL`
-    const sort_order = (maxRow?.m ?? -1) + 1
-    await sql`UPDATE thoughts SET tile_id = ${tile_id}, sort_order = ${sort_order} WHERE id = ${id} AND user_id = ${userId}`
+  move: async (id: number, tile_id: number, userId: string, orderedIds?: number[], silent = false) => {
+    await assertTileBelongsToUser(tile_id, userId)
+
+    const [old] = await sql<{ tile_id: number | string }[]>`SELECT tile_id FROM thoughts WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL`
+    if (!old) return
+    await sql.begin(async (tx) => {
+      if (orderedIds && orderedIds.length > 0) {
+        await tx`UPDATE thoughts SET tile_id = ${tile_id} WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL`
+        const rows = await tx<IdRow[]>`SELECT id FROM thoughts WHERE tile_id = ${tile_id} AND user_id = ${userId} AND deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC`
+        const actualIds = rows.map((row) => Number(row.id))
+        if (!actualIds.includes(id)) return
+
+        const actualIdSet = new Set(actualIds)
+        const finalIds: number[] = []
+        for (const thoughtId of orderedIds) {
+          if (!actualIdSet.has(thoughtId) || finalIds.includes(thoughtId)) continue
+          finalIds.push(thoughtId)
+        }
+        if (!finalIds.includes(id)) finalIds.push(id)
+        for (const thoughtId of actualIds) if (!finalIds.includes(thoughtId)) finalIds.push(thoughtId)
+
+        await Promise.all(finalIds.map((thoughtId, sortOrder) =>
+          tx`UPDATE thoughts SET sort_order = ${sortOrder} WHERE id = ${thoughtId} AND user_id = ${userId}`
+        ))
+        return
+      }
+
+      const [maxRow] = await tx<{ m: number | null }[]>`SELECT MAX(sort_order) as m FROM thoughts WHERE tile_id = ${tile_id} AND user_id = ${userId} AND deleted_at IS NULL`
+      const sort_order = (maxRow?.m ?? -1) + 1
+      await tx`UPDATE thoughts SET tile_id = ${tile_id}, sort_order = ${sort_order} WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL`
+    })
     const [tile] = await sql<{ title: string }[]>`SELECT title FROM tiles WHERE id = ${tile_id} AND user_id = ${userId}`
-    if (!silent) await historyDb.log(userId, "thought.move", `Moved thought to "${tile?.title ?? tile_id}"`, { thought_id: id, tile_id })
+    if (!silent && Number(old?.tile_id) !== tile_id) {
+      await historyDb.log(userId, "thought.move", `Moved thought to "${tile?.title ?? tile_id}"`, { thought_id: id, tile_id })
+    }
   },
 
   remove: async (id: number, userId: string, silent = false) => {

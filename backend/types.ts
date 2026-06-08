@@ -1,5 +1,15 @@
+export interface Canvas {
+  id: number
+  name: string
+  sort_order: number
+  is_favourite: boolean
+  created_at: string
+  stableKey?: string
+}
+
 export interface Tile {
   id: number
+  canvas_id: number | null
   title: string
   x: number
   y: number
