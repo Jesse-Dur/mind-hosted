@@ -4,6 +4,8 @@ import { tilesDb } from "../db/tiles"
 import { thoughtsDb } from "../db/thoughts"
 import { tagsDb } from "../db/tags"
 import { historyDb } from "../db/history"
+import { syncDb, type SyncPayload } from "../db/sync"
+import type { Thought } from "../types"
 
 export const groqRoute = new Hono()
 
@@ -28,10 +30,10 @@ function getStatus(userId: string): AiStatus {
   return userStatus.get(userId) ?? "idle"
 }
 
-groqRoute.get("/status", (c) => {
+groqRoute.get("/status", async (c) => {
   const auth = getAuth(c)
   if (!auth?.userId) return c.json({ status: "idle" })
-  return c.json({ status: getStatus(auth.userId) })
+  return c.json({ status: getStatus(auth.userId), latest_revision: await syncDb.latestRevision(auth.userId) })
 })
 
 const TOOLS = [
@@ -185,6 +187,28 @@ export async function classifyAndStore(input: string, userId: string): Promise<{
   const tagList = tags.map((t) => t.name).join(", ")
 
   const allThoughts = await thoughtsDb.list(userId)
+  const allowedThoughtIds = new Set<number>()
+  const knownThoughts = new Map<number, Thought>()
+  const rememberThought = (thought: Thought) => {
+    const normalized = {
+      ...thought,
+      id: Number(thought.id),
+      tile_id: Number(thought.tile_id),
+      sort_order: Number(thought.sort_order),
+    }
+    allowedThoughtIds.add(normalized.id)
+    knownThoughts.set(normalized.id, normalized)
+    return normalized
+  }
+  const rememberThoughts = (thoughts: Thought[]) => thoughts.map(rememberThought)
+  const knownThought = (id: number) => knownThoughts.get(id) ?? null
+  const syncThoughtUpsert = async (serverId: number | null, payload: SyncPayload) => {
+    const result = await syncDb.apply(userId, `ai:${crypto.randomUUID()}`, "thought", "upsert", null, serverId, payload, { writeHistory: false })
+    const entity = result.entity
+    return entity && "tile_id" in entity && "content" in entity ? rememberThought(entity) : null
+  }
+  const syncThoughtDelete = (serverId: number) =>
+    syncDb.apply(userId, `ai:${crypto.randomUUID()}`, "thought", "delete", null, serverId, {}, { writeHistory: false })
   const inputTags = tags.filter((t) => {
     const re = new RegExp(`\\b${t.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i")
     return re.test(input)
@@ -373,10 +397,11 @@ Available tags: ${tagList || "none"}
         if (call.function.name === "search_thoughts") {
           const query = String(args.query ?? "")
           const keywords = query.toLowerCase().split(/\s+/).filter(Boolean)
-          const results = allThoughts
+          const matchedThoughts = rememberThoughts(allThoughts
             .filter((t) => keywords.some((kw) => t.content.toLowerCase().includes(kw)))
-            .slice(0, 8)
-            .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => ti.id === t.tile_id)?.title ?? "?", tags: t.tags }))
+            .slice(0, 8))
+          const results = matchedThoughts
+            .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => Number(ti.id) === t.tile_id)?.title ?? "?", tags: t.tags }))
           const resultStr = results.length
             ? results.map((r) => `id:${r.id} "${r.content}" (tile:"${r.tile_title}"${r.tags.length ? ` tags:[${r.tags.join(",")}]` : ""})`).join(", ")
             : "no results"
@@ -387,10 +412,11 @@ Available tags: ${tagList || "none"}
 
         } else if (call.function.name === "search_by_tag") {
           const tag = String(args.tag ?? "")
-          const results = allThoughts
+          const matchedThoughts = rememberThoughts(allThoughts
             .filter((t) => t.tags.some((tg) => tg.toLowerCase().includes(tag.toLowerCase())))
-            .slice(0, 8)
-            .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => ti.id === t.tile_id)?.title ?? "?", tags: t.tags }))
+            .slice(0, 8))
+          const results = matchedThoughts
+            .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => Number(ti.id) === t.tile_id)?.title ?? "?", tags: t.tags }))
           const resultStr = results.length
             ? results.map((r) => `id:${r.id} "${r.content}" (tile:"${r.tile_title}")`).join(", ")
             : "no results"
@@ -401,7 +427,8 @@ Available tags: ${tagList || "none"}
 
         } else if (call.function.name === "search_by_tile") {
           const tileId = Number(args.tile_id)
-          const results = (await thoughtsDb.list(userId, { tileId })).slice(0, 20).map((t) => ({ id: t.id, content: t.content, tags: t.tags }))
+          const matchedThoughts = rememberThoughts((await thoughtsDb.list(userId, { tileId })).slice(0, 20))
+          const results = matchedThoughts.map((t) => ({ id: t.id, content: t.content, tags: t.tags }))
           const tileName = tiles.find((t) => Number(t.id) === tileId)?.title ?? tileId
           const resultStr = results.length
             ? results.map((r) => `id:${r.id} "${r.content}"${r.tags.length ? ` tags:[${r.tags.join(",")}]` : ""}`).join(", ")
@@ -422,10 +449,14 @@ Available tags: ${tagList || "none"}
               result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
             } else {
               const validTags = ((args.tags as string[]) ?? []).filter((t) => tags.some((tag) => tag.name === t))
-              const thought = await thoughtsDb.create({ tile_id: tileId, content, tags: validTags, sort_order: 0 }, userId, true)
-              const action = `Created "${thought.content}" in "${validTile.title}"`
-              historyActions.push(action)
-              result = `Created thought id:${thought.id}`
+              const thought = await syncThoughtUpsert(null, { tile_id: tileId, content, tags: validTags })
+              if (!thought) {
+                result = "Error: create did not return a thought"
+              } else {
+                const action = `Created "${thought.content}" in "${validTile.title}"`
+                historyActions.push(action)
+                result = `Created thought id:${thought.id}`
+              }
             }
           }
 
@@ -434,21 +465,35 @@ Available tags: ${tagList || "none"}
           const content = String(args.content ?? "")
           if (!id || !content) {
             result = "Error: missing thought_id or content"
+          } else if (!allowedThoughtIds.has(id)) {
+            result = `Error: thought_id ${id} was not returned by a search in this session. Search first, then update the returned id.`
           } else {
+            const existing = knownThought(id)
+            if (!existing) {
+              result = `Error: thought_id ${id} is not available from this session's search results. Search again before updating.`
+              continue
+            }
             const validTags = args.tags ? (args.tags as string[]).filter((t) => tags.some((tag) => tag.name === t)) : undefined
-            await thoughtsDb.update(id, content, userId, validTags, true)
+            const updatedThought = await syncThoughtUpsert(id, {
+              tile_id: existing.tile_id,
+              content,
+              tags: validTags ?? existing.tags,
+              sort_order: existing.sort_order,
+            })
             const action = `Updated thought ${id} → "${content}"`
             historyActions.push(action)
-            result = "Updated"
+            result = updatedThought ? "Updated" : "Error: update did not return a thought"
           }
 
         } else if (call.function.name === "delete_thought") {
           const id = Number(args.thought_id)
           if (!id) {
             result = "Error: missing thought_id"
+          } else if (!allowedThoughtIds.has(id)) {
+            result = `Error: thought_id ${id} was not returned by a search in this session. Search first, then delete the returned id.`
           } else {
-            const existing = allThoughts.find((t) => Number(t.id) === id)
-            await thoughtsDb.remove(id, userId, true)
+            const existing = knownThought(id)
+            await syncThoughtDelete(id)
             const label = existing ? `"${existing.content.slice(0, 40)}"` : `thought ${id}`
             historyActions.push(`Deleted ${label}`)
             result = "Deleted"
@@ -459,12 +504,26 @@ Available tags: ${tagList || "none"}
           const tileId = Number(args.tile_id)
           if (!id || !tileId) {
             result = "Error: missing ids"
+          } else if (!allowedThoughtIds.has(id)) {
+            result = `Error: thought_id ${id} was not returned by a search in this session. Search first, then move the returned id.`
           } else {
             const validTile = tiles.find((t) => Number(t.id) === tileId)
             if (!validTile) {
               result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
             } else {
-              await thoughtsDb.move(id, tileId, userId, undefined, true)
+              const existing = knownThought(id)
+              if (!existing) {
+                result = `Error: thought_id ${id} is not available from this session's search results. Search again before moving.`
+                continue
+              }
+              const targetThoughts = await thoughtsDb.list(userId, { tileId })
+              const sortOrder = Math.max(-1, ...targetThoughts.map((thought) => Number(thought.sort_order))) + 1
+              await syncThoughtUpsert(id, {
+                tile_id: tileId,
+                content: existing.content,
+                tags: existing.tags,
+                sort_order: sortOrder,
+              })
               const action = `Moved thought ${id} to "${validTile.title}"`
               historyActions.push(action)
               result = "Moved"

@@ -6,10 +6,26 @@ import { useTileDrag } from "../hooks/useTileDrag"
 import { getCrossCanvasDrag, subscribeCrossCanvasDrag } from "../utils/crossCanvasDrag"
 import type { Thought, Tile as TileType } from "../types"
 
-export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: Thought[]; isNew?: boolean; scale?: number }) {
-  const { highlightedId } = useStore()
+const tileAnimationStyles = `
+@keyframes tileHighlight {
+  0% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0); }
+  15% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0.03), 0 0 0 2px rgba(124,58,237,0.4); }
+  50% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0.03), 0 0 0 2px rgba(124,58,237,0.5); }
+  80% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0.03), 0 0 0 2px rgba(124,58,237,0.4); }
+  100% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0); }
+}
+@keyframes remoteTileUpdate {
+  0% { background: rgba(239,246,255,0.98); border-color: #60a5fa; box-shadow: 0 0 0 2px rgba(59,130,246,0.28), 0 12px 28px rgba(59,130,246,0.14); }
+  60% { background: rgba(239,246,255,0.98); border-color: #93c5fd; box-shadow: 0 0 0 2px rgba(59,130,246,0.18), 0 8px 18px rgba(59,130,246,0.10); }
+  100% { background: rgba(255,255,255,0.95); border-color: #e0e0e0; box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+}
+`
+
+export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: Thought[]; scale?: number }) {
+  const { highlightedId, remoteChangedTileIds } = useStore()
   const [editing, setEditing] = useState(false)
   const isHighlighted = highlightedId?.type === "tile" && Number(highlightedId.id) === Number(tile.id)
+  const isRemoteChanged = remoteChangedTileIds.has(tile.id)
   const [isDragging, setIsDragging] = useState(() => {
     const session = getCrossCanvasDrag()
     return session?.kind === "tile" && session.tile.id === tile.id
@@ -27,7 +43,7 @@ export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: 
 
   return (
     <>
-      {isHighlighted && <style>{`@keyframes tileHighlight { 0% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0) } 15% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0.03), 0 0 0 2px rgba(124,58,237,0.4) } 50% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0.03), 0 0 0 2px rgba(124,58,237,0.5) } 80% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0.03), 0 0 0 2px rgba(124,58,237,0.4) } 100% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0) } }`}</style>}
+      {(isHighlighted || isRemoteChanged) && <style>{tileAnimationStyles}</style>}
       <div
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
@@ -44,7 +60,13 @@ export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: 
           opacity: isDragging ? 0.72 : 1,
           boxShadow: isDragging ? "0 14px 32px rgba(0,0,0,0.16)" : undefined,
           transition: "opacity 0.15s ease, box-shadow 0.15s ease",
-          animation: isHighlighted && !isDragging ? "tileHighlight 3s linear forwards" : undefined,
+          animation: !isDragging
+            ? isHighlighted
+              ? "tileHighlight 3s linear forwards"
+              : isRemoteChanged
+                ? "remoteTileUpdate 850ms ease-out forwards"
+                : undefined
+            : undefined,
           pointerEvents: "auto",
           zIndex: isDragging ? 20 : undefined,
         }}

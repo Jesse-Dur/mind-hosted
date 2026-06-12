@@ -1,14 +1,10 @@
 import type { Tile, Thought, Tag, HistoryEvent, Canvas } from "../types"
+import type { SyncPullResponse, SyncPushOperation, SyncPushResponse, SyncSnapshotResponse } from "../sync/types"
 
 const BASE = "/api"
 
 type GetToken = () => Promise<string | null>
-type ThoughtScope = { tileId?: number; canvasId?: number }
-type CanvasOrderUpdate = Pick<Canvas, "id" | "sort_order" | "is_favourite">
-export type CanvasDeleteOptions =
-  | { mode: "deleteContents" }
-  | { mode: "moveContents"; targetCanvasId: number }
-export type CanvasDeleteResult = { targetCanvasId: number | null }
+type AiStatusResponse = { status: string; latest_revision: number }
 
 function normalizeCanvas(canvas: Canvas): Canvas {
   return { ...canvas, id: Number(canvas.id), sort_order: Number(canvas.sort_order) }
@@ -39,6 +35,17 @@ function normalizeHistoryEvent(event: HistoryEvent): HistoryEvent {
   return { ...event, id: Number(event.id) }
 }
 
+function normalizeSnapshot(snapshot: SyncSnapshotResponse): SyncSnapshotResponse {
+  return {
+    revision: Number(snapshot.revision),
+    active_canvas_id: snapshot.active_canvas_id === null ? null : Number(snapshot.active_canvas_id),
+    canvases: snapshot.canvases.map(normalizeCanvas),
+    tags: snapshot.tags.map(normalizeTag),
+    tiles: snapshot.tiles.map(normalizeTile),
+    thoughts: snapshot.thoughts.map(normalizeThought),
+  }
+}
+
 async function req<T>(path: string, getToken: GetToken, options?: RequestInit): Promise<T> {
   const token = await getToken()
   const res = await fetch(`${BASE}${path}`, {
@@ -64,67 +71,18 @@ async function req<T>(path: string, getToken: GetToken, options?: RequestInit): 
 
 export function createApi(getToken: GetToken) {
   return {
-    canvases: {
-      list: () => req<Canvas[]>("/canvases", getToken).then((canvases) => canvases.map(normalizeCanvas)),
-      create: (name: string, sort_order: number) =>
-        req<Canvas>("/canvases", getToken, { method: "POST", body: JSON.stringify({ name, sort_order }) }).then(normalizeCanvas),
-      update: (id: number, data: Partial<Pick<Canvas, "name" | "sort_order" | "is_favourite">>) =>
-        req<Canvas>(`/canvases/${id}`, getToken, { method: "PATCH", body: JSON.stringify(data) }).then(normalizeCanvas),
-      reorder: (updates: CanvasOrderUpdate[]) =>
-        req<void>("/canvases/reorder", getToken, { method: "PATCH", body: JSON.stringify({ updates }) }),
-      remove: (id: number, options: CanvasDeleteOptions) => {
-        const params = new URLSearchParams({ mode: options.mode })
-        if (options.mode === "moveContents") params.set("targetCanvasId", String(options.targetCanvasId))
-        return req<CanvasDeleteResult>(`/canvases/${id}?${params}`, getToken, { method: "DELETE", body: JSON.stringify(options) })
-      },
-    },
-
     tiles: {
-      list: (canvasId?: number) =>
-        req<Tile[]>(canvasId !== undefined ? `/tiles?canvas_id=${canvasId}` : "/tiles", getToken).then((tiles) => tiles.map(normalizeTile)),
       listPast: () => req<Tile[]>("/tiles/past", getToken).then((tiles) => tiles.map(normalizeTile)),
-      create: (data: Omit<Tile, "id" | "created_at">) =>
-        req<Tile>("/tiles", getToken, { method: "POST", body: JSON.stringify(data) }).then(normalizeTile),
-      update: (id: number, data: Partial<Tile>) =>
-        req<Tile>(`/tiles/${id}`, getToken, { method: "PATCH", body: JSON.stringify(data) }).then(normalizeTile),
-      remove: (id: number) => req<void>(`/tiles/${id}`, getToken, { method: "DELETE" }),
     },
 
     thoughts: {
-      list: (scope: ThoughtScope = {}) => {
-        const params = new URLSearchParams()
-        if (scope.tileId !== undefined) params.set("tile_id", String(scope.tileId))
-        if (scope.canvasId !== undefined) params.set("canvas_id", String(scope.canvasId))
-        const query = params.toString()
-        return req<Thought[]>(query ? `/thoughts?${query}` : "/thoughts", getToken).then((thoughts) => thoughts.map(normalizeThought))
-      },
       listPast: () => req<Thought[]>("/thoughts/past", getToken).then((thoughts) => thoughts.map(normalizeThought)),
-      create: (data: Omit<Thought, "id" | "created_at">) =>
-        req<Thought>("/thoughts", getToken, { method: "POST", body: JSON.stringify(data) }).then(normalizeThought),
-      reorder: (id: number, sort_order: number) =>
-        req<void>(`/thoughts/${id}/reorder`, getToken, { method: "PATCH", body: JSON.stringify({ sort_order }) }),
-      updateTags: (id: number, tags: string[]) =>
-        req<Thought>(`/thoughts/${id}/tags`, getToken, { method: "PATCH", body: JSON.stringify({ tags }) }).then(normalizeThought),
-      updateContent: (id: number, content: string) =>
-        req<void>(`/thoughts/${id}/content`, getToken, { method: "PATCH", body: JSON.stringify({ content }) }),
-      move: (id: number, tile_id: number, ordered_ids?: number[]) =>
-        req<void>(`/thoughts/${id}/move`, getToken, { method: "PATCH", body: JSON.stringify({ tile_id, ...(ordered_ids ? { ordered_ids } : {}) }) }),
-      remove: (id: number) => req<void>(`/thoughts/${id}`, getToken, { method: "DELETE" }),
-    },
-
-    tags: {
-      list: () => req<Tag[]>("/tags", getToken).then((tags) => tags.map(normalizeTag)),
-      create: (name: string, color: string) =>
-        req<Tag>("/tags", getToken, { method: "POST", body: JSON.stringify({ name, color }) }).then(normalizeTag),
-      update: (id: number, name: string, color: string) =>
-        req<Tag>(`/tags/${id}`, getToken, { method: "PATCH", body: JSON.stringify({ name, color }) }).then(normalizeTag),
-      remove: (id: number) => req<void>(`/tags/${id}`, getToken, { method: "DELETE" }),
     },
 
     ai: {
       process: (input: string, priority: "low" | "medium" | "high") =>
         req<{ job_id: string }>("/ai/process", getToken, { method: "POST", body: JSON.stringify({ input, priority }) }),
-      status: () => req<{ status: string }>("/ai/status", getToken),
+      status: () => req<AiStatusResponse>("/ai/status", getToken),
     },
 
     whisper: {
@@ -144,6 +102,22 @@ export function createApi(getToken: GetToken) {
 
     history: {
       list: () => req<HistoryEvent[]>("/history", getToken).then((events) => events.map(normalizeHistoryEvent)),
+    },
+
+    sync: {
+      push: (operations: SyncPushOperation[]) =>
+        req<SyncPushResponse>("/sync/push", getToken, { method: "POST", body: JSON.stringify({ operations }) }),
+      pull: (since: number, canvasId?: number) => {
+        const params = new URLSearchParams({ since: String(since) })
+        if (canvasId !== undefined) params.set("canvas_id", String(canvasId))
+        return req<SyncPullResponse>(`/sync/pull?${params}`, getToken)
+      },
+      snapshot: (canvasId?: number) => {
+        const params = new URLSearchParams()
+        if (canvasId !== undefined) params.set("canvas_id", String(canvasId))
+        const query = params.toString()
+        return req<SyncSnapshotResponse>(`/sync/snapshot${query ? `?${query}` : ""}`, getToken).then(normalizeSnapshot)
+      },
     },
   }
 }

@@ -1,10 +1,12 @@
 import type { StateCreator } from "zustand"
 import type { Canvas, Tag, Thought, Tile } from "../types"
-import type { CanvasDeleteOptions } from "../api/client"
 
 export type AiStatus = "idle" | "processing" | "queued" | "limited"
 export type CanvasOrderUpdate = Pick<Canvas, "id" | "sort_order" | "is_favourite">
 export type AiPriority = "low" | "medium" | "high"
+export type CanvasDeleteOptions =
+  | { mode: "deleteContents" }
+  | { mode: "moveContents"; targetCanvasId: number }
 
 export type CanvasCreation = {
   canvas: Canvas
@@ -23,6 +25,9 @@ export interface UiSlice {
   sidebarOpen: boolean
   canvasHeight: number
   highlightedId: { type: "tile" | "thought"; id: number } | null
+  remoteChangedTileIds: Set<number>
+  remoteChangedThoughtIds: Set<number>
+  markRemoteChanges: (tileIds: number[], thoughtIds: number[]) => void
   setHighlight: (type: "tile" | "thought", id: number) => void
   setSpotlightOpen: (open: boolean) => void
   setSidebarOpen: (open: boolean) => void
@@ -52,8 +57,6 @@ export interface CanvasDataSlice {
 }
 
 export interface TileSlice {
-  inFlightTileMoves: Set<number>
-  newestTileId: number | null
   addTile: (tile: Omit<Tile, "id" | "created_at">) => Promise<void>
   moveTileLocal: (id: number, data: Partial<Tile>, fallbackTile?: Tile) => void
   updateTile: (id: number, data: Partial<Tile>) => Promise<void | Tile>
@@ -62,9 +65,7 @@ export interface TileSlice {
 }
 
 export interface ThoughtSlice {
-  newThoughtIds: Set<number>
   thoughtStableKeys: Map<number, number>
-  inFlightMoves: Set<number>
   addThought: (thought: Omit<Thought, "id" | "created_at">) => Promise<void>
   addThoughtToTile: (tileId: number, content: string, tags: string[]) => Promise<void>
   adoptTemporaryTileThoughts: (temporaryTileId: number, savedTileId: number) => Promise<void>
@@ -91,6 +92,12 @@ export interface AiSlice {
   processAiInput: (input: string, priority?: AiPriority) => void
 }
 
+export interface SyncSlice {
+  syncPendingCount: number
+  initializeSync: () => Promise<void>
+  syncNow: () => Promise<void>
+}
+
 export type AppStore = UiSlice
   & CanvasSlice
   & CanvasDataSlice
@@ -98,5 +105,6 @@ export type AppStore = UiSlice
   & ThoughtSlice
   & TagSlice
   & AiSlice
+  & SyncSlice
 
 export type StoreSlice<Slice> = StateCreator<AppStore, [], [], Slice>

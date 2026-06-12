@@ -5,7 +5,9 @@ import { createCanvasSlice } from "./canvasSlice"
 import { createTagSlice } from "./tagSlice"
 import { createThoughtSlice } from "./thoughtSlice"
 import { createTileSlice } from "./tileSlice"
+import { createSyncSlice } from "./syncSlice"
 import { createUiSlice } from "./uiSlice"
+import { registerSyncStore } from "../sync/storeBridge"
 import type { AppStore } from "./types"
 
 export const useStore = create<AppStore>((set, get, store) => ({
@@ -16,8 +18,11 @@ export const useStore = create<AppStore>((set, get, store) => ({
   ...createThoughtSlice(set, get, store),
   ...createTagSlice(set, get, store),
   ...createAiSlice(set, get, store),
+  ...createSyncSlice(set, get, store),
   ...createUiSlice(set, get, store),
 }))
+
+registerSyncStore(() => useStore.getState(), (updater) => useStore.setState(updater))
 
 export { setGetToken } from "./apiAuth"
 export type { AiStatus, AppStore } from "./types"

@@ -12,7 +12,7 @@ import { scheduleIdleTask } from "./utils/scheduleIdleTask"
 
 export default function App() {
   const { getToken, isSignedIn, isLoaded } = useAuth()
-  const { loadTiles, loadThoughts, loadTags, loadCanvases, hydrateRemainingCanvases, setSpotlightOpen, spotlightOpen, sidebarOpen, setSidebarOpen, tabsVisible } = useStore()
+  const { loadTiles, loadThoughts, loadTags, loadCanvases, hydrateRemainingCanvases, initializeSync, syncNow, setSpotlightOpen, spotlightOpen, sidebarOpen, setSidebarOpen, tabsVisible } = useStore()
   const [openedByMic, setOpenedByMic] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [tabBarVisible, setTabBarVisible] = useState(tabsVisible)
@@ -49,6 +49,8 @@ export default function App() {
         : Promise.all([loadTiles(initialCanvasId), loadThoughts(initialCanvasId)]).then(() => undefined)
       await Promise.all([initialCanvasData, loadTags()])
       if (cancelled) return
+      await initializeSync()
+      if (cancelled) return
 
       setLoaded(true)
       settleTimer = window.setTimeout(() => {
@@ -60,14 +62,14 @@ export default function App() {
     }
 
     boot().catch(console.error)
-    const poll = setInterval(loadThoughts, 15000)
+    const poll = setInterval(syncNow, 15000)
     return () => {
       cancelled = true
       if (settleTimer !== null) window.clearTimeout(settleTimer)
       cancelIdleHydration?.()
       clearInterval(poll)
     }
-  }, [isLoaded, isSignedIn, loadCanvases, loadTiles, loadThoughts, loadTags, hydrateRemainingCanvases])
+  }, [isLoaded, isSignedIn, loadCanvases, loadTiles, loadThoughts, loadTags, hydrateRemainingCanvases, initializeSync, syncNow])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

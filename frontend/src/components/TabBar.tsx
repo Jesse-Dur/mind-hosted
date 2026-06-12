@@ -8,7 +8,7 @@ import { getTabShortcutAction, newCanvasShortcutLabel, tabShortcutLabel } from "
 import { getCrossCanvasDrag, moveCrossCanvasDrag, setCrossCanvasDragEnteredCanvas, subscribeCrossCanvasDrag, subscribeCrossCanvasDragPointer } from "../utils/crossCanvasDrag"
 import { canvasIdentityKey } from "../utils/canvasIdentity"
 import type { Canvas } from "../types"
-import type { CanvasDeleteOptions } from "../api/client"
+import type { CanvasDeleteOptions } from "../store/types"
 
 const BAR_H = 14
 const JUT_H = 28

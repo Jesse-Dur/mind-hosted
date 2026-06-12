@@ -28,6 +28,7 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 - **History** — full audit log of every action with expand view showing what you said and the actions the LLM took based on that
 - **Sidebar** — Tags, History, and Settings panels
 - **Auth** — secure accounts via Clerk, your data is scoped to you
+- **Offline sync** — canvases, tiles, thoughts, and tags are cached locally and local edits are queued when the connection is unreliable
 
 ---
 
@@ -40,8 +41,39 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 | Database | Neon (Postgres) |
 | Frontend | React + TypeScript + Vite (hosted on Vercel) |
 | State | Zustand |
+| Offline storage | IndexedDB via Dexie |
 | AI | Groq (`llama-3.1-8b-instant`) |
 | Auth | Clerk |
+
+---
+
+## Offline sync model
+
+Mind uses a local-first sync engine for app data. Zustand is still the fast in-memory UI store, while IndexedDB stores durable cached entities and a mutation outbox. Dexie is the small wrapper used to keep the IndexedDB code transactional and readable.
+
+The sync implementation is split by responsibility: frontend enqueue/flush/pull/runtime modules live under `frontend/src/sync`, while backend apply/upsert/delete/events/snapshot/pull modules live under `backend/db/sync`. The public facades remain `frontend/src/sync/engine.ts` and `backend/db/sync.ts`.
+
+The sync engine prioritises the active canvas:
+
+- On boot, cached canvases, tiles, thoughts, and tags can render before network requests finish.
+- Server refreshes use `GET /api/sync/snapshot`, scoped to the active canvas where possible, so current-state repair does not need the old entity CRUD routes.
+- The active canvas is pulled and reconciled before inactive canvases.
+- Background canvas hydration is sequential and stops when the active canvas changes, so the newly selected tab gets priority.
+- Local creates, edits, moves, resizes, reorders, and deletes are written to the outbox and flushed later if the connection drops.
+- Remote tile and thought upserts animate only when a pull or snapshot changes this device's cached payload; local optimistic writes stay immediate.
+- Creates use `client_id` idempotency keys so a retried request cannot create duplicates after packet loss.
+- Normal writes use `POST /api/sync/push`; incremental multi-device updates use `GET /api/sync/pull`.
+
+The multi-device model is sequential rather than realtime collaborative editing. A device pushes revisioned changes to the server, and another device pulls those revisions later. For v1, conflict handling is intentionally simple: pending local changes are preserved over stale server lists, and same-field conflicts resolve by the latest accepted server operation.
+
+AI processing still requires network access to Groq. AI writes are restricted to thoughts and go through the same backend sync mutation path internally, so AI-created, updated, deleted, and moved thoughts emit `sync_events` and are picked up by normal pull flows.
+
+The public app data API is intentionally narrow:
+
+- `POST /api/sync/push` for browser outbox writes.
+- `GET /api/sync/pull` for revisioned incremental updates.
+- `GET /api/sync/snapshot` for boot, tab switches, background canvas hydration, and cache repair.
+- Feature-specific routes remain for AI, voice transcription, history, and Spotlight's past-item views.
 
 ---
 

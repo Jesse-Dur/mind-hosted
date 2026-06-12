@@ -13,23 +13,33 @@ export const createAiSlice: StoreSlice<AiSlice> = (set, get) => ({
 
   startAiPolling: () => {
     let poll: ReturnType<typeof setInterval> | null = null
+    let lastRevision: number | null = null
+    let syncing = false
     const safety = setTimeout(() => {
       if (poll !== null) clearInterval(poll)
     }, 120000)
 
+    const syncIfRevisionChanged = async (latestRevision: number) => {
+      if (syncing) return
+      if (lastRevision !== null && latestRevision <= lastRevision) return
+      lastRevision = latestRevision
+      syncing = true
+      try {
+        await get().syncNow()
+      } finally {
+        syncing = false
+      }
+    }
+
     poll = setInterval(async () => {
       try {
-        const { status } = await getApi().ai.status()
+        const { status, latest_revision } = await getApi().ai.status()
         set({ aiStatus: status as AiSlice["aiStatus"] })
+        await syncIfRevisionChanged(latest_revision)
         if (status === "idle") {
           if (poll !== null) clearInterval(poll)
           clearTimeout(safety)
-          // AI can edit any canvas, so refresh the active view and re-warm caches.
-          const { loadThoughts, hydrateRemainingCanvases } = get()
-          setTimeout(() => loadThoughts(), 500)
-          setTimeout(() => loadThoughts(), 1500)
-          setTimeout(() => loadThoughts(), 2500)
-          hydrateRemainingCanvases(true).catch(console.error)
+          await get().syncNow()
         }
       } catch {
         if (poll !== null) clearInterval(poll)

@@ -3,13 +3,6 @@ type OptimisticEntity = {
   stableKey?: string
 }
 
-let temporaryIdSequence = 0
-
-export function createTemporaryId() {
-  temporaryIdSequence += 1
-  return -(Date.now() * 1000 + temporaryIdSequence)
-}
-
 export function isTemporaryId(id: number) {
   return id < 0
 }

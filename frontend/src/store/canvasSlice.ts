@@ -1,29 +1,12 @@
-import type { Canvas, Tile } from "../types"
+import type { Canvas, Thought, Tile } from "../types"
 import type { CanvasSlice, StoreSlice } from "./types"
-import { getApi } from "./apiAuth"
 import { getStoredActiveCanvasId, readStoredActiveCanvasId, writeStoredActiveCanvasId } from "./storage"
 import { isTemporaryCanvasId } from "../utils/canvasIdentity"
-
-type CanvasPersistUpdate = Partial<Pick<Canvas, "name" | "sort_order" | "is_favourite">>
-
-let temporaryCanvasSequence = 0
-
-function createTemporaryCanvasId() {
-  temporaryCanvasSequence += 1
-  return -(Date.now() * 1000 + temporaryCanvasSequence)
-}
-
-function buildPersistUpdate(serverCanvas: Canvas, localCanvas: Canvas) {
-  const update: CanvasPersistUpdate = {}
-  if (localCanvas.name !== serverCanvas.name) update.name = localCanvas.name
-  if (localCanvas.sort_order !== serverCanvas.sort_order) update.sort_order = localCanvas.sort_order
-  if (localCanvas.is_favourite !== serverCanvas.is_favourite) update.is_favourite = localCanvas.is_favourite
-  return update
-}
-
-function adoptTemporaryCanvasTiles(tiles: Tile[], temporaryCanvasId: number, savedCanvasId: number) {
-  return tiles.map((tile) => tile.canvas_id === temporaryCanvasId ? { ...tile, canvas_id: savedCanvasId } : tile)
-}
+import { cachedCanvases } from "../sync/cache"
+import { enqueueDelete, enqueueUpsert, setSyncActiveCanvas } from "../sync/engine"
+import { createClientId, createTemporarySyncId } from "../sync/ids"
+import { advanceLoadGeneration } from "./loadGeneration"
+import { fetchAndCacheSnapshot } from "../sync/snapshot"
 
 export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
   canvases: [],
@@ -38,34 +21,92 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
       const currentIsValid = activeCanvasId !== null && canvases.some((canvas) => canvas.id === activeCanvasId)
       if (stored !== null) {
         if (activeCanvasId !== stored) set({ activeCanvasId: stored })
+        setSyncActiveCanvas(stored)
         return stored
       }
-      if (currentIsValid) return activeCanvasId
+      if (currentIsValid) {
+        setSyncActiveCanvas(activeCanvasId)
+        return activeCanvasId
+      }
       const fallback = canvases[0]?.id ?? null
       writeStoredActiveCanvasId(fallback)
       set({ activeCanvasId: fallback })
+      setSyncActiveCanvas(fallback)
       return fallback
     }
 
-    const canvases = await getApi().canvases.list()
+    const cached = await cachedCanvases()
+    if (cached.length > 0) {
+      const cachedActive = getStoredActiveCanvasId(cached) ?? cached[0]?.id ?? null
+      writeStoredActiveCanvasId(cachedActive)
+      set({ canvases: cached, activeCanvasId: cachedActive })
+      setSyncActiveCanvas(cachedActive)
+      void (async () => {
+        try {
+          const snapshot = await fetchAndCacheSnapshot(cachedActive)
+          const mergedCanvases = snapshot.canvases
+          set((s) => {
+            const currentIsValid = s.activeCanvasId !== null && mergedCanvases.some((canvas) => canvas.id === s.activeCanvasId)
+            const nextActiveCanvasId = currentIsValid ? s.activeCanvasId : snapshot.activeCanvasId ?? getStoredActiveCanvasId(mergedCanvases) ?? mergedCanvases[0]?.id ?? null
+            writeStoredActiveCanvasId(nextActiveCanvasId)
+            return {
+              canvases: mergedCanvases,
+              activeCanvasId: nextActiveCanvasId,
+              tags: snapshot.tags,
+              tiles: s.activeCanvasId === snapshot.activeCanvasId ? snapshot.tiles : s.tiles,
+              thoughts: s.activeCanvasId === snapshot.activeCanvasId ? snapshot.thoughts : s.thoughts,
+              tileCache: snapshot.activeCanvasId === null ? s.tileCache : new Map(s.tileCache).set(snapshot.activeCanvasId, snapshot.tiles),
+              thoughtCache: snapshot.activeCanvasId === null ? s.thoughtCache : new Map(s.thoughtCache).set(snapshot.activeCanvasId, snapshot.thoughts),
+            }
+          })
+          get().markRemoteChanges(snapshot.changedTileIds, snapshot.changedThoughtIds)
+        } catch (error) {
+          console.error(error)
+        }
+      })()
+      return cachedActive
+    }
+
+    let snapshot: Awaited<ReturnType<typeof fetchAndCacheSnapshot>>
+    try {
+      snapshot = await fetchAndCacheSnapshot(readStoredActiveCanvasId())
+    } catch (error) {
+      console.error(error)
+      const { canvases: localCanvases, activeCanvasId } = get()
+      return activeCanvasId ?? localCanvases[0]?.id ?? null
+    }
     let nextActiveCanvasId: number | null = null
     set((s) => {
       // Restore last active tab from localStorage, fall back to first canvas.
-      const stored = getStoredActiveCanvasId(canvases)
-      const currentIsValid = s.activeCanvasId !== null && canvases.some((canvas) => canvas.id === s.activeCanvasId)
-      nextActiveCanvasId = stored ?? (currentIsValid ? s.activeCanvasId : canvases[0]?.id ?? null)
+      const stored = getStoredActiveCanvasId(snapshot.canvases)
+      const currentIsValid = s.activeCanvasId !== null && snapshot.canvases.some((canvas) => canvas.id === s.activeCanvasId)
+      nextActiveCanvasId = snapshot.activeCanvasId ?? stored ?? (currentIsValid ? s.activeCanvasId : snapshot.canvases[0]?.id ?? null)
       writeStoredActiveCanvasId(nextActiveCanvasId)
-      return { canvases, activeCanvasId: nextActiveCanvasId }
+      const tileCache = snapshot.activeCanvasId === null ? s.tileCache : new Map(s.tileCache).set(snapshot.activeCanvasId, snapshot.tiles)
+      const thoughtCache = snapshot.activeCanvasId === null ? s.thoughtCache : new Map(s.thoughtCache).set(snapshot.activeCanvasId, snapshot.thoughts)
+      return {
+        canvases: snapshot.canvases,
+        activeCanvasId: nextActiveCanvasId,
+        tags: snapshot.tags,
+        tiles: snapshot.activeCanvasId === nextActiveCanvasId ? snapshot.tiles : [],
+        thoughts: snapshot.activeCanvasId === nextActiveCanvasId ? snapshot.thoughts : [],
+        tileCache,
+        thoughtCache,
+      }
     })
+    get().markRemoteChanges(snapshot.changedTileIds, snapshot.changedThoughtIds)
+    setSyncActiveCanvas(nextActiveCanvasId)
     return nextActiveCanvasId
   },
 
   setActiveCanvas: (id) => {
+    advanceLoadGeneration()
     const { tileCache, thoughtCache } = get()
     if (!isTemporaryCanvasId(id)) writeStoredActiveCanvasId(id)
     // Serve cached canvas data instantly. Temporary canvases only exist locally
     // until creation settles, so fetching them would produce rejected requests.
     set({ activeCanvasId: id, tiles: tileCache.get(id) ?? [], thoughts: thoughtCache.get(id) ?? [] })
+    setSyncActiveCanvas(id)
     if (isTemporaryCanvasId(id)) return
     void get().loadTiles(id)
     void get().loadThoughts(id)
@@ -73,10 +114,12 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
 
   addCanvas: (name) => {
     const { canvases } = get()
-    const tempId = createTemporaryCanvasId()
-    const stableKey = `canvas-${tempId}`
+    const clientId = createClientId("canvas")
+    const tempId = createTemporarySyncId()
+    const stableKey = `canvas-${clientId}`
     const tempCanvas: Canvas = {
       id: tempId,
+      client_id: clientId,
       name,
       sort_order: canvases.length,
       is_favourite: false,
@@ -89,138 +132,61 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
       thoughtCache: new Map(s.thoughtCache).set(tempId, []),
     }))
 
-    const persisted = getApi().canvases.create(name, canvases.length).then(async (canvas) => {
-      let localCanvas: Canvas = { ...canvas, stableKey }
-      set((s) => {
-        const tileCache = new Map(s.tileCache)
-        const thoughtCache = new Map(s.thoughtCache)
-        // Tiles created while the canvas is still temporary need the real parent id
-        // before their own optimistic persistence can be sent to the API.
-        const tempTiles = adoptTemporaryCanvasTiles(tileCache.get(tempId) ?? [], tempId, canvas.id)
-        const tempThoughts = thoughtCache.get(tempId) ?? []
-        const optimisticCanvas = s.canvases.find((item) => item.id === tempId) ?? tempCanvas
-        localCanvas = {
-          ...canvas,
-          name: optimisticCanvas.name,
-          sort_order: optimisticCanvas.sort_order,
-          is_favourite: optimisticCanvas.is_favourite,
-          stableKey,
-        }
-
-        tileCache.set(canvas.id, tempTiles)
-        thoughtCache.set(canvas.id, tempThoughts)
-        tileCache.delete(tempId)
-        thoughtCache.delete(tempId)
-        if (s.activeCanvasId === tempId) writeStoredActiveCanvasId(canvas.id)
-
-        return {
-          canvases: s.canvases.map((item) => item.id === tempId ? localCanvas : item),
-          activeCanvasId: s.activeCanvasId === tempId ? canvas.id : s.activeCanvasId,
-          tiles: s.activeCanvasId === tempId ? tempTiles : s.tiles,
-          thoughts: s.activeCanvasId === tempId ? tempThoughts : s.thoughts,
-          tileCache,
-          thoughtCache,
-        }
-      })
-
-      const update = buildPersistUpdate(canvas, localCanvas)
-      if (Object.keys(update).length === 0) return localCanvas
-
-      try {
-        const savedCanvas = await getApi().canvases.update(canvas.id, update)
-        let displayedCanvas = { ...savedCanvas, stableKey }
-        set((s) => {
-          const currentCanvas = s.canvases.find((item) => item.id === canvas.id)
-          displayedCanvas = currentCanvas
-            ? {
-                ...savedCanvas,
-                name: currentCanvas.name,
-                sort_order: currentCanvas.sort_order,
-                is_favourite: currentCanvas.is_favourite,
-                stableKey,
-              }
-            : displayedCanvas
-          return {
-            canvases: s.canvases.map((item) => item.id === canvas.id ? displayedCanvas : item),
-          }
-        })
-        return displayedCanvas
-      } catch (error) {
-        console.error(error)
-        return localCanvas
-      }
-    }).catch((error) => {
-      set((s) => {
-        const tileCache = new Map(s.tileCache)
-        const thoughtCache = new Map(s.thoughtCache)
-        tileCache.delete(tempId)
-        thoughtCache.delete(tempId)
-
-        const remainingCanvases = s.canvases.filter((canvas) => canvas.id !== tempId)
-        const nextActiveCanvasId = s.activeCanvasId === tempId ? remainingCanvases[0]?.id ?? null : s.activeCanvasId
-        if (s.activeCanvasId === tempId) writeStoredActiveCanvasId(nextActiveCanvasId)
-
-        if (s.activeCanvasId !== tempId) return { canvases: remainingCanvases, tileCache, thoughtCache }
-        return {
-          canvases: remainingCanvases,
-          activeCanvasId: nextActiveCanvasId,
-          tiles: nextActiveCanvasId === null ? [] : tileCache.get(nextActiveCanvasId) ?? [],
-          thoughts: nextActiveCanvasId === null ? [] : thoughtCache.get(nextActiveCanvasId) ?? [],
-          tileCache,
-          thoughtCache,
-        }
-      })
-      throw error
-    })
+    const persisted = enqueueUpsert("canvas", tempCanvas).then(() => tempCanvas)
+    void persisted.catch(console.error)
 
     return { canvas: tempCanvas, persisted }
   },
 
   updateCanvas: async (id, data) => {
-    set((s) => ({ canvases: s.canvases.map((canvas) => canvas.id === id ? { ...canvas, ...data } : canvas) }))
-    if (isTemporaryCanvasId(id)) return
-    getApi().canvases.update(id, data).catch(console.error)
+    let updatedCanvas: Canvas | undefined
+    set((s) => ({
+      canvases: s.canvases.map((canvas) => {
+        if (canvas.id !== id) return canvas
+        updatedCanvas = { ...canvas, ...data }
+        return updatedCanvas
+      }),
+    }))
+    if (updatedCanvas) await enqueueUpsert("canvas", updatedCanvas)
   },
 
   reorderCanvases: (updates) => {
     const byId = new Map(updates.map((update) => [update.id, update]))
+    const changed: Canvas[] = []
     set((s) => ({
       canvases: s.canvases.map((canvas) => {
         const update = byId.get(canvas.id)
-        return update ? { ...canvas, ...update } : canvas
+        if (!update) return canvas
+        const updated = { ...canvas, ...update }
+        changed.push(updated)
+        return updated
       }),
     }))
-    const persistedUpdates = updates.filter((update) => !isTemporaryCanvasId(update.id))
-    if (persistedUpdates.length > 0) getApi().canvases.reorder(persistedUpdates).catch(console.error)
+    for (const canvas of changed) void enqueueUpsert("canvas", canvas)
   },
 
   removeCanvas: async (id, options) => {
-    const { canvases, activeCanvasId } = get()
+    const { canvases, activeCanvasId, tileCache, thoughtCache, tiles, thoughts } = get()
+    const removedCanvas = canvases.find((canvas) => canvas.id === id)
     const remainingCanvases = canvases.filter((canvas) => canvas.id !== id)
+    if (!removedCanvas) return
     if (remainingCanvases.length === 0) throw new Error("Cannot delete the only canvas")
 
     const requestedTargetId = options.mode === "moveContents" ? options.targetCanvasId : null
     const nextActiveCanvasId = activeCanvasId === id
       ? requestedTargetId ?? remainingCanvases[0]?.id ?? null
       : activeCanvasId
-    const rollback = {
-      canvases,
-      activeCanvasId,
-      tileCache: new Map(get().tileCache),
-      thoughtCache: new Map(get().thoughtCache),
-      tiles: get().tiles,
-      thoughts: get().thoughts,
-    }
+    const sourceTiles: Tile[] = tileCache.get(id) ?? (activeCanvasId === id ? tiles : [])
+    const sourceThoughts: Thought[] = thoughtCache.get(id) ?? (activeCanvasId === id ? thoughts : [])
 
     writeStoredActiveCanvasId(nextActiveCanvasId)
+    if (nextActiveCanvasId !== null) setSyncActiveCanvas(nextActiveCanvasId)
 
     set((s) => {
       const tileCache = new Map(s.tileCache)
       const thoughtCache = new Map(s.thoughtCache)
       const sourceTilesAreKnown = tileCache.has(id) || s.activeCanvasId === id
       const sourceThoughtsAreKnown = thoughtCache.has(id) || s.activeCanvasId === id
-      const sourceTiles = tileCache.get(id) ?? (s.activeCanvasId === id ? s.tiles : [])
-      const sourceThoughts = thoughtCache.get(id) ?? (s.activeCanvasId === id ? s.thoughts : [])
       tileCache.delete(id)
       thoughtCache.delete(id)
 
@@ -264,33 +230,17 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
       }
     })
 
-    try {
-      const result = await getApi().canvases.remove(id, options)
-      const refreshCanvasId = result.targetCanvasId ?? (activeCanvasId === id ? nextActiveCanvasId : null)
-      if (refreshCanvasId === null) return
-
-      const [tiles, thoughts] = await Promise.all([
-        getApi().tiles.list(refreshCanvasId),
-        getApi().thoughts.list({ canvasId: refreshCanvasId }),
+    await enqueueDelete("canvas", removedCanvas, {
+      mode: options.mode,
+      ...(options.mode === "moveContents" ? { targetCanvasId: options.targetCanvasId } : {}),
+    })
+    if (options.mode === "moveContents") {
+      await Promise.all(sourceTiles.map((tile) => enqueueUpsert("tile", { ...tile, canvas_id: options.targetCanvasId })))
+    } else {
+      await Promise.all([
+        ...sourceThoughts.map((thought) => enqueueDelete("thought", thought)),
+        ...sourceTiles.map((tile) => enqueueDelete("tile", tile)),
       ])
-      set((s) => {
-        const tileCache = new Map(s.tileCache).set(refreshCanvasId, tiles)
-        const thoughtCache = new Map(s.thoughtCache).set(refreshCanvasId, thoughts)
-        return s.activeCanvasId === refreshCanvasId
-          ? { tiles, thoughts, tileCache, thoughtCache }
-          : { tileCache, thoughtCache }
-      })
-    } catch (error) {
-      console.error(error)
-      writeStoredActiveCanvasId(rollback.activeCanvasId)
-      set({
-        canvases: rollback.canvases,
-        activeCanvasId: rollback.activeCanvasId,
-        tileCache: rollback.tileCache,
-        thoughtCache: rollback.thoughtCache,
-        tiles: rollback.tiles,
-        thoughts: rollback.thoughts,
-      })
     }
   },
 })

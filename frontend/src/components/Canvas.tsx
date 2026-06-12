@@ -29,7 +29,7 @@ function getActiveCanvasKey(canvases: CanvasType[], activeCanvasId: number | nul
 }
 
 export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
-  const { tiles, thoughts, addTile, newestTileId, canvasHeight, activeCanvasId, canvases } = useStore()
+  const { tiles, thoughts, addTile, canvasHeight, activeCanvasId, canvases } = useStore()
   const TAB_OFFSET = tabBarVisible ? 36 : 0
   const CANVAS_H = canvasHeight
   const CANVAS_W = Math.floor(Math.round(canvasHeight * (16 / 9)) / GRID) * GRID
@@ -191,11 +191,11 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
         {/* Tiles fade independently — dot grid stays visible during transition */}
         <div style={{ opacity: visible ? 1 : 0, transition: "opacity 0.15s ease", position: "absolute", inset: 0, pointerEvents: "none" }}>
           {displayedTiles.filter((t) => t.visible && t.id !== immuneTileId).map((tile) => (
-            <Tile key={optimisticIdentityKey(tile, "tile")} tile={tile} thoughts={displayedThoughts} isNew={tile.id === newestTileId} scale={scale} />
+            <Tile key={optimisticIdentityKey(tile, "tile")} tile={tile} thoughts={displayedThoughts} scale={scale} />
           ))}
         </div>
         {immuneTile?.visible && (
-          <Tile key={`immune-${optimisticIdentityKey(immuneTile, "tile")}`} tile={immuneTile} thoughts={immuneThoughts} isNew={immuneTile.id === newestTileId} scale={scale} />
+          <Tile key={`immune-${optimisticIdentityKey(immuneTile, "tile")}`} tile={immuneTile} thoughts={immuneThoughts} scale={scale} />
         )}
         {draft && (
           <div style={{

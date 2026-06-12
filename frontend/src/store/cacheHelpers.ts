@@ -24,13 +24,6 @@ export function findThoughtInState(id: number, thoughts: Thought[], thoughtCache
   return null
 }
 
-export function findThoughtCanvasId(id: number, thoughtCache: Map<number, Thought[]>) {
-  for (const [canvasId, cachedThoughts] of thoughtCache) {
-    if (cachedThoughts.some((thought) => thought.id === id)) return canvasId
-  }
-  return null
-}
-
 export function findThoughtsForTile(tileId: number, thoughts: Thought[], thoughtCache: Map<number, Thought[]>) {
   const byId = new Map<number, Thought>()
   for (const thought of thoughts) if (thought.tile_id === tileId) byId.set(thought.id, thought)
