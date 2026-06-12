@@ -14,7 +14,7 @@ Lying in bed, I began to imagine a blank slate, where i could create tiles and p
 
 Privacy is important to me. AI processing is handled by Groq, who do not retain your prompts or completions. Your thoughts are stored in a managed Postgres database scoped strictly to your account.
 
-You're welcome to open issues, fork the project, make it commercial, heck i dont care. All i ask is you be a good person & that's the terms you agree to by interacting with this project.
+You're welcome to open issues, fork the project, make it commercial, heck i dont care. All i ask is you be a good person & those are the terms you agree to by interacting with this project.
 
 ---
 
