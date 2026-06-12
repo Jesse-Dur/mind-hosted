@@ -88,6 +88,6 @@ Open `http://localhost:5173` in your browser.
 
 ## Credits
 - The icon of the project & svg is from [freesvg.org](https://freesvg.org/colorful-brain)
-- Built with [Amazon Q Developer](https://aws.amazon.com/q/developer/)
+- Built with [Amazon Q Developer](https://aws.amazon.com/q/developer/) then Codex. (and my brain too!)
 
 Peace.
