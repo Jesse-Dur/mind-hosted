@@ -29,15 +29,14 @@ whisperRoute.post("/transcribe", async (c) => {
       const retryAfter = res.headers.get("retry-after")
       const resetTokens = res.headers.get("x-ratelimit-reset-requests") ?? res.headers.get("x-ratelimit-reset-tokens")
       const wait = retryAfter ? Number(retryAfter) * 1000 : 10000
-      console.log(`[whisper] rate limited (attempt ${attempt}/${MAX_RETRIES}) — waiting ${wait / 1000}s (reset: ${resetTokens})`)
+      console.warn(`[whisper] rate limited (attempt ${attempt}/${MAX_RETRIES}) - waiting ${wait / 1000}s (reset: ${resetTokens})`)
       if (attempt === MAX_RETRIES) return c.json({ error: "Rate limited, please try again shortly" }, 429)
       await new Promise((r) => setTimeout(r, wait))
       continue
     }
 
     if (!res.ok) {
-      const err = await res.text()
-      console.error(`[whisper] error ${res.status}: ${err}`)
+      console.error(`[whisper] error ${res.status}: ${res.statusText || "upstream request failed"}`)
       return c.json({ error: "Transcription failed" }, 500)
     }
 

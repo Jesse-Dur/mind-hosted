@@ -82,7 +82,6 @@ export const tilesDb = {
       RETURNING *
     ` as unknown as [Tile]
     if (update.title) {
-      console.log(`[tile.update] "${update.title.replace(/[\r\n]/g, " ")}" (id: ${id})`)
       await historyDb.log(userId, "tile.update", `Renamed tile to "${update.title}"`, { tile_id: id, title: update.title })
     }
     return tile

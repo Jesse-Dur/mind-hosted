@@ -137,6 +137,45 @@ const TOOLS = [
 ]
 
 const SEARCH_TOOLS = new Set(["search_by_tag", "search_by_tile", "search_thoughts"])
+// Low-limit logs are intentionally metadata-only so backend diagnostics never expose user thoughts.
+const LOW_REMAINING_REQUESTS = 2
+const LOW_REMAINING_TOKENS = 2000
+
+type AiUsageStats = { totalInput: number; totalOutput: number; totalTokens: number; iterations: number }
+type RateLimitSnapshot = { remainingReqs: string | null; remainingTokens: string | null; resetTokens: string | null }
+
+function parseRateLimitValue(value: string | null) {
+  if (value === null) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function isLowRateLimit(snapshot: RateLimitSnapshot) {
+  const remainingReqs = parseRateLimitValue(snapshot.remainingReqs)
+  const remainingTokens = parseRateLimitValue(snapshot.remainingTokens)
+  return (remainingReqs !== null && remainingReqs <= LOW_REMAINING_REQUESTS)
+    || (remainingTokens !== null && remainingTokens <= LOW_REMAINING_TOKENS)
+}
+
+function logRateLimitStatus(reqId: string, reason: "low" | "hit", snapshot: RateLimitSnapshot, stats: AiUsageStats, waitMs?: number) {
+  const wait = waitMs === undefined ? "" : ` wait_seconds=${waitMs / 1000}`
+  console.warn(
+    `[ai:${reqId}] rate_limit_${reason}`
+    + ` remaining_requests=${snapshot.remainingReqs ?? "unknown"}`
+    + ` remaining_tokens=${snapshot.remainingTokens ?? "unknown"}`
+    + ` reset_tokens=${snapshot.resetTokens ?? "unknown"}`
+    + ` token_input=${stats.totalInput}`
+    + ` token_output=${stats.totalOutput}`
+    + ` token_total=${stats.totalTokens}`
+    + ` iterations=${stats.iterations}`
+    + wait
+  )
+}
+
+function logAiProcessError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  console.error(`[ai] process failed: ${message}`)
+}
 
 export async function classifyAndStore(input: string, userId: string): Promise<{ totalInput: number; totalOutput: number; totalTokens: number; iterations: number }> {
   const stats = { totalInput: 0, totalOutput: 0, totalTokens: 0, iterations: 0 }
@@ -163,9 +202,7 @@ export async function classifyAndStore(input: string, userId: string): Promise<{
     : ""
 
   const reqId = Math.random().toString(36).slice(2, 6)
-  const log = (msg: string) => console.log(`[${reqId}] ${msg}`)
 
-  console.log(`\n🤖 [${reqId}] AI input: "${input.replace(/[\r\n]/g, " ")}"`)
   setStatus(userId, "processing")
 
   type Message = { role: string; content: string; name?: string; tool_call_id?: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] }
@@ -213,8 +250,6 @@ Available tags: ${tagList || "none"}
   }
 
   for (let i = 0; i < 8; i++) {
-    log(`🔄 Iteration ${i + 1}...`)
-
     const sessionMsg = buildSessionState()
     const messages: Message[] = sessionMsg ? [...baseMessages, sessionMsg] : [...baseMessages]
 
@@ -244,36 +279,33 @@ Available tags: ${tagList || "none"}
     const remainingReqs = res.headers.get("x-ratelimit-remaining-requests")
     const remainingTokens = res.headers.get("x-ratelimit-remaining-tokens")
     const resetTokens = res.headers.get("x-ratelimit-reset-tokens")
-    if (remainingReqs || remainingTokens) {
-      log(`📊 rate limit — requests remaining: ${remainingReqs}, tokens remaining: ${remainingTokens}, reset: ${resetTokens}`)
-    }
+    const rateLimitSnapshot = { remainingReqs, remainingTokens, resetTokens }
     stats.iterations++
     if (data.usage || data.eval_count) {
       const inp = data.usage?.prompt_tokens ?? data.prompt_eval_count ?? 0
       const out = data.usage?.completion_tokens ?? data.eval_count ?? 0
       const total = data.usage?.total_tokens ?? (inp + out)
-      const reasoningTokens = data.usage?.completion_tokens_details?.reasoning_tokens
       stats.totalInput += inp
       stats.totalOutput += out
       stats.totalTokens += total
-      const totalLabel = reasoningTokens ? `total (incl. reasoning): ${total}` : `total (excl. reasoning): ${total}`
-      log(`🔢 input: ${inp}, output: ${out}${reasoningTokens ? `, reasoning: ${reasoningTokens}` : ""}, ${totalLabel}`)
+    }
+    if (res.status !== 429 && isLowRateLimit(rateLimitSnapshot)) {
+      logRateLimitStatus(reqId, "low", rateLimitSnapshot, stats)
     }
 
     if (!data.choices?.[0]) {
       const errMsg = data.error?.message ?? "unknown"
-      log(`Bad response ${res.status}: ${errMsg}`)
       if (res.status === 429) {
         const retryAfter = res.headers.get("retry-after")
         const wait = retryAfter ? Number(retryAfter) * 1000 : 10000
         setStatus(userId, wait > 60000 ? "limited" : "queued")
-        log(`⏳ Rate limited — waiting ${wait / 1000}s (reset: ${resetTokens})`)
+        logRateLimitStatus(reqId, "hit", rateLimitSnapshot, stats, wait)
         await new Promise((r) => setTimeout(r, wait))
         setStatus(userId, "processing")
         continue
       }
+      console.error(`[ai:${reqId}] bad response ${res.status}: ${errMsg}`)
       if (res.status >= 400 && res.status < 500) {
-        log(`❌ Non-retryable error ${res.status} — aborting`)
         setStatus(userId, "idle")
         return stats
       }
@@ -301,17 +333,12 @@ Available tags: ${tagList || "none"}
           try {
             const parsed = JSON.parse(c.function.arguments)
             const key = `${c.function.name}:${JSON.stringify(parsed, Object.keys(parsed).sort())}`
-            if (executedCalls.has(key)) { log(`⚠️ Skipping duplicate: ${c.function.name}`); return false }
+            if (executedCalls.has(key)) return false
           } catch { /* if parse fails let it through */ }
           return true
         })
-    if (rawCalls.length > filteredCalls.length) {
-      log(`⚠️ Trimmed tool calls: ${rawCalls.length} → ${filteredCalls.length} (dupes/cap/search-action separation)`)
-    }
-    log(`💬 ${filteredCalls.length ? `→ ${filteredCalls.map((c) => c.function.name).join(", ")}` : (msg.content ?? "").slice(0, 150)}`)
 
     if (!filteredCalls.length) {
-      log(`✅ Done: ${historyActions.join(" | ") || "no actions"}`)
       if (historyActions.length > 0) {
         await historyDb.log(userId, "ai.process",
           historyActions.length === 1 ? `AI: ${historyActions[0]}` : `AI: ${historyActions.length} actions`,
@@ -326,7 +353,6 @@ Available tags: ${tagList || "none"}
 
     for (const call of filteredCalls) {
       if (call.function.name === "done") {
-        log(`✅ Done: ${historyActions.join(" | ") || "no actions"}`)
         if (historyActions.length > 0) {
           await historyDb.log(userId, "ai.process",
             historyActions.length === 1 ? `AI: ${historyActions[0]}` : `AI: ${historyActions.length} actions`,
@@ -351,7 +377,6 @@ Available tags: ${tagList || "none"}
             .filter((t) => keywords.some((kw) => t.content.toLowerCase().includes(kw)))
             .slice(0, 8)
             .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => ti.id === t.tile_id)?.title ?? "?", tags: t.tags }))
-          log(`🔍 search("${query}") → ${results.length} result(s)${results.length ? ": " + results.map((r) => `[${r.id}] "${r.content}"`).join(", ") : ""}`)
           const resultStr = results.length
             ? results.map((r) => `id:${r.id} "${r.content}" (tile:"${r.tile_title}"${r.tags.length ? ` tags:[${r.tags.join(",")}]` : ""})`).join(", ")
             : "no results"
@@ -366,7 +391,6 @@ Available tags: ${tagList || "none"}
             .filter((t) => t.tags.some((tg) => tg.toLowerCase().includes(tag.toLowerCase())))
             .slice(0, 8)
             .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => ti.id === t.tile_id)?.title ?? "?", tags: t.tags }))
-          log(`🏷️ search_by_tag("${tag}") → ${results.length} result(s)${results.length ? ": " + results.map((r) => `[${r.id}] "${r.content}"`).join(", ") : ""}`)
           const resultStr = results.length
             ? results.map((r) => `id:${r.id} "${r.content}" (tile:"${r.tile_title}")`).join(", ")
             : "no results"
@@ -379,7 +403,6 @@ Available tags: ${tagList || "none"}
           const tileId = Number(args.tile_id)
           const results = (await thoughtsDb.list(userId, { tileId })).slice(0, 20).map((t) => ({ id: t.id, content: t.content, tags: t.tags }))
           const tileName = tiles.find((t) => Number(t.id) === tileId)?.title ?? tileId
-          log(`📂 search_by_tile(${tileId} "${tileName}") → ${results.length} result(s)`)
           const resultStr = results.length
             ? results.map((r) => `id:${r.id} "${r.content}"${r.tags.length ? ` tags:[${r.tags.join(",")}]` : ""}`).join(", ")
             : "no results"
@@ -396,14 +419,12 @@ Available tags: ${tagList || "none"}
           } else {
             const validTile = tiles.find((t) => Number(t.id) === tileId)
             if (!validTile) {
-              log(`⚠️ create_thought: tile_id ${tileId} not found`)
               result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
             } else {
               const validTags = ((args.tags as string[]) ?? []).filter((t) => tags.some((tag) => tag.name === t))
               const thought = await thoughtsDb.create({ tile_id: tileId, content, tags: validTags, sort_order: 0 }, userId, true)
               const action = `Created "${thought.content}" in "${validTile.title}"`
               historyActions.push(action)
-              log(`✏️ ${action}`)
               result = `Created thought id:${thought.id}`
             }
           }
@@ -418,7 +439,6 @@ Available tags: ${tagList || "none"}
             await thoughtsDb.update(id, content, userId, validTags, true)
             const action = `Updated thought ${id} → "${content}"`
             historyActions.push(action)
-            log(`✏️ ${action}`)
             result = "Updated"
           }
 
@@ -431,7 +451,6 @@ Available tags: ${tagList || "none"}
             await thoughtsDb.remove(id, userId, true)
             const label = existing ? `"${existing.content.slice(0, 40)}"` : `thought ${id}`
             historyActions.push(`Deleted ${label}`)
-            log(`🗑️ Deleted ${label}`)
             result = "Deleted"
           }
 
@@ -443,20 +462,17 @@ Available tags: ${tagList || "none"}
           } else {
             const validTile = tiles.find((t) => Number(t.id) === tileId)
             if (!validTile) {
-              log(`⚠️ move_thought: tile_id ${tileId} not found`)
               result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
             } else {
               await thoughtsDb.move(id, tileId, userId, undefined, true)
               const action = `Moved thought ${id} to "${validTile.title}"`
               historyActions.push(action)
-              log(`📦 ${action}`)
               result = "Moved"
             }
           }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        log(`⚠️ Tool error (${call.function.name}): ${msg}`)
         result = `Error executing ${call.function.name}: ${msg}. Try again with valid parameters.`
       }
 
@@ -465,7 +481,6 @@ Available tags: ${tagList || "none"}
     }
   }
 
-  log("   ⚠️ Loop exhausted")
   setStatus(userId, "idle")
   return stats
 }
@@ -482,12 +497,12 @@ groqRoute.post("/process", async (c) => {
 
   if (running < max) {
     running++
-    classifyAndStore(input, auth.userId).catch(console.error).finally(() => running--)
+    classifyAndStore(input, auth.userId).catch(logAiProcessError).finally(() => running--)
   } else {
     setStatus(auth.userId, "queued")
     setTimeout(() => {
       running++
-      classifyAndStore(input, auth.userId).catch(console.error).finally(() => running--)
+      classifyAndStore(input, auth.userId).catch(logAiProcessError).finally(() => running--)
     }, priority === "low" ? 5000 : 1000)
   }
 
