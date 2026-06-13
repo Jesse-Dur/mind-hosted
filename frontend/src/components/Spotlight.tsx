@@ -23,6 +23,7 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
     setTimeout(() => inputRef.current?.focus(), 50)
   })
   const openedByMicRef = useRef(openedByMic)
+  const startedMicFromOpenRef = useRef(false)
   const showRecordingHints = micState === "recording" || micState === "loading" || (openedByMicRef.current && !query.trim())
   const showShortcutHint = micState === "idle" && !openedByMicRef.current && !query.trim()
   const isAIMode = query.startsWith(">")
@@ -131,6 +132,12 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
     : query.trim() && !isTagMode
       ? <><em style={{ fontStyle: "normal", opacity: 0.8 }}>{query.trim()}</em><span style={{ marginLeft: 4, color: "#bbb", fontSize: 11 }}>→ AI</span></>
       : "Send to AI"
+
+  useEffect(() => {
+    if (!openedByMic || startedMicFromOpenRef.current || micState !== "idle") return
+    startedMicFromOpenRef.current = true
+    handleMic()
+  }, [handleMic, micState, openedByMic])
 
   return (
     <>

@@ -1,14 +1,27 @@
-import { useState, useEffect } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { SignedIn, SignedOut, SignInButton, useAuth } from "@clerk/clerk-react"
 import { Canvas } from "./components/Canvas"
 import { Sidebar } from "./components/Sidebar"
-import { Spotlight } from "./components/Spotlight"
 import { AiStatusPill } from "./components/AiStatusPill"
 import { LoadingScreen } from "./components/LoadingScreen"
 import { TabBar } from "./components/TabBar"
 import { Tooltip } from "./components/Tooltip"
+import { LazySpotlight, preloadDeferredSurfaces } from "./components/lazySurfaces"
 import { useStore, setGetToken } from "./store"
 import { scheduleIdleTask } from "./utils/scheduleIdleTask"
+
+function SpotlightFallback({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      onMouseDown={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.2)", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 120, zIndex: 100 }}
+    >
+      <div style={{ width: 560, background: "#fff", border: "1px solid #e0e0e0", borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.12)", padding: "14px 16px", color: "#999", fontSize: 13 }}>
+        Loading command center...
+      </div>
+    </div>
+  )
+}
 
 export default function App() {
   const { getToken, isSignedIn, isLoaded } = useAuth()
@@ -17,6 +30,11 @@ export default function App() {
   const [loaded, setLoaded] = useState(false)
   const [tabBarVisible, setTabBarVisible] = useState(tabsVisible)
   const [tabBarAnimating, setTabBarAnimating] = useState(false)
+
+  function closeSpotlight() {
+    setSpotlightOpen(false)
+    setOpenedByMic(false)
+  }
 
   // Delay unmount of TabBar so slide-out animation can play
   useEffect(() => {
@@ -54,10 +72,12 @@ export default function App() {
 
       setLoaded(true)
       settleTimer = window.setTimeout(() => {
-        const hydrate = () => {
-          if (!cancelled) hydrateRemainingCanvases().catch(console.error)
+        const postPaintWork = () => {
+          if (cancelled) return
+          preloadDeferredSurfaces()
+          hydrateRemainingCanvases().catch(console.error)
         }
-        cancelIdleHydration = scheduleIdleTask(hydrate)
+        cancelIdleHydration = scheduleIdleTask(postPaintWork)
       }, 350)
     }
 
@@ -84,7 +104,6 @@ export default function App() {
         if (!spotlightOpen) {
           setOpenedByMic(true)
           setSpotlightOpen(true)
-          setTimeout(() => window.dispatchEvent(new CustomEvent("mic-shortcut")), 50)
         } else {
           window.dispatchEvent(new CustomEvent("mic-shortcut"))
         }
@@ -131,7 +150,11 @@ export default function App() {
           </div>
         )}
         <Canvas tabBarVisible={tabsVisible} />
-        {spotlightOpen && <Spotlight openedByMic={openedByMic} onClose={() => { setSpotlightOpen(false); setOpenedByMic(false) }} />}
+        {spotlightOpen && (
+          <Suspense fallback={<SpotlightFallback onClose={closeSpotlight} />}>
+            <LazySpotlight openedByMic={openedByMic} onClose={closeSpotlight} />
+          </Suspense>
+        )}
       </SignedIn>
     </>
   )

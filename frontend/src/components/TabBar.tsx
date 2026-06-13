@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react"
+import { Suspense, useEffect, useRef, useState } from "react"
 import { useStore } from "../store"
 import { AiStatusPill } from "./AiStatusPill"
-import { CanvasDeleteDialog } from "./CanvasDeleteDialog"
 import { TabBarOutline } from "./TabBarOutline"
 import { Tooltip } from "./Tooltip"
+import { LazyCanvasDeleteDialog } from "./lazySurfaces"
 import { getTabShortcutAction, newCanvasShortcutLabel, tabShortcutLabel } from "../utils/tabShortcuts"
 import { getCrossCanvasDrag, moveCrossCanvasDrag, setCrossCanvasDragEnteredCanvas, subscribeCrossCanvasDrag, subscribeCrossCanvasDragPointer } from "../utils/crossCanvasDrag"
 import { canvasIdentityKey } from "../utils/canvasIdentity"
@@ -42,6 +42,14 @@ type DragPreview = {
 }
 
 type CanvasOrderUpdate = Pick<Canvas, "id" | "sort_order" | "is_favourite">
+
+function DeleteDialogFallback() {
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 500, background: "rgba(24, 24, 27, 0.34)", backdropFilter: "blur(7px)", display: "grid", placeItems: "center", color: "#fff", fontSize: 13 }}>
+      Loading delete options...
+    </div>
+  )
+}
 
 export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
   const { canvases, activeCanvasId, setActiveCanvas, addCanvas, updateCanvas, removeCanvas, reorderCanvases, setSidebarOpen, sidebarOpen, aiStatus } = useStore()
@@ -659,12 +667,14 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
           </div>
         )}
         {deleteCanvas && (
-            <CanvasDeleteDialog
+          <Suspense fallback={<DeleteDialogFallback />}>
+            <LazyCanvasDeleteDialog
               canvas={deleteCanvas}
               canvases={canvases}
               onCancel={() => setDeleteCanvas(null)}
               onConfirm={confirmRemove}
             />
+          </Suspense>
         )}
       </div>
     </>

@@ -1,8 +1,7 @@
-import { useState } from "react"
+import { Suspense, useState } from "react"
 import { useStore } from "../store"
 import { TagsPanel } from "./TagsPanel"
-import { HistoryPanel } from "./HistoryPanel"
-import { SettingsPanel } from "./SettingsPanel"
+import { LazyHistoryPanel, LazySettingsPanel } from "./lazySurfaces"
 
 type Tab = "tags" | "history" | "settings"
 
@@ -11,6 +10,10 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "history", label: "History" },
   { id: "settings", label: "Settings" },
 ]
+
+function SidebarPanelFallback({ label }: { label: string }) {
+  return <p style={{ fontSize: 12, color: "#ccc" }}>{label}</p>
+}
 
 export function Sidebar() {
   const { sidebarOpen, setSidebarOpen } = useStore()
@@ -59,8 +62,16 @@ export function Sidebar() {
         </div>
 
         {activeTab === "tags" && <TagsPanel />}
-        {activeTab === "history" && <HistoryPanel active={activeTab === "history"} sidebarOpen={sidebarOpen} />}
-        {activeTab === "settings" && <SettingsPanel />}
+        {activeTab === "history" && (
+          <Suspense fallback={<SidebarPanelFallback label="Loading history..." />}>
+            <LazyHistoryPanel active={activeTab === "history"} sidebarOpen={sidebarOpen} />
+          </Suspense>
+        )}
+        {activeTab === "settings" && (
+          <Suspense fallback={<SidebarPanelFallback label="Loading settings..." />}>
+            <LazySettingsPanel />
+          </Suspense>
+        )}
       </div>
     </>
   )
