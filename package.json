@@ -2,7 +2,13 @@
   "name": "mind",
   "private": true,
   "scripts": {
+    "test": "bun run test:backend && bun run test:frontend-sync && bun run test:store && bun run typecheck",
+    "test:backend": "bun --env-file=.env.local test backend/test/sync.test.ts",
+    "test:frontend-sync": "bun test frontend/src/sync/sync.test.ts frontend/src/sync/flush.test.ts frontend/src/sync/pull.test.ts",
+    "test:store": "bun test frontend/src/store/store.test.ts",
     "test:ai": "bun run backend/test/ai.test.ts",
+    "bench:ai-prompts": "bun run backend/test/ai.test.ts",
+    "typecheck": "tsc --project backend/tsconfig.json --noEmit && bun run --cwd frontend build",
     "dev": "concurrently -n backend,frontend -c cyan,magenta 'bun run backend/index.ts' 'bun run --cwd frontend dev'",
     "dev:backend": "bun run backend/index.ts",
     "dev:frontend": "bun run --cwd frontend dev",
@@ -10,7 +16,8 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.2.1",
+    "fake-indexeddb": "^6.2.5"
   },
   "dependencies": {
     "@clerk/backend": "^3.5.0",

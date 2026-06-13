@@ -1,6 +1,7 @@
 /**
- * AI test suite — runs against a Neon branch DB via DATABASE_URL in .env.local
+ * AI prompt benchmark harness — compare different system prompts against a Neon branch DB via DATABASE_URL in .env.local
  * Usage: bun run backend/test/ai.test.ts
+ * This is intentionally a performance/quality comparison tool, not a strict pass/fail correctness suite.
  */
 
 import { sql } from "../db/client"
@@ -274,7 +275,7 @@ async function testMoveFromTasksToWork(ids: Ids) {
 
 const ROUNDS = 5
 
-console.log("🧹 Cleaning up any leftover test data...")
+console.log("🧹 Cleaning up any leftover benchmark data...")
 await cleanup()
 
 for (let round = 1; round <= ROUNDS; round++) {
@@ -309,7 +310,7 @@ const totalRuns = allResults.reduce((s, r) => s + r.runs.length, 0)
 const totalPassed = allResults.reduce((s, r) => s + r.runs.filter((x) => x.passed).length, 0)
 const totalMs = allResults.reduce((s, r) => s + r.runs.reduce((a, x) => a + x.ms, 0), 0)
 const totalTokens = allResults.reduce((s, r) => s + r.runs.reduce((a, x) => a + x.tokens, 0), 0)
-console.log(`\n📊 Overall: ${totalPassed}/${totalRuns} passed (${((totalPassed / totalRuns) * 100).toFixed(0)}%), ${(totalMs / 1000).toFixed(1)}s total, ${totalTokens} total tokens`)
+console.log(`\n📊 Benchmark summary: ${totalPassed}/${totalRuns} passed (${((totalPassed / totalRuns) * 100).toFixed(0)}%), ${(totalMs / 1000).toFixed(1)}s total, ${totalTokens} total tokens`)
 
 // CSV output
 const csvLines = [
