@@ -1,4 +1,5 @@
 import { getApi } from "../store/apiAuth"
+import { isApiUnauthorizedError } from "../api/errors"
 import { cacheServerEntity } from "./cache"
 import { adoptLocalReferences, resolvePayload } from "./dependencies"
 import { entityFromPayload } from "./entityPayload"
@@ -74,6 +75,17 @@ async function markRetry(record: OutboxRecord, error: unknown) {
   })
 }
 
+async function pauseForAuth(record: OutboxRecord) {
+  // Auth expiry is not a data failure. Keep the operation ready so the next
+  // valid Clerk session can flush it without adding retry penalty or error UI.
+  await syncDb.outbox.put({
+    ...record,
+    status: "pending",
+    nextAttemptAt: Date.now(),
+    updatedAt: Date.now(),
+  })
+}
+
 async function applyPushResult(record: OutboxRecord, resultEntity: SyncEntity | undefined, serverId: number | null) {
   const localRecord = await getEntityRecord(record.entityType, record.clientId)
   const pending = await newerPendingOperation(record)
@@ -145,6 +157,10 @@ async function runFlushSyncQueue() {
       try {
         await flushRecord(record)
       } catch (error) {
+        if (isApiUnauthorizedError(error)) {
+          await pauseForAuth(record)
+          return
+        }
         await markRetry(record, error)
       }
     }

@@ -98,7 +98,17 @@ export interface SyncSlice {
   syncNow: () => Promise<void>
 }
 
+export type CachedWorkspaceHydration = {
+  activeCanvasId: number | null
+  hasUsableCache: boolean
+}
+
+export interface BootSlice {
+  hydrateCachedWorkspace: () => Promise<CachedWorkspaceHydration>
+}
+
 export type AppStore = UiSlice
+  & BootSlice
   & CanvasSlice
   & CanvasDataSlice
   & TileSlice

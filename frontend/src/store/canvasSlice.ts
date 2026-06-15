@@ -7,6 +7,7 @@ import { enqueueDelete, enqueueUpsert, setSyncActiveCanvas } from "../sync/engin
 import { createClientId, createTemporarySyncId } from "../sync/ids"
 import { advanceLoadGeneration } from "./loadGeneration"
 import { fetchAndCacheSnapshot } from "../sync/snapshot"
+import { isApiUnauthorizedError } from "../api/errors"
 
 export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
   canvases: [],
@@ -61,6 +62,7 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
           })
           get().markRemoteChanges(snapshot.changedTileIds, snapshot.changedThoughtIds)
         } catch (error) {
+          if (isApiUnauthorizedError(error)) return
           console.error(error)
         }
       })()
@@ -71,6 +73,10 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
     try {
       snapshot = await fetchAndCacheSnapshot(readStoredActiveCanvasId())
     } catch (error) {
+      if (isApiUnauthorizedError(error)) {
+        const { canvases: localCanvases, activeCanvasId } = get()
+        return activeCanvasId ?? localCanvases[0]?.id ?? null
+      }
       console.error(error)
       const { canvases: localCanvases, activeCanvasId } = get()
       return activeCanvasId ?? localCanvases[0]?.id ?? null

@@ -1,7 +1,17 @@
 import { flushSyncQueue, scheduleFlush } from "./flush"
 import { pullSync } from "./pull"
+import { isApiUnauthorizedError } from "../api/errors"
 
 let activeCanvasId: number | null = null
+
+async function runSyncWork(work: () => Promise<void>) {
+  try {
+    await work()
+  } catch (error) {
+    if (isApiUnauthorizedError(error)) return
+    throw error
+  }
+}
 
 export function setSyncActiveCanvas(canvasId: number | null) {
   activeCanvasId = canvasId
@@ -9,14 +19,18 @@ export function setSyncActiveCanvas(canvasId: number | null) {
 }
 
 export async function syncActiveCanvas(canvasId = activeCanvasId) {
-  await flushSyncQueue()
-  if (canvasId !== null && canvasId > 0) await pullSync(canvasId)
+  await runSyncWork(async () => {
+    await flushSyncQueue()
+    if (canvasId !== null && canvasId > 0) await pullSync(canvasId)
+  })
 }
 
 export async function syncInBackground() {
-  await flushSyncQueue()
-  if (activeCanvasId !== null && activeCanvasId > 0) await pullSync(activeCanvasId)
-  await pullSync()
+  await runSyncWork(async () => {
+    await flushSyncQueue()
+    if (activeCanvasId !== null && activeCanvasId > 0) await pullSync(activeCanvasId)
+    await pullSync()
+  })
 }
 
 export function startSyncRuntime() {

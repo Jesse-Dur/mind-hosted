@@ -8,7 +8,7 @@ import { TabBar } from "./components/TabBar"
 import { Tooltip } from "./components/Tooltip"
 import { LazySpotlight, preloadDeferredSurfaces } from "./components/lazySurfaces"
 import { useStore, setGetToken } from "./store"
-import { scheduleIdleTask } from "./utils/scheduleIdleTask"
+import { clearReauthRequired } from "./auth/reauthSignal"
 
 function SpotlightFallback({ onClose }: { onClose: () => void }) {
   return (
@@ -25,7 +25,7 @@ function SpotlightFallback({ onClose }: { onClose: () => void }) {
 
 export default function App() {
   const { getToken, isSignedIn, isLoaded } = useAuth()
-  const { loadTiles, loadThoughts, loadTags, loadCanvases, hydrateRemainingCanvases, initializeSync, syncNow, setSpotlightOpen, spotlightOpen, sidebarOpen, setSidebarOpen, tabsVisible } = useStore()
+  const { hydrateCachedWorkspace, loadTiles, loadThoughts, loadTags, loadCanvases, hydrateRemainingCanvases, initializeSync, syncNow, setSpotlightOpen, spotlightOpen, sidebarOpen, setSidebarOpen, tabsVisible } = useStore()
   const [openedByMic, setOpenedByMic] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [tabBarVisible, setTabBarVisible] = useState(tabsVisible)
@@ -51,13 +51,45 @@ export default function App() {
   useEffect(() => { setGetToken(getToken) }, [getToken])
 
   useEffect(() => {
+    if (!isLoaded || isSignedIn) return
+    // A real sign-out is already handled by Clerk; clear the quiet sync pause so
+    // a future sign-in starts from a clean auth state.
+    clearReauthRequired()
+  }, [isLoaded, isSignedIn])
+
+  useEffect(() => {
     if (!isLoaded) return
     if (!isSignedIn) { setLoaded(true); return }
     let cancelled = false
-    let settleTimer: number | null = null
-    let cancelIdleHydration: (() => void) | null = null
+
+    function startBackgroundHydration(activeCanvasId: number | null, refreshActiveCanvas: boolean) {
+      void (async () => {
+        if (refreshActiveCanvas && activeCanvasId !== null) {
+          await Promise.all([
+            loadCanvases(),
+            loadTags(),
+            loadTiles(activeCanvasId),
+            loadThoughts(activeCanvasId),
+          ])
+        }
+        if (cancelled) return
+        preloadDeferredSurfaces()
+        await hydrateRemainingCanvases()
+      })().catch(console.error)
+    }
 
     async function boot() {
+      await initializeSync()
+      if (cancelled) return
+
+      const cached = await hydrateCachedWorkspace()
+      if (cancelled) return
+      if (cached.hasUsableCache) {
+        setLoaded(true)
+        startBackgroundHydration(cached.activeCanvasId, true)
+        return
+      }
+
       // Load canvases first so the restored tab id is known before canvas data is fetched.
       const initialCanvasId = await loadCanvases()
       if (cancelled) return
@@ -67,29 +99,18 @@ export default function App() {
         : Promise.all([loadTiles(initialCanvasId), loadThoughts(initialCanvasId)]).then(() => undefined)
       await Promise.all([initialCanvasData, loadTags()])
       if (cancelled) return
-      await initializeSync()
-      if (cancelled) return
 
       setLoaded(true)
-      settleTimer = window.setTimeout(() => {
-        const postPaintWork = () => {
-          if (cancelled) return
-          preloadDeferredSurfaces()
-          hydrateRemainingCanvases().catch(console.error)
-        }
-        cancelIdleHydration = scheduleIdleTask(postPaintWork)
-      }, 350)
+      startBackgroundHydration(initialCanvasId, false)
     }
 
     boot().catch(console.error)
     const poll = setInterval(syncNow, 15000)
     return () => {
       cancelled = true
-      if (settleTimer !== null) window.clearTimeout(settleTimer)
-      cancelIdleHydration?.()
       clearInterval(poll)
     }
-  }, [isLoaded, isSignedIn, loadCanvases, loadTiles, loadThoughts, loadTags, hydrateRemainingCanvases, initializeSync, syncNow])
+  }, [isLoaded, isSignedIn, hydrateCachedWorkspace, loadCanvases, loadTiles, loadThoughts, loadTags, hydrateRemainingCanvases, initializeSync, syncNow])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import { createAiSlice } from "./aiSlice"
+import { createBootSlice } from "./bootSlice"
 import { createCanvasDataSlice } from "./canvasDataSlice"
 import { createCanvasSlice } from "./canvasSlice"
 import { createTagSlice } from "./tagSlice"
@@ -12,6 +13,7 @@ import type { AppStore } from "./types"
 
 export const useStore = create<AppStore>((set, get, store) => ({
   // One public store keeps cross-slice updates atomic while each file owns one domain.
+  ...createBootSlice(set, get, store),
   ...createCanvasSlice(set, get, store),
   ...createCanvasDataSlice(set, get, store),
   ...createTileSlice(set, get, store),

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import {
   canvas,
+  entityRecord,
   resetFrontendState,
   syncDb,
   tag,
@@ -14,6 +15,71 @@ beforeEach(async () => {
 })
 
 describe("frontend store optimistic updates", () => {
+  test("cached workspace hydration resolves without waiting for network sync", async () => {
+    const globals = globalThis as unknown as {
+      fetch: (path: string, init?: RequestInit) => Promise<Response>
+    }
+    globals.fetch = () => new Promise<Response>(() => {})
+    await syncDb.entities.bulkPut([
+      entityRecord({
+        entityType: "canvas",
+        clientId: "canvas-client",
+        serverId: 10,
+        tempId: null,
+        canvasId: 10,
+        status: "clean",
+        data: canvas({ id: 10, name: "Cached" }),
+      }),
+      entityRecord({
+        entityType: "tag",
+        clientId: "tag-client",
+        serverId: 40,
+        tempId: null,
+        canvasId: null,
+        status: "clean",
+        data: tag({ id: 40, name: "cached-tag" }),
+      }),
+      entityRecord({
+        entityType: "tile",
+        clientId: "tile-client",
+        serverId: 20,
+        tempId: null,
+        canvasId: 10,
+        status: "clean",
+        data: tile({ id: 20, canvas_id: 10, title: "Cached tile" }),
+      }),
+      entityRecord({
+        entityType: "thought",
+        clientId: "thought-client",
+        serverId: 30,
+        tempId: null,
+        canvasId: 10,
+        status: "clean",
+        data: thought({ id: 30, tile_id: 20, content: "Cached thought" }),
+      }),
+    ])
+
+    const result = await useStore.getState().hydrateCachedWorkspace()
+    const state = useStore.getState()
+
+    expect(result).toEqual({ activeCanvasId: 10, hasUsableCache: true })
+    expect(state.canvases[0]?.name).toBe("Cached")
+    expect(state.tags[0]?.name).toBe("cached-tag")
+    expect(state.tiles[0]?.title).toBe("Cached tile")
+    expect(state.thoughts[0]?.content).toBe("Cached thought")
+  })
+
+  test("sync initialization starts runtime without waiting for network", async () => {
+    const globals = globalThis as unknown as {
+      fetch: (path: string, init?: RequestInit) => Promise<Response>
+    }
+    globals.fetch = () => new Promise<Response>(() => {})
+
+    await useStore.getState().initializeSync()
+
+    expect(useStore.getState().syncPendingCount).toBe(0)
+  })
+
   test("adding a canvas updates visible state and queues a sync operation", async () => {
     const creation = useStore.getState().addCanvas("Ideas")
     await creation.persisted

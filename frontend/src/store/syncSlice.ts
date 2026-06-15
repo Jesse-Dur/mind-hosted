@@ -17,8 +17,6 @@ export const createSyncSlice: StoreSlice<SyncSlice> = (set) => ({
       startSyncRuntime()
     }
     set({ syncPendingCount: await pendingCount() })
-    await syncInBackground().catch(console.error)
-    set({ syncPendingCount: await pendingCount() })
   },
 
   syncNow: async () => {

@@ -5,6 +5,7 @@ import { isTemporaryId } from "../utils/optimisticIdentity"
 import { cachedThoughtsForCanvas, cachedTiles } from "../sync/cache"
 import { currentLoadGeneration } from "./loadGeneration"
 import { fetchAndCacheSnapshot } from "../sync/snapshot"
+import { isApiUnauthorizedError } from "../api/errors"
 
 function mergeTiles(existingTiles: Tile[], serverTiles: Tile[]) {
   const optimisticTiles = existingTiles.filter((tile) => isTemporaryId(tile.id))
@@ -45,6 +46,7 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
         changedTileIds = snapshot.changedTileIds
         changedThoughtIds = snapshot.changedThoughtIds
       } catch (error) {
+        if (isApiUnauthorizedError(error)) return
         console.error(error)
         return
       }
@@ -101,6 +103,7 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
         changedTileIds = snapshot.changedTileIds
         changedThoughtIds = snapshot.changedThoughtIds
       } catch (error) {
+        if (isApiUnauthorizedError(error)) return
         console.error(error)
         return
       }
@@ -173,6 +176,7 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
         changedTileIds = snapshot.changedTileIds
         changedThoughtIds = snapshot.changedThoughtIds
       } catch (error) {
+        if (isApiUnauthorizedError(error)) continue
         console.error(error)
         continue
       }

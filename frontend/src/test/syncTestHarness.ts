@@ -5,12 +5,20 @@ import type { LocalEntityRecord, OutboxRecord } from "../sync/types"
 type TestWindow = {
   setTimeout: (handler: () => void, timeout?: number) => number
   clearTimeout: (handle: number) => void
+  addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
+  removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
 }
 
 type TestNavigator = {
   locks?: {
     request: <T>(name: string, callback: () => T | Promise<T>) => Promise<T>
   }
+}
+
+type TestDocument = {
+  visibilityState: DocumentVisibilityState
+  addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
+  removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
 }
 
 type TestLocalStorage = {
@@ -41,6 +49,7 @@ const globals = globalThis as unknown as {
   IDBKeyRange: typeof IDBKeyRange
   window: TestWindow
   navigator: TestNavigator
+  document: TestDocument
   localStorage: TestLocalStorage
   fetch: (path: string, init?: RequestInit) => Promise<Response>
 }
@@ -50,8 +59,15 @@ globals.IDBKeyRange = IDBKeyRange
 globals.window = {
   setTimeout: () => 1,
   clearTimeout: () => {},
+  addEventListener: () => {},
+  removeEventListener: () => {},
 }
 globals.navigator = {}
+globals.document = {
+  visibilityState: "visible",
+  addEventListener: () => {},
+  removeEventListener: () => {},
+}
 globals.localStorage = createLocalStorage()
 globals.fetch = async (path) => {
   const body = String(path).includes("/sync/pull")
@@ -66,7 +82,8 @@ globals.fetch = async (path) => {
 }
 
 export const { syncDb } = await import("../sync/localDb")
-export const { useStore } = await import("../store")
+export const { setGetToken, useStore } = await import("../store")
+export const { clearReauthRequired } = await import("../auth/reauthSignal")
 export const { entityKey } = await import("../sync/ids")
 
 export const NOW = "2026-01-01T00:00:00.000Z"
@@ -154,6 +171,8 @@ export async function resetFrontendState() {
     syncDb.metadata.clear(),
   ])
   globals.localStorage.clear()
+  clearReauthRequired()
+  setGetToken(() => Promise.resolve("test-token"))
   useStore.setState({
     canvases: [],
     activeCanvasId: null,

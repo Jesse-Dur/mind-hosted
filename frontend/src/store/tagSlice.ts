@@ -4,6 +4,7 @@ import { cachedTags } from "../sync/cache"
 import { enqueueDelete, enqueueUpsert } from "../sync/engine"
 import { createClientId, createTemporarySyncId } from "../sync/ids"
 import { fetchAndCacheSnapshot } from "../sync/snapshot"
+import { isApiUnauthorizedError } from "../api/errors"
 
 function optimisticTag(name: string, color: string): Tag {
   const clientId = createClientId("tag")
@@ -31,6 +32,7 @@ export const createTagSlice: StoreSlice<TagSlice> = (set, get) => ({
           await fetchAndCacheSnapshot(get().activeCanvasId)
           set({ tags: await cachedTags() })
         } catch (error) {
+          if (isApiUnauthorizedError(error)) return
           console.error(error)
         }
       })()
@@ -40,6 +42,7 @@ export const createTagSlice: StoreSlice<TagSlice> = (set, get) => ({
       await fetchAndCacheSnapshot(get().activeCanvasId)
       set({ tags: await cachedTags() })
     } catch (error) {
+      if (isApiUnauthorizedError(error)) return
       console.error(error)
     }
   },

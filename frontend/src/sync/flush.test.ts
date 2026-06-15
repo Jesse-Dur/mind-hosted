@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import type { SyncPushOperation, SyncPushResponse } from "./types"
+import { isReauthRequired } from "../auth/reauthSignal"
 import {
   canvas,
   entityKey,
   entityRecord,
   outboxRecord,
   resetFrontendState,
+  setGetToken,
   syncDb,
   tile,
 } from "../test/syncTestHarness"
@@ -27,6 +29,7 @@ type FetchCall = {
 const fetchCalls: FetchCall[] = []
 let fetchResponse: SyncPushResponse = { results: [] }
 let fetchError: Error | null = null
+let fetchStatus = 200
 
 function installFetchMock() {
   const globals = globalThis as unknown as {
@@ -40,11 +43,12 @@ function installFetchMock() {
     const operation = body.operations[0]
     if (!operation) throw new Error("Expected one sync operation")
     fetchCalls.push({ path, operation })
+    const ok = fetchStatus >= 200 && fetchStatus < 300
     return {
-      ok: true,
-      status: 200,
+      ok,
+      status: fetchStatus,
       json: async () => fetchResponse,
-      text: async () => JSON.stringify(fetchResponse),
+      text: async () => JSON.stringify(ok ? fetchResponse : { error: "Unauthorized" }),
     }
   }
 }
@@ -53,6 +57,7 @@ beforeEach(async () => {
   await resetFrontendState()
   fetchCalls.length = 0
   fetchError = null
+  fetchStatus = 200
   fetchResponse = { results: [] }
   installFetchMock()
 })
@@ -93,6 +98,75 @@ describe("frontend sync flush", () => {
     expect(record?.attemptCount).toBe(1)
     expect(record?.nextAttemptAt).toBeGreaterThan(Date.now())
     expect(record?.error).toBe("offline")
+  })
+
+  test("missing auth token leaves pending operations untouched without a fetch", async () => {
+    setGetToken(() => Promise.resolve(null))
+    await syncDb.outbox.put(outboxRecord({
+      opId: "auth-paused-tile-op",
+      entityType: "tile",
+      action: "upsert",
+      clientId: "auth-paused-tile",
+      serverId: 20,
+      payload: { canvas_id: 10, title: "Paused" },
+    }))
+
+    await flushSyncQueue()
+
+    const record = await syncDb.outbox.get("auth-paused-tile-op")
+    expect(fetchCalls).toHaveLength(0)
+    expect(record?.status).toBe("pending")
+    expect(record?.attemptCount).toBe(0)
+    expect(record?.error).toBeUndefined()
+    expect(isReauthRequired()).toBe(true)
+  })
+
+  test("token refresh failures pause sync without retry penalty", async () => {
+    setGetToken(() => Promise.reject(new Error("session expired")))
+    await syncDb.outbox.put(outboxRecord({
+      opId: "expired-token-tile-op",
+      entityType: "tile",
+      action: "upsert",
+      clientId: "expired-token-tile",
+      serverId: 20,
+      payload: { canvas_id: 10, title: "Expired" },
+    }))
+
+    await flushSyncQueue()
+
+    const record = await syncDb.outbox.get("expired-token-tile-op")
+    expect(fetchCalls).toHaveLength(0)
+    expect(record?.status).toBe("pending")
+    expect(record?.attemptCount).toBe(0)
+    expect(record?.error).toBeUndefined()
+    expect(isReauthRequired()).toBe(true)
+  })
+
+  test("unauthorized responses retry with a fresh token before pausing sync", async () => {
+    const tokenOptions: Array<{ skipCache?: boolean } | undefined> = []
+    setGetToken((options) => {
+      tokenOptions.push(options)
+      return Promise.resolve("test-token")
+    })
+    fetchStatus = 401
+    await syncDb.outbox.put(outboxRecord({
+      opId: "refresh-token-tile-op",
+      entityType: "tile",
+      action: "upsert",
+      clientId: "refresh-token-tile",
+      serverId: 20,
+      payload: { canvas_id: 10, title: "Refresh" },
+    }))
+
+    await flushSyncQueue()
+
+    const record = await syncDb.outbox.get("refresh-token-tile-op")
+    expect(fetchCalls).toHaveLength(2)
+    expect(tokenOptions.map((options) => options?.skipCache === true)).toEqual([false, true])
+    expect(record?.status).toBe("pending")
+    expect(record?.attemptCount).toBe(0)
+    expect(record?.error).toBeUndefined()
+    expect(isReauthRequired()).toBe(true)
   })
 
   test("stale flushing records are retried and removed after server ack", async () => {

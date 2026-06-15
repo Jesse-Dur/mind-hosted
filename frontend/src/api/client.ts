@@ -1,9 +1,12 @@
 import type { Tile, Thought, Tag, HistoryEvent, Canvas } from "../types"
 import type { SyncPullResponse, SyncPushOperation, SyncPushResponse, SyncSnapshotResponse } from "../sync/types"
+import { isReauthRequired, notifyReauthRequired } from "../auth/reauthSignal"
+import { ApiUnauthorizedError } from "./errors"
 
 const BASE = "/api"
 
-type GetToken = () => Promise<string | null>
+type GetTokenOptions = { skipCache?: boolean }
+type GetToken = (options?: GetTokenOptions) => Promise<string | null>
 type AiStatusResponse = { status: string; latest_revision: number }
 
 function normalizeCanvas(canvas: Canvas): Canvas {
@@ -46,16 +49,47 @@ function normalizeSnapshot(snapshot: SyncSnapshotResponse): SyncSnapshotResponse
   }
 }
 
-async function req<T>(path: string, getToken: GetToken, options?: RequestInit): Promise<T> {
-  const token = await getToken()
-  const res = await fetch(`${BASE}${path}`, {
+function throwUnauthorized(path: string): never {
+  notifyReauthRequired()
+  throw new ApiUnauthorizedError(path)
+}
+
+async function tokenForRequest(path: string, getToken: GetToken, options?: GetTokenOptions) {
+  if (isReauthRequired()) throw new ApiUnauthorizedError(path)
+  const token = await readToken(path, getToken, options)
+  if (token) return token
+  if (!options?.skipCache) {
+    const refreshedToken = await readToken(path, getToken, { skipCache: true })
+    if (refreshedToken) return refreshedToken
+  }
+  throwUnauthorized(path)
+}
+
+async function readToken(path: string, getToken: GetToken, options?: GetTokenOptions) {
+  try {
+    return await getToken(options)
+  } catch {
+    throwUnauthorized(path)
+  }
+}
+
+async function authorizedFetch(path: string, getToken: GetToken, options?: RequestInit, tokenOptions?: GetTokenOptions) {
+  const token = await tokenForRequest(path, getToken, tokenOptions)
+  const headers = new Headers(options?.headers)
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json")
+  headers.set("Authorization", `Bearer ${token}`)
+  return fetch(`${BASE}${path}`, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
-      ...(options?.headers ?? {}),
-    },
+    headers,
   })
+}
+
+async function req<T>(path: string, getToken: GetToken, options?: RequestInit): Promise<T> {
+  let res = await authorizedFetch(path, getToken, options)
+  // Clerk can hand back a cached token near expiry; one uncached retry lets the
+  // session refresh before sync treats the user as signed out.
+  if (res.status === 401) res = await authorizedFetch(path, getToken, options, { skipCache: true })
+  if (res.status === 401) throwUnauthorized(path)
   if (!res.ok) {
     const detail = await res.text().catch(() => "")
     let message = detail
@@ -87,14 +121,22 @@ export function createApi(getToken: GetToken) {
 
     whisper: {
       transcribe: async (blob: Blob): Promise<{ text: string }> => {
-        const token = await getToken()
-        const form = new FormData()
-        form.append("audio", blob, "audio.webm")
-        const res = await fetch(`${BASE}/whisper/transcribe`, {
-          method: "POST",
-          headers: token ? { "Authorization": `Bearer ${token}` } : {},
-          body: form,
-        })
+        const requestTranscription = (token: string) => {
+          const form = new FormData()
+          form.append("audio", blob, "audio.webm")
+          return fetch(`${BASE}/whisper/transcribe`, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${token}` },
+            body: form,
+          })
+        }
+
+        let res = await requestTranscription(await tokenForRequest("/whisper/transcribe", getToken))
+        if (res.status === 401) {
+          const refreshedToken = await tokenForRequest("/whisper/transcribe", getToken, { skipCache: true })
+          res = await requestTranscription(refreshedToken)
+        }
+        if (res.status === 401) throwUnauthorized("/whisper/transcribe")
         if (!res.ok) throw new Error(`API error ${res.status}: /whisper/transcribe`)
         return res.json()
       },
