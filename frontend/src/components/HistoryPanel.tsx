@@ -89,7 +89,6 @@ export function HistoryPanel({ sidebarOpen }: { sidebarOpen: boolean }) {
     historyLoadingMore,
     historyHasMore,
     historyNextCursor,
-    newHistoryIds,
     refreshHistory,
     loadMoreHistory,
   } = useStore()
@@ -114,13 +113,6 @@ export function HistoryPanel({ sidebarOpen }: { sidebarOpen: boolean }) {
 
   return (
     <div style={{ flex: 1, overflowY: "auto" }}>
-      <style>{`
-        @keyframes historyNewIn {
-          0% { opacity:0; transform:translateY(-8px); background:#f3e8ff; box-shadow:0 0 0 1px #e9d5ff inset; }
-          70% { opacity:1; transform:translateY(0); background:#faf5ff; box-shadow:0 0 0 1px #e9d5ff inset; }
-          100% { opacity:1; transform:translateY(0); background:transparent; box-shadow:none; }
-        }
-      `}</style>
       {loadingInitial && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {[1,2,3,4].map((i) => (
@@ -137,7 +129,6 @@ export function HistoryPanel({ sidebarOpen }: { sidebarOpen: boolean }) {
         const isExpanded = expanded === e.id
         const isAI = e.action === "ai.process"
         const markerIndex = Math.max(events.length - 25, 0)
-        const isNew = newHistoryIds.has(e.id)
 
         return (
           <div
@@ -145,10 +136,7 @@ export function HistoryPanel({ sidebarOpen }: { sidebarOpen: boolean }) {
             ref={i === markerIndex ? loadMoreMarker : undefined}
             style={{
               borderBottom: "1px solid #f5f5f5",
-              borderRadius: isNew ? 6 : 0,
               padding: "8px 0",
-              animation: isNew ? "historyNewIn 0.9s ease both" : undefined,
-              opacity: isNew ? 0 : 1,
             }}
           >
             <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>

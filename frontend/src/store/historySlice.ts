@@ -26,12 +26,13 @@ function mergePage(page: HistoryPage, state: HistorySlice) {
   const insertedIds = shouldAnimate
     ? new Set(page.events.filter((event) => !knownIds.has(event.id)).map((event) => event.id))
     : new Set<number>()
-  const shouldReplaceCursor = !state.historyLoaded || (!state.historyHasMore && page.hasMore)
 
   return {
     historyEvents: mergeHistoryEvents(state.historyEvents, page.events),
-    historyNextCursor: shouldReplaceCursor ? page.nextCursor : state.historyNextCursor,
-    historyHasMore: shouldReplaceCursor ? page.hasMore : state.historyHasMore,
+    // Refreshes should always re-anchor pagination to the newest first page so
+    // later load-more calls do not skip rows inserted above the old cursor.
+    historyNextCursor: page.nextCursor,
+    historyHasMore: page.hasMore,
     historyLoaded: true,
     newHistoryIds: insertedIds.size > 0 ? new Set([...state.newHistoryIds, ...insertedIds]) : state.newHistoryIds,
     insertedIds,

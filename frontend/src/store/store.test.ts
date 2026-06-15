@@ -291,4 +291,71 @@ describe("frontend store optimistic updates", () => {
     expect(canvasDelete?.payload).toMatchObject({ mode: "moveContents", targetCanvasId: 11 })
     expect(tileUpsert?.payload).toMatchObject({ canvas_id: 11 })
   })
+
+  test("refreshing history after loading more re-anchors the next cursor to the refreshed first page", async () => {
+    const globals = globalThis as unknown as {
+      fetch: (path: string, init?: RequestInit) => Promise<Response>
+    }
+    const requests: string[] = []
+    let refreshed = false
+
+    const page = (events: Array<{ id: number; created_at: string }>, nextCursor: string | null, hasMore: boolean) => ({
+      events: events.map((event) => ({
+        ...event,
+        action: "tile.create",
+        summary: `Created tile ${event.id}`,
+        detail: "{}",
+      })),
+      nextCursor,
+      hasMore,
+    })
+
+    globals.fetch = async (path) => {
+      const url = new URL(String(path), "http://localhost")
+      requests.push(url.toString())
+      const cursor = url.searchParams.get("cursor")
+      const body = cursor === null
+        ? (refreshed
+          ? page([
+            { id: 8, created_at: "2026-06-08T00:00:00.000Z" },
+            { id: 7, created_at: "2026-06-07T00:00:00.000Z" },
+            { id: 6, created_at: "2026-06-06T00:00:00.000Z" },
+            { id: 5, created_at: "2026-06-05T00:00:00.000Z" },
+          ], "2026-06-05T00:00:00.000Z|5", true)
+          : page([
+            { id: 6, created_at: "2026-06-06T00:00:00.000Z" },
+            { id: 5, created_at: "2026-06-05T00:00:00.000Z" },
+            { id: 4, created_at: "2026-06-04T00:00:00.000Z" },
+            { id: 3, created_at: "2026-06-03T00:00:00.000Z" },
+          ], "2026-06-03T00:00:00.000Z|3", true))
+        : page([
+          { id: 2, created_at: "2026-06-02T00:00:00.000Z" },
+          { id: 1, created_at: "2026-06-01T00:00:00.000Z" },
+        ], null, false)
+
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    }
+
+    await useStore.getState().refreshHistory()
+    await useStore.getState().loadMoreHistory()
+    refreshed = true
+    await useStore.getState().refreshHistory()
+
+    const state = useStore.getState()
+    expect(state.historyEvents.map((event) => event.id)).toEqual([8, 7, 6, 5, 4, 3, 2, 1])
+    expect(state.historyNextCursor).toBe("2026-06-05T00:00:00.000Z|5")
+    expect(state.historyHasMore).toBe(true)
+
+    await useStore.getState().loadMoreHistory()
+
+    expect(requests).toEqual([
+      "http://localhost/api/history?limit=50",
+      "http://localhost/api/history?limit=50&cursor=2026-06-03T00%3A00%3A00.000Z%7C3",
+      "http://localhost/api/history?limit=50",
+      "http://localhost/api/history?limit=50&cursor=2026-06-05T00%3A00%3A00.000Z%7C5",
+    ])
+  })
 })
