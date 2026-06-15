@@ -64,7 +64,7 @@ export function Sidebar() {
         {activeTab === "tags" && <TagsPanel />}
         {activeTab === "history" && (
           <Suspense fallback={<SidebarPanelFallback label="Loading history..." />}>
-            <LazyHistoryPanel active={activeTab === "history"} sidebarOpen={sidebarOpen} />
+            <LazyHistoryPanel sidebarOpen={sidebarOpen} />
           </Suspense>
         )}
         {activeTab === "settings" && (

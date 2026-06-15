@@ -3,6 +3,7 @@ import { createAiSlice } from "./aiSlice"
 import { createBootSlice } from "./bootSlice"
 import { createCanvasDataSlice } from "./canvasDataSlice"
 import { createCanvasSlice } from "./canvasSlice"
+import { createHistorySlice } from "./historySlice"
 import { createTagSlice } from "./tagSlice"
 import { createThoughtSlice } from "./thoughtSlice"
 import { createTileSlice } from "./tileSlice"
@@ -19,6 +20,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   ...createTileSlice(set, get, store),
   ...createThoughtSlice(set, get, store),
   ...createTagSlice(set, get, store),
+  ...createHistorySlice(set, get, store),
   ...createAiSlice(set, get, store),
   ...createSyncSlice(set, get, store),
   ...createUiSlice(set, get, store),

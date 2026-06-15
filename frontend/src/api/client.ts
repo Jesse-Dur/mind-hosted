@@ -1,7 +1,7 @@
-import type { Tile, Thought, Tag, HistoryEvent, Canvas } from "../types"
+import type { Canvas, HistoryEvent, HistoryPage, Tag, Thought, Tile } from "../types"
 import type { SyncPullResponse, SyncPushOperation, SyncPushResponse, SyncSnapshotResponse } from "../sync/types"
 import { isReauthRequired, notifyReauthRequired } from "../auth/reauthSignal"
-import { ApiUnauthorizedError } from "./errors"
+import { ApiRateLimitError, ApiUnauthorizedError } from "./errors"
 
 const BASE = "/api"
 
@@ -36,6 +36,13 @@ function normalizeTag(tag: Tag): Tag {
 
 function normalizeHistoryEvent(event: HistoryEvent): HistoryEvent {
   return { ...event, id: Number(event.id) }
+}
+
+function normalizeHistoryPage(page: HistoryPage): HistoryPage {
+  return {
+    ...page,
+    events: page.events.map(normalizeHistoryEvent),
+  }
 }
 
 function normalizeSnapshot(snapshot: SyncSnapshotResponse): SyncSnapshotResponse {
@@ -93,10 +100,21 @@ async function req<T>(path: string, getToken: GetToken, options?: RequestInit): 
   if (!res.ok) {
     const detail = await res.text().catch(() => "")
     let message = detail
+    let rateLimit: { metric: string; window: string; reset_at: string } | null = null
     try {
-      const parsed = JSON.parse(detail) as { error?: unknown }
+      const parsed = JSON.parse(detail) as { error?: unknown; code?: unknown; metric?: unknown; window?: unknown; reset_at?: unknown }
       if (typeof parsed.error === "string") message = parsed.error
+      if (
+        res.status === 429
+        && parsed.code === "rate_limit_exceeded"
+        && typeof parsed.metric === "string"
+        && typeof parsed.window === "string"
+        && typeof parsed.reset_at === "string"
+      ) {
+        rateLimit = { metric: parsed.metric, window: parsed.window, reset_at: parsed.reset_at }
+      }
     } catch { /* keep raw detail */ }
+    if (rateLimit) throw new ApiRateLimitError(path, rateLimit.metric, rateLimit.window, rateLimit.reset_at)
     throw new Error(`API error ${res.status}: ${path}${message ? ` - ${message}` : ""}`)
   }
   if (res.status === 204) return undefined as T
@@ -137,13 +155,34 @@ export function createApi(getToken: GetToken) {
           res = await requestTranscription(refreshedToken)
         }
         if (res.status === 401) throwUnauthorized("/whisper/transcribe")
-        if (!res.ok) throw new Error(`API error ${res.status}: /whisper/transcribe`)
+        if (!res.ok) {
+          const detail = await res.text().catch(() => "")
+          try {
+            const parsed = JSON.parse(detail) as { code?: unknown; metric?: unknown; window?: unknown; reset_at?: unknown }
+            if (
+              res.status === 429
+              && parsed.code === "rate_limit_exceeded"
+              && typeof parsed.metric === "string"
+              && typeof parsed.window === "string"
+              && typeof parsed.reset_at === "string"
+            ) {
+              throw new ApiRateLimitError("/whisper/transcribe", parsed.metric, parsed.window, parsed.reset_at)
+            }
+          } catch (error) {
+            if (error instanceof ApiRateLimitError) throw error
+          }
+          throw new Error(`API error ${res.status}: /whisper/transcribe`)
+        }
         return res.json()
       },
     },
 
     history: {
-      list: () => req<HistoryEvent[]>("/history", getToken).then((events) => events.map(normalizeHistoryEvent)),
+      list: (cursor?: string | null, limit = 50) => {
+        const params = new URLSearchParams({ limit: String(limit) })
+        if (cursor) params.set("cursor", cursor)
+        return req<HistoryPage>(`/history?${params.toString()}`, getToken).then(normalizeHistoryPage)
+      },
     },
 
     sync: {

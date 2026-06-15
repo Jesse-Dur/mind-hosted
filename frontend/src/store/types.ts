@@ -1,5 +1,5 @@
 import type { StateCreator } from "zustand"
-import type { Canvas, Tag, Thought, Tile } from "../types"
+import type { Canvas, HistoryEvent, Tag, Thought, Tile } from "../types"
 
 export type AiStatus = "idle" | "processing" | "queued" | "limited"
 export type CanvasOrderUpdate = Pick<Canvas, "id" | "sort_order" | "is_favourite">
@@ -84,6 +84,18 @@ export interface TagSlice {
   removeTag: (id: number) => Promise<void>
 }
 
+export interface HistorySlice {
+  historyEvents: HistoryEvent[]
+  historyNextCursor: string | null
+  historyHasMore: boolean
+  historyLoaded: boolean
+  historyRefreshing: boolean
+  historyLoadingMore: boolean
+  newHistoryIds: Set<number>
+  refreshHistory: () => Promise<void>
+  loadMoreHistory: () => Promise<void>
+}
+
 export interface AiSlice {
   aiStatus: AiStatus
   loadAiStatus: () => Promise<void>
@@ -114,6 +126,7 @@ export type AppStore = UiSlice
   & TileSlice
   & ThoughtSlice
   & TagSlice
+  & HistorySlice
   & AiSlice
   & SyncSlice
 
