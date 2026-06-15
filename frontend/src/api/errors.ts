@@ -7,6 +7,23 @@ export class ApiUnauthorizedError extends Error {
   }
 }
 
+export class ApiRateLimitError extends Error {
+  readonly code = "autumn_access_denied"
+
+  constructor(
+    readonly path: string,
+    readonly featureId: string,
+    readonly resetAt: string | null,
+  ) {
+    super(`Rate limit exceeded for ${path}`)
+    this.name = "ApiRateLimitError"
+  }
+}
+
 export function isApiUnauthorizedError(error: unknown): error is ApiUnauthorizedError {
   return error instanceof ApiUnauthorizedError
+}
+
+export function isApiRateLimitError(error: unknown): error is ApiRateLimitError {
+  return error instanceof ApiRateLimitError
 }

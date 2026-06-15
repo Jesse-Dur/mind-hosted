@@ -11,6 +11,10 @@ export type SyncResult = {
   server_id: number | null
   revision: number | null
   entity?: Canvas | Tile | Thought | Tag
+  code?: string
+  feature_id?: string
+  remaining?: number | null
+  reset_at?: string | null
 }
 export type SyncEvent = {
   revision: number

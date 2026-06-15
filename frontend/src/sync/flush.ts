@@ -134,7 +134,10 @@ async function flushRecord(record: OutboxRecord) {
   const result = response.results[0]
   if (!result) throw new Error("Missing sync result")
   if (!result.ok) {
-    await syncDb.outbox.put({ ...record, status: "error", error: result.error ?? "Sync rejected", updatedAt: Date.now() })
+    const resource = result.code === "autumn_access_denied" && result.feature_id
+      ? `${result.error ?? "Sync rejected"} (${result.feature_id})`
+      : result.error ?? "Sync rejected"
+    await syncDb.outbox.put({ ...record, status: "error", error: resource, updatedAt: Date.now() })
     return
   }
   const entity = result.entity ? entityFromPayload(record.entityType, result.entity as unknown as SyncPayload) : undefined

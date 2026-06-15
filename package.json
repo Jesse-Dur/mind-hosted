@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "test": "bun run test:backend && bun run test:frontend-sync && bun run test:store && bun run typecheck",
-    "test:backend": "bun --env-file=.env.local test backend/test/sync.test.ts",
+    "test:backend": "AUTUMN_DISABLED=true bun --env-file=.env.local test backend/test/sync.test.ts",
     "test:frontend-sync": "bun test frontend/src/sync/sync.test.ts frontend/src/sync/flush.test.ts frontend/src/sync/pull.test.ts",
     "test:store": "bun test frontend/src/store/store.test.ts",
     "test:ai": "bun run backend/test/ai.test.ts",

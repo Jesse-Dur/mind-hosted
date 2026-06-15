@@ -66,3 +66,25 @@ export interface HistoryPage {
   nextCursor: string | null
   hasMore: boolean
 }
+
+export type BillingFeatureUsage = {
+  used?: number
+  used_bytes?: number
+  used_megabytes?: number
+  allowed: boolean
+  remaining: number | null
+  reset_at: string | null
+}
+
+export type BillingUsage = {
+  customer_id: string
+  features: {
+    canvases: BillingFeatureUsage
+    tiles: BillingFeatureUsage
+    thoughts: BillingFeatureUsage
+    tags: BillingFeatureUsage
+    ai_processing_requests: BillingFeatureUsage
+    transcription_seconds: BillingFeatureUsage
+    storage: BillingFeatureUsage
+  }
+}

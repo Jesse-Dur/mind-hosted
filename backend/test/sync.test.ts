@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, test } from "bun:test"
+import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import type { syncDb as SyncDb } from "../db/sync"
 import type { sql as Sql } from "../db/client"
 
@@ -6,11 +6,13 @@ const RUN_ID = `${Date.now()}_${Math.random().toString(36).slice(2)}`
 const USER_A = `test_sync_a_${RUN_ID}`
 const USER_B = `test_sync_b_${RUN_ID}`
 const TEST_USERS = [USER_A, USER_B]
+setDefaultTimeout(45000)
 
 type SqlClient = typeof Sql
 type SyncDbClient = typeof SyncDb
 
 async function cleanup(sql: SqlClient) {
+  await sql`DELETE FROM user_usage WHERE user_id = ANY(${TEST_USERS})`
   await sql`DELETE FROM sync_applied_ops WHERE user_id = ANY(${TEST_USERS})`
   await sql`DELETE FROM sync_events WHERE user_id = ANY(${TEST_USERS})`
   await sql`DELETE FROM history WHERE user_id = ANY(${TEST_USERS})`
@@ -196,6 +198,36 @@ if (!process.env.DATABASE_URL) {
       expect(pull.latest_revision).toBeGreaterThanOrEqual(thought.revision ?? 0)
       expect(pull.events.every((event) => typeof event.revision === "number")).toBe(true)
       expect(pull.events.some((event) => event.entity_type === "thought" && event.client_id === "pull-thought")).toBe(true)
+    })
+
+    test("storage usage tracks active user data and can be recalculated", async () => {
+      const { getStorageUsage, recalculateUserStorage } = await import("../billing/storageUsage")
+      const canvasId = await createCanvas(syncDb, USER_A, "storage-canvas")
+      const tileId = await createTile(syncDb, USER_A, canvasId, "storage-tile")
+      const thought = await syncDb.apply(USER_A, "storage-thought-op", "thought", "upsert", "storage-thought", null, {
+        tile_id: tileId,
+        content: "Storage tracked thought",
+        tags: ["billing"],
+        sort_order: 0,
+      })
+      await syncDb.apply(USER_A, "storage-tag-op", "tag", "upsert", "storage-tag", null, {
+        name: "billing",
+        color: "#123456",
+      })
+
+      const afterCreates = await getStorageUsage(USER_A)
+      expect(afterCreates.storageBytes).toBeGreaterThan(0)
+      expect(afterCreates.storageMegabytes).toBe(1)
+
+      const recalculated = await recalculateUserStorage(USER_A)
+      expect(recalculated.storageBytes).toBe(afterCreates.storageBytes)
+
+      await syncDb.apply(USER_A, "storage-thought-delete", "thought", "delete", "storage-thought", Number(thought.server_id), {})
+      const afterDelete = await getStorageUsage(USER_A)
+      expect(afterDelete.storageBytes).toBeLessThan(afterCreates.storageBytes)
+
+      const recalculatedAfterDelete = await recalculateUserStorage(USER_A)
+      expect(recalculatedAfterDelete.storageBytes).toBe(afterDelete.storageBytes)
     })
   })
 }

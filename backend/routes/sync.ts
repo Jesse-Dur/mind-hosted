@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { getAuth } from "@clerk/hono"
 import { syncDb, type SyncAction, type SyncEntityType, type SyncPayload } from "../db/sync"
+import { isAutumnAccessDeniedError } from "../billing/errors"
 
 export const syncRoute = new Hono()
 
@@ -68,6 +69,7 @@ function parseCanvasId(value: string | undefined) {
 }
 
 function isPermanentSyncError(error: unknown) {
+  if (isAutumnAccessDeniedError(error)) return true
   if (!(error instanceof Error)) return false
   return [
     "Invalid canvas id",
@@ -111,6 +113,12 @@ syncRoute.post("/push", async (c) => {
         client_id: operation.client_id ?? null,
         server_id: operation.server_id ?? null,
         error: message,
+        ...(isAutumnAccessDeniedError(error) ? {
+          code: error.code,
+          feature_id: error.featureId,
+          remaining: error.remaining,
+          reset_at: error.resetAt,
+        } : {}),
       })
     }
   }

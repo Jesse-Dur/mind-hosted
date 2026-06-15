@@ -100,4 +100,12 @@ await sql.unsafe(`
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (user_id, op_id)
   );
+
+  CREATE TABLE IF NOT EXISTS user_usage (
+    user_id TEXT PRIMARY KEY,
+    storage_bytes BIGINT NOT NULL DEFAULT 0,
+    storage_synced_bytes BIGINT NOT NULL DEFAULT 0,
+    storage_synced_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
 `)

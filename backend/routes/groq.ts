@@ -5,6 +5,9 @@ import { thoughtsDb } from "../db/thoughts"
 import { tagsDb } from "../db/tags"
 import { historyDb } from "../db/history"
 import { syncDb, type SyncPayload } from "../db/sync"
+import { autumnAccessDeniedResponse, isAutumnAccessDeniedError } from "../billing/errors"
+import { consumeAutumnFeature } from "../billing/entitlements"
+import { autumnFeatures } from "../billing/features"
 import type { Thought } from "../types"
 
 export const groqRoute = new Hono()
@@ -551,6 +554,12 @@ groqRoute.post("/process", async (c) => {
   const { input: rawInput, priority = "medium" } = await c.req.json() as { input: string; priority: string }
   const input = String(rawInput ?? "").slice(0, 500)
   if (!input.trim()) return c.json({ error: "Empty input" }, 400)
+  try {
+    await consumeAutumnFeature(auth.userId, autumnFeatures.aiProcessingRequests)
+  } catch (error) {
+    if (isAutumnAccessDeniedError(error)) return c.json(autumnAccessDeniedResponse(error), 429)
+    throw error
+  }
   const max = CONCURRENCY[priority] ?? 2
   const jobId = crypto.randomUUID()
 

@@ -57,6 +57,10 @@ export type SyncPushResult = {
   revision: number | null
   entity?: SyncEntity
   error?: string
+  code?: string
+  feature_id?: string
+  remaining?: number | null
+  reset_at?: string | null
 }
 
 export type SyncPullEvent = {

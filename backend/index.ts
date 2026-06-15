@@ -7,6 +7,7 @@ import { groqRoute } from "./routes/groq"
 import { historyRoute } from "./routes/history"
 import { whisperRoute } from "./routes/whisper"
 import { syncRoute } from "./routes/sync"
+import { billingRoute } from "./routes/billing"
 import "./db/client"
 
 const app = new Hono()
@@ -20,5 +21,6 @@ app.route("/api/ai", groqRoute)
 app.route("/api/history", historyRoute)
 app.route("/api/whisper", whisperRoute)
 app.route("/api/sync", syncRoute)
+app.route("/api/billing", billingRoute)
 
 export default { port: 3000, fetch: app.fetch }

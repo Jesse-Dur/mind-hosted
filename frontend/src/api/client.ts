@@ -1,4 +1,4 @@
-import type { Canvas, HistoryEvent, HistoryPage, Tag, Thought, Tile } from "../types"
+import type { BillingUsage, Canvas, HistoryEvent, HistoryPage, Tag, Thought, Tile } from "../types"
 import type { SyncPullResponse, SyncPushOperation, SyncPushResponse, SyncSnapshotResponse } from "../sync/types"
 import { isReauthRequired, notifyReauthRequired } from "../auth/reauthSignal"
 import { ApiRateLimitError, ApiUnauthorizedError } from "./errors"
@@ -100,21 +100,19 @@ async function req<T>(path: string, getToken: GetToken, options?: RequestInit): 
   if (!res.ok) {
     const detail = await res.text().catch(() => "")
     let message = detail
-    let rateLimit: { metric: string; window: string; reset_at: string } | null = null
+    let rateLimit: { feature_id: string; reset_at: string | null } | null = null
     try {
-      const parsed = JSON.parse(detail) as { error?: unknown; code?: unknown; metric?: unknown; window?: unknown; reset_at?: unknown }
+      const parsed = JSON.parse(detail) as { error?: unknown; code?: unknown; feature_id?: unknown; reset_at?: unknown }
       if (typeof parsed.error === "string") message = parsed.error
       if (
         res.status === 429
-        && parsed.code === "rate_limit_exceeded"
-        && typeof parsed.metric === "string"
-        && typeof parsed.window === "string"
-        && typeof parsed.reset_at === "string"
+        && parsed.code === "autumn_access_denied"
+        && typeof parsed.feature_id === "string"
       ) {
-        rateLimit = { metric: parsed.metric, window: parsed.window, reset_at: parsed.reset_at }
+        rateLimit = { feature_id: parsed.feature_id, reset_at: typeof parsed.reset_at === "string" ? parsed.reset_at : null }
       }
     } catch { /* keep raw detail */ }
-    if (rateLimit) throw new ApiRateLimitError(path, rateLimit.metric, rateLimit.window, rateLimit.reset_at)
+    if (rateLimit) throw new ApiRateLimitError(path, rateLimit.feature_id, rateLimit.reset_at)
     throw new Error(`API error ${res.status}: ${path}${message ? ` - ${message}` : ""}`)
   }
   if (res.status === 204) return undefined as T
@@ -158,15 +156,13 @@ export function createApi(getToken: GetToken) {
         if (!res.ok) {
           const detail = await res.text().catch(() => "")
           try {
-            const parsed = JSON.parse(detail) as { code?: unknown; metric?: unknown; window?: unknown; reset_at?: unknown }
+            const parsed = JSON.parse(detail) as { code?: unknown; feature_id?: unknown; reset_at?: unknown }
             if (
               res.status === 429
-              && parsed.code === "rate_limit_exceeded"
-              && typeof parsed.metric === "string"
-              && typeof parsed.window === "string"
-              && typeof parsed.reset_at === "string"
+              && parsed.code === "autumn_access_denied"
+              && typeof parsed.feature_id === "string"
             ) {
-              throw new ApiRateLimitError("/whisper/transcribe", parsed.metric, parsed.window, parsed.reset_at)
+              throw new ApiRateLimitError("/whisper/transcribe", parsed.feature_id, typeof parsed.reset_at === "string" ? parsed.reset_at : null)
             }
           } catch (error) {
             if (error instanceof ApiRateLimitError) throw error
@@ -183,6 +179,10 @@ export function createApi(getToken: GetToken) {
         if (cursor) params.set("cursor", cursor)
         return req<HistoryPage>(`/history?${params.toString()}`, getToken).then(normalizeHistoryPage)
       },
+    },
+
+    billing: {
+      usage: () => req<BillingUsage>("/billing/usage", getToken),
     },
 
     sync: {
