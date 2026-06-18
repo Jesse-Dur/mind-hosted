@@ -139,7 +139,7 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
   function onMouseUp() {
     if (!draft) return
     if (draft.width >= MIN && draft.height >= MIN) {
-      addTile({ title: "New Tile", ...clamp(draft.x, draft.y, draft.width, draft.height), importance: 1, visible: true, canvas_id: null })
+      void addTile({ title: "New Tile", ...clamp(draft.x, draft.y, draft.width, draft.height), importance: 1, visible: true, canvas_id: null }).catch(console.error)
     }
     setDraft(null)
   }

@@ -219,7 +219,14 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
   }
 
   function handleNewTab() {
-    const { canvas, persisted } = addCanvas("New Canvas")
+    let creation: ReturnType<typeof addCanvas>
+    try {
+      creation = addCanvas("New Canvas")
+    } catch (error) {
+      console.error(error)
+      return
+    }
+    const { canvas, persisted } = creation
     const canvasKey = canvasIdentityKey(canvas)
     setNewTabKey(canvasKey)
     setTimeout(() => setNewTabKey((current) => current === canvasKey ? null : current), 350)

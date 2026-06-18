@@ -53,7 +53,7 @@ export function ThoughtInput({ tileId, inputRef }: { tileId: number; inputRef?: 
     const trimmed = content || value.trim()
     setValue("")
     setSuggestion(null)
-    void addThoughtToTile(tileId, trimmed, parsedTags)
+    void addThoughtToTile(tileId, trimmed, parsedTags).catch(console.error)
   }
 
   return (

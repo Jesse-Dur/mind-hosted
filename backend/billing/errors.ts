@@ -26,3 +26,16 @@ export function autumnAccessDeniedResponse(error: AutumnAccessDeniedError) {
     reset_at: error.resetAt,
   }
 }
+
+export class BillingEditingFrozenError extends Error {
+  readonly code = "billing_editing_frozen"
+
+  constructor() {
+    super("Editing is frozen while this account is above plan limits")
+    this.name = "BillingEditingFrozenError"
+  }
+}
+
+export function isBillingEditingFrozenError(error: unknown): error is BillingEditingFrozenError {
+  return error instanceof BillingEditingFrozenError
+}

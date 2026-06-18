@@ -4,6 +4,7 @@ import { Canvas } from "./components/Canvas"
 import { Sidebar } from "./components/Sidebar"
 import { AiStatusPill } from "./components/AiStatusPill"
 import { LoadingScreen } from "./components/LoadingScreen"
+import { OverageNotice } from "./components/OverageNotice"
 import { TabBar } from "./components/TabBar"
 import { Tooltip } from "./components/Tooltip"
 import { LazySpotlight, preloadDeferredSurfaces } from "./components/lazySurfaces"
@@ -152,6 +153,7 @@ export default function App() {
       <SignedIn>
         <Sidebar />
         {tabBarVisible && <TabBar slidingOut={tabBarAnimating} />}
+        <OverageNotice tabsVisible={tabsVisible} />
         {!tabsVisible && (
           <div style={{ position: "fixed", top: 12, left: 12, zIndex: 50, display: "flex", alignItems: "center", gap: 6 }}>
             <Tooltip label="Sidebar" placement="bottom" align="start">

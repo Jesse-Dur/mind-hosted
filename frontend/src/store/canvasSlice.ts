@@ -8,6 +8,7 @@ import { createClientId, createTemporarySyncId } from "../sync/ids"
 import { advanceLoadGeneration } from "./loadGeneration"
 import { fetchAndCacheSnapshot } from "../sync/snapshot"
 import { isApiUnauthorizedError } from "../api/errors"
+import { assertCreationAllowed, assertEditingAllowed } from "../billing/access"
 
 export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
   canvases: [],
@@ -119,6 +120,7 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
   },
 
   addCanvas: (name) => {
+    assertCreationAllowed("canvases")
     const { canvases } = get()
     const clientId = createClientId("canvas")
     const tempId = createTemporarySyncId()
@@ -145,6 +147,7 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
   },
 
   updateCanvas: async (id, data) => {
+    assertEditingAllowed()
     let updatedCanvas: Canvas | undefined
     set((s) => ({
       canvases: s.canvases.map((canvas) => {
@@ -157,6 +160,7 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
   },
 
   reorderCanvases: (updates) => {
+    assertEditingAllowed()
     const byId = new Map(updates.map((update) => [update.id, update]))
     const changed: Canvas[] = []
     set((s) => ({

@@ -3,6 +3,7 @@ import type { StoreSlice, TileSlice } from "./types"
 import { findThoughtsForTile, findTileInState, upsertTile, visibleThoughts, visibleTiles } from "./cacheHelpers"
 import { enqueueDelete, enqueueUpsert } from "../sync/engine"
 import { createClientId, createTemporarySyncId } from "../sync/ids"
+import { assertCreationAllowed, assertEditingAllowed } from "../billing/access"
 
 function buildOptimisticTile(data: Omit<Tile, "id" | "created_at">, activeCanvasId: number | null): Tile {
   const clientId = createClientId("tile")
@@ -18,6 +19,7 @@ function buildOptimisticTile(data: Omit<Tile, "id" | "created_at">, activeCanvas
 
 export const createTileSlice: StoreSlice<TileSlice> = (set, get) => ({
   addTile: async (data) => {
+    assertCreationAllowed("tiles")
     const { activeCanvasId } = get()
     const tile = buildOptimisticTile(data, activeCanvasId)
     set((s) => {
@@ -29,6 +31,7 @@ export const createTileSlice: StoreSlice<TileSlice> = (set, get) => ({
   },
 
   moveTileLocal: (id, data, fallbackTile) => {
+    assertEditingAllowed()
     const { tiles } = get()
     if (tiles.some((tile) => tile.id === id)) {
       set({ tiles: tiles.map((tile) => (tile.id === id ? { ...tile, ...data } : tile)) })
@@ -38,6 +41,7 @@ export const createTileSlice: StoreSlice<TileSlice> = (set, get) => ({
   },
 
   updateTile: async (id, data) => {
+    assertEditingAllowed()
     let updatedTile: Tile | undefined
     set((s) => {
       const tileCache = new Map(s.tileCache)
@@ -62,6 +66,7 @@ export const createTileSlice: StoreSlice<TileSlice> = (set, get) => ({
   },
 
   moveTileToCanvas: async (id, targetCanvasId, x, y) => {
+    assertEditingAllowed()
     const initial = get()
     const tile = findTileInState(id, initial.tiles, initial.tileCache)
     if (!tile) return

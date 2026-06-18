@@ -134,7 +134,9 @@ async function flushRecord(record: OutboxRecord) {
   const result = response.results[0]
   if (!result) throw new Error("Missing sync result")
   if (!result.ok) {
-    const resource = result.code === "autumn_access_denied" && result.feature_id
+    const resource = result.code === "billing_editing_frozen"
+      ? result.error ?? "Sync rejected"
+      : result.code === "autumn_access_denied" && result.feature_id
       ? `${result.error ?? "Sync rejected"} (${result.feature_id})`
       : result.error ?? "Sync rejected"
     await syncDb.outbox.put({ ...record, status: "error", error: resource, updatedAt: Date.now() })

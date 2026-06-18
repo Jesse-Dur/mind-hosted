@@ -1,9 +1,16 @@
 import { deleteEntity } from "./delete"
 import { logEvent, recordApplied } from "./events"
 import { upsertCanvas, upsertTag, upsertThought, upsertTile } from "./upsert"
+import { BillingEditingFrozenError } from "../../billing/errors"
+import { getBillingUsageStatus } from "../../billing/usageStatus"
 import type { ApplyOptions, DeletePayload, SyncAction, SyncEntityType, SyncPayload, SyncResult } from "./types"
 
 export async function applySyncOperation(userId: string, opId: string, entityType: SyncEntityType, action: SyncAction, clientId: string | null, serverId: number | null, payload: SyncPayload, options: ApplyOptions = {}) {
+  if (action === "upsert" || entityType === "tag") {
+    const billing = await getBillingUsageStatus(userId, { syncStorage: false })
+    if (billing.overage.editing_frozen) throw new BillingEditingFrozenError()
+  }
+
   const writeHistory = options.writeHistory ?? true
   const entity = action === "upsert"
     ? entityType === "canvas"

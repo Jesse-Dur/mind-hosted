@@ -93,7 +93,7 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
 
   function handleNewTile(title?: string) {
     const { x, y } = findEmptySpot(tiles, 280, 200)
-    addTile({ title: title ?? "New Tile", x, y, width: 280, height: 200, importance: 1, visible: true, canvas_id: activeCanvasId })
+    void addTile({ title: title ?? "New Tile", x, y, width: 280, height: 200, importance: 1, visible: true, canvas_id: activeCanvasId }).catch(console.error)
     onClose()
   }
 

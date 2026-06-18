@@ -5,6 +5,7 @@ import { enqueueDelete, enqueueUpsert } from "../sync/engine"
 import { createClientId, createTemporarySyncId } from "../sync/ids"
 import { fetchAndCacheSnapshot } from "../sync/snapshot"
 import { isApiUnauthorizedError } from "../api/errors"
+import { assertEditingAllowed } from "../billing/access"
 
 function optimisticTag(name: string, color: string): Tag {
   const clientId = createClientId("tag")
@@ -48,12 +49,14 @@ export const createTagSlice: StoreSlice<TagSlice> = (set, get) => ({
   },
 
   addTag: async (name, color) => {
+    assertEditingAllowed()
     const tag = optimisticTag(name, color)
     set((s) => ({ tags: [...s.tags.filter((item) => item.name !== name), tag].sort((a, b) => a.name.localeCompare(b.name)) }))
     await enqueueUpsert("tag", tag)
   },
 
   updateTag: async (id, name, color) => {
+    assertEditingAllowed()
     const oldTag = get().tags.find((tag) => tag.id === id)
     let updatedTag: Tag | undefined
     set((s) => ({
@@ -75,6 +78,7 @@ export const createTagSlice: StoreSlice<TagSlice> = (set, get) => ({
   },
 
   removeTag: async (id) => {
+    assertEditingAllowed()
     const tag = get().tags.find((item) => item.id === id)
     set((s) => ({ tags: s.tags.filter((item) => item.id !== id) }))
     if (tag) await enqueueDelete("tag", tag)

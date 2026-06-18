@@ -16,6 +16,71 @@ export type AutumnCheckResponse = {
   balance?: AutumnBalance | null
 }
 
+export type AutumnCustomerBalance = {
+  featureId?: string
+  feature_id?: string
+  granted?: number | null
+  remaining?: number | null
+  usage?: number | null
+  unlimited?: boolean | null
+  nextResetAt?: number | null
+  next_reset_at?: number | null
+}
+
+export type AutumnCustomerPlanRef = {
+  planId?: string
+  plan_id?: string
+  status?: string
+  pastDue?: boolean | null
+  past_due?: boolean | null
+  canceledAt?: string | number | null
+  canceled_at?: string | number | null
+  expiresAt?: string | number | null
+  expires_at?: string | number | null
+  currentPeriodEnd?: string | number | null
+  current_period_end?: string | number | null
+}
+
+export type AutumnCustomerResponse = {
+  subscriptions?: AutumnCustomerPlanRef[]
+  purchases?: AutumnCustomerPlanRef[]
+  balances?: Record<string, AutumnCustomerBalance>
+}
+
+export type AutumnPlanPriceDisplay = {
+  primaryText?: string
+  primary_text?: string
+  secondaryText?: string
+  secondary_text?: string
+}
+
+export type AutumnPlanPrice = {
+  amount?: number | null
+  interval?: string | null
+  billingUnits?: number | null
+  billing_units?: number | null
+  billingMethod?: string | null
+  billing_method?: string | null
+  display?: AutumnPlanPriceDisplay | null
+}
+
+export type AutumnPlanItem = {
+  featureId?: string
+  feature_id?: string
+  included?: number | null
+  unlimited?: boolean | null
+  price?: AutumnPlanPrice | null
+  display?: AutumnPlanPriceDisplay | null
+  reset?: { interval?: string | null } | null
+}
+
+export type AutumnPlanResponse = {
+  id?: string
+  name?: string | null
+  price?: AutumnPlanPrice | null
+  items?: AutumnPlanItem[]
+}
+
 type AutumnRequestBody = Record<string, unknown>
 
 function autumnSecretKey() {
@@ -83,6 +148,18 @@ export async function getOrCreateAutumnCustomer(customerId: string) {
   return autumnRequest("customers.get_or_create", {
     customer_id: customerId,
     auto_enable_plan_id: process.env.AUTUMN_FREE_PLAN_ID,
+  })
+}
+
+export async function getAutumnCustomer(customerId: string) {
+  return autumnRequest<AutumnCustomerResponse>("customers.get", {
+    customer_id: customerId,
+  })
+}
+
+export async function getAutumnPlan(planId: string) {
+  return autumnRequest<AutumnPlanResponse>("plans.get", {
+    plan_id: planId,
   })
 }
 

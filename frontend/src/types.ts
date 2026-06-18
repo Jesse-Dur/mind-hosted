@@ -68,23 +68,42 @@ export interface HistoryPage {
 }
 
 export type BillingFeatureUsage = {
-  used?: number
-  used_bytes?: number
-  used_megabytes?: number
-  allowed: boolean
+  id: "ai_processing_requests" | "transcription_seconds" | "storage" | "canvases" | "tiles" | "thoughts"
+  label: string
+  used: number
+  unit: string
+  limit: number | null
   remaining: number | null
+  unlimited: boolean
   reset_at: string | null
+  cost: string | null
+}
+
+export type BillingPlan = {
+  id: string
+  name: string
+  cost: string
+}
+
+export type BillingOverageItem = {
+  id: "canvases" | "tiles" | "thoughts"
+  label: string
+  used: number
+  limit: number
+  over_by: number
+  unit: string
+}
+
+export type BillingOverage = {
+  is_over_limit: boolean
+  editing_frozen: boolean
+  overages: BillingOverageItem[]
+  suspended_creation: BillingOverageItem["id"][]
 }
 
 export type BillingUsage = {
   customer_id: string
-  features: {
-    canvases: BillingFeatureUsage
-    tiles: BillingFeatureUsage
-    thoughts: BillingFeatureUsage
-    tags: BillingFeatureUsage
-    ai_processing_requests: BillingFeatureUsage
-    transcription_seconds: BillingFeatureUsage
-    storage: BillingFeatureUsage
-  }
+  plans: BillingPlan[]
+  features: BillingFeatureUsage[]
+  overage: BillingOverage
 }
