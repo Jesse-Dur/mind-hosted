@@ -1,7 +1,7 @@
 # Mind (Hosted)
-This is the hosted version of [Mind](https://github.com/jdurik/mind) — a cloud-deployed, multi-user edition with authentication and a managed database. Everything is still open-source.
+This is the hosted version of [Mind](https://github.com/Jesse-Dur/mind) — a cloud-deployed, multi-user edition with authentication and a managed database. Everything is still open-source.
 
-If you want to run Mind fully locally on your own machine with no accounts or cloud services, use the [local version](https://github.com/jdurik/mind) instead.
+If you want to run Mind fully locally on your own machine with no accounts or cloud services, use the [local version](https://github.com/Jesse-Dur/mind) instead.
 
 ---
 
