@@ -41,12 +41,16 @@ export async function deleteEntity(userId: string, entityType: SyncEntityType, s
   }
   if (entityType === "tile") {
     const [tile] = await sql<Tile[]>`SELECT * FROM tiles WHERE id = ${serverId} AND user_id = ${userId}`
+    const tileWasActive = tile && (tile as Tile & { deleted_at?: string | null }).deleted_at == null
     const thoughts = await sql<Thought[]>`SELECT * FROM thoughts WHERE tile_id = ${serverId} AND user_id = ${userId} AND deleted_at IS NULL`
     await sql`UPDATE thoughts SET deleted_at = NOW(), updated_at = NOW() WHERE tile_id = ${serverId} AND user_id = ${userId}`
     await sql`UPDATE tiles SET deleted_at = NOW(), updated_at = NOW() WHERE id = ${serverId} AND user_id = ${userId}`
     if (tile) {
-      const contentDelta = thoughts.reduce((total, thought) => total + estimateThoughtStorage(thought), 0)
-      await addStorageDelta(userId, -(estimateTileStorage(tile) + contentDelta))
+      // Canvas deletion also queues child cleanup operations on the client. Only
+      // subtract the tile itself when this request performs its active-to-deleted transition.
+      const tileDelta = tileWasActive ? estimateTileStorage(tile) : 0
+      const thoughtDelta = thoughts.reduce((total, thought) => total + estimateThoughtStorage(thought), 0)
+      await addStorageDelta(userId, -(tileDelta + thoughtDelta))
     }
     await reconcileAutumnResourcesAfterMutation(userId, ["tiles", "thoughts"])
     return tile ?? null

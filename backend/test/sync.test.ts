@@ -273,5 +273,32 @@ if (!process.env.DATABASE_URL) {
       const recalculatedAfterDelete = await recalculateUserStorage(USER_A)
       expect(recalculatedAfterDelete.storageBytes).toBe(afterDelete.storageBytes)
     })
+
+    test("child cleanup after canvas deletion does not subtract storage twice", async () => {
+      const { getStorageUsage, recalculateUserStorage } = await import("../billing/storageUsage")
+      const canvasId = await createCanvas(syncDb, USER_A, "storage-delete-canvas")
+      const tileId = await createTile(syncDb, USER_A, canvasId, "storage-delete-tile")
+      const thought = await syncDb.apply(USER_A, "storage-delete-thought-op", "thought", "upsert", "storage-delete-thought", null, {
+        tile_id: tileId,
+        content: "Delete once",
+        tags: [],
+        sort_order: 0,
+      })
+
+      await syncDb.apply(USER_A, "storage-delete-canvas-op", "canvas", "delete", "storage-delete-canvas", canvasId, {
+        mode: "deleteContents",
+      })
+      const afterCanvasDelete = await getStorageUsage(USER_A)
+
+      // This matches the durable child cleanup queued by the frontend after its
+      // aggregate canvas delete has already removed the same server rows.
+      await syncDb.apply(USER_A, "storage-delete-child-thought-op", "thought", "delete", "storage-delete-thought", Number(thought.server_id), {})
+      await syncDb.apply(USER_A, "storage-delete-child-tile-op", "tile", "delete", "storage-delete-tile", tileId, {})
+      const afterChildCleanup = await getStorageUsage(USER_A)
+      const recalculated = await recalculateUserStorage(USER_A)
+
+      expect(afterChildCleanup.storageBytes).toBe(afterCanvasDelete.storageBytes)
+      expect(recalculated.storageBytes).toBe(afterChildCleanup.storageBytes)
+    })
   })
 }
