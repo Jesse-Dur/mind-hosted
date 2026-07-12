@@ -1,6 +1,6 @@
 import { sql } from "../client"
 import { historyDb } from "../history"
-import { assertCanCreateAutumnResource, syncAutumnResourceUsage } from "../../billing/resourceUsage"
+import { createSerializedBillableResource, type ResourceQueryClient } from "../../billing/resourceUsage"
 import { addStorageDelta } from "../../billing/storageUsage"
 import { estimateCanvasStorage, estimateTagStorage, estimateThoughtStorage, estimateTileStorage } from "../../billing/storageEstimate"
 import type { Canvas, Tag, Thought, Tile } from "../../types"
@@ -28,15 +28,14 @@ export async function upsertCanvas(userId: string, clientId: string | null, serv
     return canvas
   }
 
-  await assertCanCreateAutumnResource(userId, "canvases")
-  const [canvas] = await sql<Canvas[]>`
-    INSERT INTO canvases (user_id, client_id, name, sort_order, is_favourite)
-    VALUES (${userId}, ${clientId}, ${name}, ${sortOrder}, ${isFavourite})
-    RETURNING *
-  ` as unknown as [Canvas]
-  await syncAutumnResourceUsage(userId, "canvases").catch((error) => {
-    const message = error instanceof Error ? error.message : String(error)
-    console.warn(`[autumn] failed to sync canvas usage after create: ${message}`)
+  const canvas = await createSerializedBillableResource(userId, "canvases", async (transaction) => {
+    const [created] = await transaction<Canvas[]>`
+      INSERT INTO canvases (user_id, client_id, name, sort_order, is_favourite)
+      VALUES (${userId}, ${clientId}, ${name}, ${sortOrder}, ${isFavourite})
+      RETURNING *
+    `
+    if (!created) throw new Error("Canvas create did not return a row")
+    return created
   })
   await addStorageDelta(userId, estimateCanvasStorage(canvas))
   if (writeHistory) await historyDb.log(userId, "canvas.create", `Created canvas "${canvas.name}"`, { canvas_id: canvas.id, name: canvas.name })
@@ -65,27 +64,33 @@ export async function upsertTile(userId: string, clientId: string | null, server
       : undefined
 
   if (existing) {
-    const [tile] = await sql<Tile[]>`
-      UPDATE tiles
-      SET client_id = COALESCE(client_id, ${clientId}), canvas_id = ${canvasId}, title = ${title}, x = ${x}, y = ${y}, width = ${width}, height = ${height},
-          importance = ${importance}, visible = ${visible}, updated_at = NOW(), deleted_at = NULL
-      WHERE id = ${existing.id} AND user_id = ${userId}
-      RETURNING *
-    ` as unknown as [Tile]
     const wasDeleted = (existing as Tile & { deleted_at?: string | null }).deleted_at !== null && (existing as Tile & { deleted_at?: string | null }).deleted_at !== undefined
+    const update = async (query: ResourceQueryClient) => {
+      const [updated] = await query<Tile[]>`
+        UPDATE tiles
+        SET client_id = COALESCE(client_id, ${clientId}), canvas_id = ${canvasId}, title = ${title}, x = ${x}, y = ${y}, width = ${width}, height = ${height},
+            importance = ${importance}, visible = ${visible}, updated_at = NOW(), deleted_at = NULL
+        WHERE id = ${existing.id} AND user_id = ${userId}
+        RETURNING *
+      `
+      if (!updated) throw new Error("Tile update did not return a row")
+      return updated
+    }
+    const tile = wasDeleted
+      ? await createSerializedBillableResource(userId, "tiles", update)
+      : await update(sql)
     await addStorageDelta(userId, estimateTileStorage(tile) - (wasDeleted ? 0 : estimateTileStorage(existing)))
     return tile
   }
 
-  await assertCanCreateAutumnResource(userId, "tiles")
-  const [tile] = await sql<Tile[]>`
-    INSERT INTO tiles (user_id, client_id, canvas_id, title, x, y, width, height, importance, visible)
-    VALUES (${userId}, ${clientId}, ${canvasId}, ${title}, ${x}, ${y}, ${width}, ${height}, ${importance}, ${visible})
-    RETURNING *
-  ` as unknown as [Tile]
-  await syncAutumnResourceUsage(userId, "tiles").catch((error) => {
-    const message = error instanceof Error ? error.message : String(error)
-    console.warn(`[autumn] failed to sync tile usage after create: ${message}`)
+  const tile = await createSerializedBillableResource(userId, "tiles", async (transaction) => {
+    const [created] = await transaction<Tile[]>`
+      INSERT INTO tiles (user_id, client_id, canvas_id, title, x, y, width, height, importance, visible)
+      VALUES (${userId}, ${clientId}, ${canvasId}, ${title}, ${x}, ${y}, ${width}, ${height}, ${importance}, ${visible})
+      RETURNING *
+    `
+    if (!created) throw new Error("Tile create did not return a row")
+    return created
   })
   await addStorageDelta(userId, estimateTileStorage(tile))
   if (writeHistory) await historyDb.log(userId, "tile.create", `Created tile "${tile.title}"`, { tile_id: tile.id, title: tile.title })
@@ -112,26 +117,32 @@ export async function upsertThought(userId: string, clientId: string | null, ser
       : undefined
 
   if (existing) {
-    const [thought] = await sql<Thought[]>`
-      UPDATE thoughts
-      SET client_id = COALESCE(client_id, ${clientId}), tile_id = ${tileId}, content = ${content}, tags = ${tags}, sort_order = ${sortOrder}, updated_at = NOW(), deleted_at = NULL
-      WHERE id = ${existing.id} AND user_id = ${userId}
-      RETURNING *
-    ` as unknown as [Thought]
     const wasDeleted = (existing as Thought & { deleted_at?: string | null }).deleted_at !== null && (existing as Thought & { deleted_at?: string | null }).deleted_at !== undefined
+    const update = async (query: ResourceQueryClient) => {
+      const [updated] = await query<Thought[]>`
+        UPDATE thoughts
+        SET client_id = COALESCE(client_id, ${clientId}), tile_id = ${tileId}, content = ${content}, tags = ${tags}, sort_order = ${sortOrder}, updated_at = NOW(), deleted_at = NULL
+        WHERE id = ${existing.id} AND user_id = ${userId}
+        RETURNING *
+      `
+      if (!updated) throw new Error("Thought update did not return a row")
+      return updated
+    }
+    const thought = wasDeleted
+      ? await createSerializedBillableResource(userId, "thoughts", update)
+      : await update(sql)
     await addStorageDelta(userId, estimateThoughtStorage(thought) - (wasDeleted ? 0 : estimateThoughtStorage(existing)))
     return thought
   }
 
-  await assertCanCreateAutumnResource(userId, "thoughts")
-  const [thought] = await sql<Thought[]>`
-    INSERT INTO thoughts (user_id, client_id, tile_id, content, tags, sort_order)
-    VALUES (${userId}, ${clientId}, ${tileId}, ${content}, ${tags}, ${sortOrder})
-    RETURNING *
-  ` as unknown as [Thought]
-  await syncAutumnResourceUsage(userId, "thoughts").catch((error) => {
-    const message = error instanceof Error ? error.message : String(error)
-    console.warn(`[autumn] failed to sync thought usage after create: ${message}`)
+  const thought = await createSerializedBillableResource(userId, "thoughts", async (transaction) => {
+    const [created] = await transaction<Thought[]>`
+      INSERT INTO thoughts (user_id, client_id, tile_id, content, tags, sort_order)
+      VALUES (${userId}, ${clientId}, ${tileId}, ${content}, ${tags}, ${sortOrder})
+      RETURNING *
+    `
+    if (!created) throw new Error("Thought create did not return a row")
+    return created
   })
   await addStorageDelta(userId, estimateThoughtStorage(thought))
   if (writeHistory) await historyDb.log(userId, "thought.create", "Added thought", { thought_id: thought.id, tile_id: tileId, content, tags })

@@ -141,6 +141,22 @@ if (!process.env.DATABASE_URL) {
       })).rejects.toThrow("Tile not found")
     })
 
+    test("billable resource creation is serialized per user and feature", async () => {
+      const { createSerializedBillableResource } = await import("../billing/resourceUsage")
+      let activeCreates = 0
+      let maximumConcurrentCreates = 0
+
+      await Promise.all([1, 2].map((value) => createSerializedBillableResource(USER_A, "canvases", async (transaction) => {
+        activeCreates += 1
+        maximumConcurrentCreates = Math.max(maximumConcurrentCreates, activeCreates)
+        await transaction`SELECT pg_sleep(0.05)`
+        activeCreates -= 1
+        return value
+      })))
+
+      expect(maximumConcurrentCreates).toBe(1)
+    })
+
     test("canvas delete can move or delete child contents", async () => {
       const sourceCanvasId = await createCanvas(syncDb, USER_A, "source-canvas")
       const targetCanvasId = await createCanvas(syncDb, USER_A, "target-canvas")

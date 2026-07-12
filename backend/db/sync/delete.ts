@@ -1,5 +1,5 @@
 import { sql } from "../client"
-import { syncAutumnResourcesAfterDelete } from "../../billing/resourceUsage"
+import { reconcileAutumnResourcesAfterMutation } from "../../billing/resourceUsage"
 import { addStorageDelta } from "../../billing/storageUsage"
 import { estimateCanvasStorage, estimateTagStorage, estimateThoughtStorage, estimateTileStorage } from "../../billing/storageEstimate"
 import type { Canvas, Tag, Thought, Tile } from "../../types"
@@ -36,7 +36,7 @@ export async function deleteEntity(userId: string, entityType: SyncEntityType, s
       : childTiles.reduce((total, tile) => total + estimateTileStorage(tile), 0)
         + childThoughts.reduce((total, thought) => total + estimateThoughtStorage(thought), 0)
     await addStorageDelta(userId, -(estimateCanvasStorage(canvas) + contentDelta))
-    await syncAutumnResourcesAfterDelete(userId, ["canvases", "tiles", "thoughts"])
+    await reconcileAutumnResourcesAfterMutation(userId, ["canvases", "tiles", "thoughts"])
     return canvas
   }
   if (entityType === "tile") {
@@ -48,7 +48,7 @@ export async function deleteEntity(userId: string, entityType: SyncEntityType, s
       const contentDelta = thoughts.reduce((total, thought) => total + estimateThoughtStorage(thought), 0)
       await addStorageDelta(userId, -(estimateTileStorage(tile) + contentDelta))
     }
-    await syncAutumnResourcesAfterDelete(userId, ["tiles", "thoughts"])
+    await reconcileAutumnResourcesAfterMutation(userId, ["tiles", "thoughts"])
     return tile ?? null
   }
   if (entityType === "thought") {
@@ -57,7 +57,7 @@ export async function deleteEntity(userId: string, entityType: SyncEntityType, s
     if (thought && (thought as Thought & { deleted_at?: string | null }).deleted_at === null) {
       await addStorageDelta(userId, -estimateThoughtStorage(thought))
     }
-    await syncAutumnResourcesAfterDelete(userId, ["thoughts"])
+    await reconcileAutumnResourcesAfterMutation(userId, ["thoughts"])
     return thought ?? null
   }
   const [tag] = await sql<Tag[]>`SELECT * FROM tags WHERE id = ${serverId} AND user_id = ${userId}`

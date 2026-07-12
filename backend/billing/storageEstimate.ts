@@ -11,6 +11,8 @@ function textBytes(value: string) {
   return textEncoder.encode(value).byteLength
 }
 
+// This is a billing heuristic, not a measured row or file size.
+// We intentionally use fixed base bytes plus UTF-8 text length so the estimate stays stable and cheap to recompute.
 export function estimateCanvasStorage(canvas: Pick<Canvas, "name">) {
   return CANVAS_BASE_BYTES + textBytes(canvas.name)
 }

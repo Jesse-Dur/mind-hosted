@@ -47,6 +47,14 @@ export type AutumnCustomerResponse = {
   balances?: Record<string, AutumnCustomerBalance>
 }
 
+export type AutumnCustomerEligibility = {
+  attachAction?: string
+  attach_action?: string
+  status?: string
+  trialAvailable?: boolean
+  trial_available?: boolean
+}
+
 export type AutumnPlanPriceDisplay = {
   primaryText?: string
   primary_text?: string
@@ -77,11 +85,41 @@ export type AutumnPlanItem = {
 export type AutumnPlanResponse = {
   id?: string
   name?: string | null
+  description?: string | null
+  customerEligibility?: AutumnCustomerEligibility | null
+  customer_eligibility?: AutumnCustomerEligibility | null
   price?: AutumnPlanPrice | null
   items?: AutumnPlanItem[]
 }
 
+export type AutumnPlansListResponse = {
+  list?: AutumnPlanResponse[]
+}
+
+export type AutumnBillingActionResponse = {
+  customer_id?: string
+  customerId?: string
+  payment_url?: string | null
+  paymentUrl?: string | null
+  url?: string | null
+}
+
 type AutumnRequestBody = Record<string, unknown>
+
+type AutumnRequestOptions = {
+  failOpen: boolean
+}
+
+export class AutumnApiError extends Error {
+  constructor(
+    readonly path: string,
+    readonly status: number | null,
+    message: string,
+  ) {
+    super(message)
+    this.name = "AutumnApiError"
+  }
+}
 
 function autumnSecretKey() {
   return process.env.AUTUMN_SECRET_KEY ?? null
@@ -103,12 +141,16 @@ function baseUrl() {
   return (process.env.AUTUMN_API_BASE ?? DEFAULT_AUTUMN_API_BASE).replace(/\/$/, "")
 }
 
-async function autumnRequest<T>(path: string, body: AutumnRequestBody): Promise<T | null> {
+async function autumnRequest<T>(path: string, body: AutumnRequestBody, options: AutumnRequestOptions = { failOpen: true }): Promise<T | null> {
   if (isAutumnDisabled()) return null
   const secretKey = autumnSecretKey()
   if (!secretKey) {
-    if (process.env.NODE_ENV !== "test") console.warn("[autumn] AUTUMN_SECRET_KEY is not set; allowing access without billing checks")
-    return null
+    const message = "[autumn] AUTUMN_SECRET_KEY is not set"
+    if (options.failOpen) {
+      if (process.env.NODE_ENV !== "test") console.warn(`${message}; allowing access without billing checks`)
+      return null
+    }
+    throw new AutumnApiError(path, null, message)
   }
 
   try {
@@ -126,21 +168,25 @@ async function autumnRequest<T>(path: string, body: AutumnRequestBody): Promise<
     if (!response.ok) {
       const detail = await response.text().catch(() => "")
       const message = `[autumn] ${path} failed with ${response.status}${detail ? `: ${detail}` : ""}`
-      if (response.status >= 500 && shouldFailOpen()) {
+      if (response.status >= 500 && options.failOpen && shouldFailOpen()) {
         console.warn(`${message}; failing open`)
         return null
       }
-      throw new Error(message)
+      throw new AutumnApiError(path, response.status, message)
     }
 
     return response.json() as Promise<T>
   } catch (error) {
-    if (shouldFailOpen()) {
+    // Provider rejections are configuration or request errors, not availability
+    // failures. In particular, a Stripe 4xx must never look like a successful plan change.
+    if (error instanceof AutumnApiError) throw error
+    if (options.failOpen && shouldFailOpen()) {
       const message = error instanceof Error ? error.message : String(error)
       console.warn(`[autumn] ${path} unavailable; failing open: ${message}`)
       return null
     }
-    throw error
+    const message = error instanceof Error ? error.message : String(error)
+    throw new AutumnApiError(path, null, `[autumn] ${path} unavailable: ${message}`)
   }
 }
 
@@ -163,6 +209,20 @@ export async function getAutumnPlan(planId: string) {
   })
 }
 
+export async function listAutumnPlans(customerId: string) {
+  return autumnRequest<AutumnPlansListResponse>("plans.list", {
+    customer_id: customerId,
+  })
+}
+
+export async function attachAutumnPlan(customerId: string, planId: string) {
+  return autumnRequest<AutumnBillingActionResponse>("billing.attach", {
+    customer_id: customerId,
+    plan_id: planId,
+    redirect_mode: "always",
+  }, { failOpen: false })
+}
+
 export async function checkAutumnFeature(customerId: string, featureId: AutumnFeature, options: { sendEvent?: boolean; requiredBalance?: number } = {}) {
   await getOrCreateAutumnCustomer(customerId)
   return autumnRequest<AutumnCheckResponse>("balances.check", {
@@ -173,8 +233,8 @@ export async function checkAutumnFeature(customerId: string, featureId: AutumnFe
   })
 }
 
-export async function updateAutumnUsage(customerId: string, featureId: AutumnFeature, usage: number) {
-  await getOrCreateAutumnCustomer(customerId)
+export async function updateAutumnUsage(customerId: string, featureId: AutumnFeature, usage: number, options: { ensureCustomer?: boolean } = {}) {
+  if (options.ensureCustomer !== false) await getOrCreateAutumnCustomer(customerId)
   // Non-consumable resources are set directly so Autumn mirrors our active DB counts.
   return autumnRequest("balances.update", {
     customer_id: customerId,

@@ -1,3 +1,6 @@
+// What is the user's current billing usage?
+// This file fetches live usage data and assembles the API payload; it does not decide billing policy.
+
 import {
   getAutumnCustomer,
   getOrCreateAutumnCustomer,
@@ -7,14 +10,12 @@ import {
   type AutumnPlanItem,
   type AutumnPlanResponse,
 } from "./autumnClient"
+import { emptyBillingOverageStatus, evaluateResourceThresholds, type BillingOverageStatus } from "./resourceThresholds"
 import { autumnFeatures, type AutumnFeature } from "./features"
+import { displayText, featurePriceText, normalizeMoneyText, planPriceText, rawPriceText } from "./priceDisplay"
 import { activeEntityCounts, getStorageUsage, syncStorageUsageToAutumn } from "./storageUsage"
-
-const RESOURCE_FEATURES = new Set<AutumnFeature>([
-  autumnFeatures.canvases,
-  autumnFeatures.tiles,
-  autumnFeatures.thoughts,
-])
+import { activePlanIds } from "./subscriptionStatus"
+import { reconcileAutumnResourceUsage } from "./resourceUsage"
 
 type LocalUsage = {
   counts: Awaited<ReturnType<typeof activeEntityCounts>>
@@ -39,22 +40,6 @@ export type BillingUsagePlan = {
   cost: string
 }
 
-export type BillingOverageItem = {
-  id: "canvases" | "tiles" | "thoughts"
-  label: string
-  used: number
-  limit: number
-  over_by: number
-  unit: string
-}
-
-export type BillingOverageStatus = {
-  is_over_limit: boolean
-  editing_frozen: boolean
-  overages: BillingOverageItem[]
-  suspended_creation: BillingOverageItem["id"][]
-}
-
 export type BillingUsageStatus = {
   customer_id: string
   plans: BillingUsagePlan[]
@@ -63,6 +48,7 @@ export type BillingUsageStatus = {
 }
 
 type BillingUsageStatusOptions = {
+  syncResources?: boolean
   syncStorage?: boolean
 }
 
@@ -75,21 +61,8 @@ const FEATURE_LABELS = {
   [autumnFeatures.transcriptionSeconds]: { label: "Transcription", unit: "seconds" },
 } as const satisfies Record<AutumnFeature, { label: string; unit: string }>
 
-function emptyOverage(): BillingOverageStatus {
-  return {
-    is_over_limit: false,
-    editing_frozen: false,
-    overages: [],
-    suspended_creation: [],
-  }
-}
-
 function resetAtIso(value: number | null | undefined) {
   return typeof value === "number" ? new Date(value).toISOString() : null
-}
-
-function planId(planRef: { planId?: string; plan_id?: string }) {
-  return planRef.planId ?? planRef.plan_id ?? null
 }
 
 function featureId(item: AutumnPlanItem) {
@@ -100,29 +73,34 @@ function isTrackedFeature(value: string | null): value is AutumnFeature {
   return Object.values(autumnFeatures).some((feature) => feature === value)
 }
 
-function displayText(display: { primaryText?: string; primary_text?: string; secondaryText?: string; secondary_text?: string } | null | undefined) {
-  const primary = display?.primaryText ?? display?.primary_text ?? null
-  const secondary = display?.secondaryText ?? display?.secondary_text ?? null
-  return [primary, secondary].filter((part): part is string => typeof part === "string" && part.length > 0).join(" ")
+function hasPaygPricing(plan: AutumnPlanResponse) {
+  return (plan.items ?? []).some((item) => item.price?.amount !== undefined)
 }
 
 function planCost(plan: AutumnPlanResponse) {
   const text = displayText(plan.price?.display)
-  if (text) return text
+  if (text) return normalizeMoneyText(text)
   if (typeof plan.price?.amount === "number") {
-    return `$${plan.price.amount}${plan.price.interval ? ` / ${plan.price.interval}` : ""}`
+    return planPriceText(plan.price.amount, plan.price.interval)
   }
+  if (hasPaygPricing(plan)) return "Billed Monthly"
   return "Free"
 }
 
 function itemCost(item: AutumnPlanItem) {
+  const feature = featureId(item)
+  if (isTrackedFeature(feature)) {
+    const price = featurePriceText(feature, item)
+    if (price) return price
+  }
+
   const text = displayText(item.display) || displayText(item.price?.display)
-  if (text) return text
+  if (text) return normalizeMoneyText(text)
 
   if (typeof item.price?.amount !== "number") return null
+
   const units = item.price.billingUnits ?? item.price.billing_units ?? 1
-  const interval = item.price.interval ? ` / ${item.price.interval}` : ""
-  return `$${item.price.amount} per ${units}${interval}`
+  return rawPriceText(item.price.amount, item.price.interval, units)
 }
 
 function localUsed(feature: AutumnFeature, localUsage: LocalUsage) {
@@ -169,41 +147,19 @@ function buildFeature(item: AutumnPlanItem, balance: AutumnCustomerBalance | und
   }
 }
 
-function activePlanIds(customer: Awaited<ReturnType<typeof getAutumnCustomer>>) {
-  const refs = [...(customer?.subscriptions ?? []), ...(customer?.purchases ?? [])]
-  const activeIds = refs
-    .filter((ref) => {
-      const status = ref.status?.toLowerCase()
-      return status === undefined || status === "active" || status === "past_due"
-    })
-    .map(planId)
-    .filter((id): id is string => typeof id === "string" && id.length > 0)
-  return [...new Set(activeIds)]
-}
-
-function buildOverage(features: BillingUsageFeature[]): BillingOverageStatus {
-  const overages = features
-    .filter((feature) => RESOURCE_FEATURES.has(feature.id) && feature.limit !== null && feature.used > feature.limit)
-    .map((feature) => ({
-      id: feature.id as BillingOverageItem["id"],
-      label: feature.label,
-      used: feature.used,
-      limit: feature.limit!,
-      over_by: feature.used - feature.limit!,
-      unit: feature.unit,
-    }))
-
-  if (overages.length === 0) return emptyOverage()
-
+function buildUsageOverageStatus(features: BillingUsageFeature[]): BillingOverageStatus {
+  const threshold = evaluateResourceThresholds(features)
+  const suspended_creation = [...threshold.at_limit_resources, ...threshold.over_limit_resources].map((item) => item.id)
   return {
-    is_over_limit: true,
-    editing_frozen: true,
-    overages,
-    suspended_creation: overages.map((overage) => overage.id),
+    is_over_limit: threshold.should_freeze_editing,
+    editing_frozen: threshold.should_freeze_editing,
+    overages: threshold.over_limit_resources,
+    suspended_creation,
   }
 }
 
 export async function getBillingUsageStatus(userId: string, options: BillingUsageStatusOptions = {}): Promise<BillingUsageStatus> {
+  const syncResources = options.syncResources ?? true
   const syncStorage = options.syncStorage ?? true
   const [counts, storageUsage] = await Promise.all([
     activeEntityCounts(userId),
@@ -219,11 +175,17 @@ export async function getBillingUsageStatus(userId: string, options: BillingUsag
       customer_id: userId,
       plans: [],
       features: [],
-      overage: emptyOverage(),
+      overage: emptyBillingOverageStatus(),
     }
   }
 
   await getOrCreateAutumnCustomer(userId)
+  if (syncResources) {
+    await reconcileAutumnResourceUsage(userId, undefined, { counts, ensureCustomer: false }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn(`[autumn] failed to reconcile resource usage during billing status load: ${message}`)
+    })
+  }
   const customer = await getAutumnCustomer(userId)
   const plans = await Promise.all(activePlanIds(customer).map((id) => getAutumnPlan(id)))
   const localUsage = { counts, storageUsage }
@@ -245,10 +207,10 @@ export async function getBillingUsageStatus(userId: string, options: BillingUsag
     customer_id: userId,
     plans: plans.filter((plan): plan is AutumnPlanResponse => plan !== null).map((plan) => ({
       id: plan.id ?? "unknown",
-      name: plan.name ?? plan.id ?? "Current plan",
+      name: hasPaygPricing(plan) ? "Pay as you go" : (plan.name ?? plan.id ?? "Current plan"),
       cost: planCost(plan),
     })),
     features,
-    overage: buildOverage(features),
+    overage: buildUsageOverageStatus(features),
   }
 }

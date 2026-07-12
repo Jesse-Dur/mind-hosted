@@ -123,3 +123,31 @@ Open `http://localhost:5173` in your browser.
 - Built with [Amazon Q Developer](https://aws.amazon.com/q/developer/)
 
 Peace.
+
+### Billing Config
+Autumn is the source of truth for tiers, daily limits, paid plans, PAYG, and user-specific overrides.
+
+#### Environment
+- `AUTUMN_SECRET_KEY`: Autumn secret key.
+- `AUTUMN_FREE_PLAN_ID`: optional free plan to auto-enable when a customer is first created.
+- `AUTUMN_API_BASE`: optional, defaults to `https://api.useautumn.com`.
+- `AUTUMN_FAIL_OPEN`: defaults to fail-open. Set to `false` to fail closed when Autumn is unavailable.
+- `AUTUMN_DISABLED`: set to `true` in automated tests so test users are not created in Autumn.
+
+#### Usage model
+- AI processing is consumed atomically with Autumn `balances.check` and `send_event`.
+- Transcription is consumed as `transcription_seconds`; current server-side duration is estimated from uploaded audio size.
+- Storage is tracked locally with an explicit byte estimate, not measured row or file size, and lazily synced to Autumn as rounded-up megabytes (`1 unit = 1 MB`).
+- PostgreSQL is authoritative for active canvas, tile, and thought counts; Autumn is authoritative for plans and limits.
+- Resource counts are reconciled to Autumn as absolute values after count-changing mutations and whenever billing usage is loaded. Ordinary edits do not trigger reconciliation.
+- At a resource limit, only new creation of that resource is blocked. Above any resource limit, all non-delete operations are frozen until cleanup brings the account back to the limit.
+- Billing access checks may fail open on network or Autumn 5xx failures when configured, but provider 4xx responses and plan mutations never report false success.
+- Soft-deleted tiles and thoughts do not count.
+- Hourly limits are intentionally not implemented here; model daily/monthly/PAYG limits in Autumn.
+- Autumn `past_due` subscriptions are treated as active access here while payment retry is in progress. If you want access blocked during `past_due`, enable that policy in Autumn first.
+
+#### Usage endpoint
+`GET /api/billing/usage` returns local active counts, local estimated storage usage, and Autumn allowance metadata. Loading it reconciles active resource counts and the current estimated storage MB to Autumn.
+
+#### Testing
+Automated tests must not call the real Autumn API. The backend test script sets `AUTUMN_DISABLED=true`, so billing checks fail open and storage usage remains local. Test Autumn itself only in an explicit integration test suite against a sandbox account with cleanup.

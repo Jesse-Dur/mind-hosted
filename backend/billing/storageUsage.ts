@@ -59,6 +59,7 @@ export async function addStorageDelta(userId: string, deltaBytes: number) {
 
 export async function syncStorageUsageToAutumn(userId: string) {
   const usage = await getStorageUsage(userId)
+  // Autumn stores this usage in MB, so we round the local heuristic up at the boundary instead of tracking exact bytes there.
   await updateAutumnUsage(userId, autumnFeatures.storage, usage.storageMegabytes)
   const [row] = await sql<UsageRow[]>`
     UPDATE user_usage
@@ -78,6 +79,7 @@ export async function recalculateUserStorage(userId: string) {
     sql<Thought[]>`SELECT * FROM thoughts WHERE user_id = ${userId} AND deleted_at IS NULL`,
     sql<Tag[]>`SELECT * FROM tags WHERE user_id = ${userId}`,
   ])
+  // Rebuild the local byte total from the same heuristic used by incremental updates so billing stays internally consistent.
   const storageBytes = [
     ...canvases.map(estimateCanvasStorage),
     ...tiles.map(estimateTileStorage),
