@@ -1,6 +1,7 @@
 import { createApi } from "../api/client"
 
-type GetToken = () => Promise<string | null>
+type GetTokenOptions = { skipCache?: boolean }
+type GetToken = (options?: GetTokenOptions) => Promise<string | null>
 
 let getToken: GetToken = () => Promise.resolve(null)
 

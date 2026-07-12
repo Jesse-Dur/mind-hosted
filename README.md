@@ -28,6 +28,7 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 - **History** — full audit log of every action with expand view showing what you said and the actions the LLM took based on that
 - **Sidebar** — Tags, History, and Settings panels
 - **Auth** — secure accounts via Clerk, your data is scoped to you
+- **Offline sync** — canvases, tiles, thoughts, and tags are cached locally and local edits are queued when the connection is unreliable
 
 ---
 
@@ -40,8 +41,39 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 | Database | Neon (Postgres) |
 | Frontend | React + TypeScript + Vite (hosted on Vercel) |
 | State | Zustand |
+| Offline storage | IndexedDB via Dexie |
 | AI | Groq (`llama-3.1-8b-instant`) |
 | Auth | Clerk |
+
+---
+
+## Offline sync model
+
+Mind uses a local-first sync engine for app data. Zustand is still the fast in-memory UI store, while IndexedDB stores durable cached entities and a mutation outbox. Dexie is the small wrapper used to keep the IndexedDB code transactional and readable.
+
+The sync implementation is split by responsibility: frontend enqueue/flush/pull/runtime modules live under `frontend/src/sync`, while backend apply/upsert/delete/events/snapshot/pull modules live under `backend/db/sync`. The public facades remain `frontend/src/sync/engine.ts` and `backend/db/sync.ts`.
+
+The sync engine prioritises the active canvas:
+
+- On boot, cached canvases, tiles, thoughts, and tags can render before network requests finish.
+- Server refreshes use `GET /api/sync/snapshot`, scoped to the active canvas where possible, so current-state repair does not need the old entity CRUD routes.
+- The active canvas is pulled and reconciled before inactive canvases.
+- Background canvas hydration is sequential and stops when the active canvas changes, so the newly selected tab gets priority.
+- Local creates, edits, moves, resizes, reorders, and deletes are written to the outbox and flushed later if the connection drops.
+- Remote tile and thought upserts animate only when a pull or snapshot changes this device's cached payload; local optimistic writes stay immediate.
+- Creates use `client_id` idempotency keys so a retried request cannot create duplicates after packet loss.
+- Normal writes use `POST /api/sync/push`; incremental multi-device updates use `GET /api/sync/pull`.
+
+The multi-device model is sequential rather than realtime collaborative editing. A device pushes revisioned changes to the server, and another device pulls those revisions later. For v1, conflict handling is intentionally simple: pending local changes are preserved over stale server lists, and same-field conflicts resolve by the latest accepted server operation.
+
+AI processing still requires network access to Groq. AI writes are restricted to thoughts and go through the same backend sync mutation path internally, so AI-created, updated, deleted, and moved thoughts emit `sync_events` and are picked up by normal pull flows.
+
+The public app data API is intentionally narrow:
+
+- `POST /api/sync/push` for browser outbox writes.
+- `GET /api/sync/pull` for revisioned incremental updates.
+- `GET /api/sync/snapshot` for boot, tab switches, background canvas hydration, and cache repair.
+- Feature-specific routes remain for AI, voice transcription, history, and Spotlight's past-item views.
 
 ---
 
@@ -91,3 +123,31 @@ Open `http://localhost:5173` in your browser.
 - Built with [Amazon Q Developer](https://aws.amazon.com/q/developer/) then Codex. (and my brain too!)
 
 Peace.
+
+### Billing Config
+Autumn is the source of truth for tiers, daily limits, paid plans, PAYG, and user-specific overrides.
+
+#### Environment
+- `AUTUMN_SECRET_KEY`: Autumn secret key.
+- `AUTUMN_FREE_PLAN_ID`: optional free plan to auto-enable when a customer is first created.
+- `AUTUMN_API_BASE`: optional, defaults to `https://api.useautumn.com`.
+- `AUTUMN_FAIL_OPEN`: defaults to fail-open. Set to `false` to fail closed when Autumn is unavailable.
+- `AUTUMN_DISABLED`: set to `true` in automated tests so test users are not created in Autumn.
+
+#### Usage model
+- AI processing is consumed atomically with Autumn `balances.check` and `send_event`.
+- Transcription is consumed as `transcription_seconds`; current server-side duration is estimated from uploaded audio size.
+- Storage is tracked locally with an explicit byte estimate, not measured row or file size, and lazily synced to Autumn as rounded-up megabytes (`1 unit = 1 MB`).
+- PostgreSQL is authoritative for active canvas, tile, and thought counts; Autumn is authoritative for plans and limits.
+- Resource counts are reconciled to Autumn as absolute values after count-changing mutations and whenever billing usage is loaded. Ordinary edits do not trigger reconciliation.
+- At a resource limit, only new creation of that resource is blocked. Above any resource limit, all non-delete operations are frozen until cleanup brings the account back to the limit.
+- Billing access checks may fail open on network or Autumn 5xx failures when configured, but provider 4xx responses and plan mutations never report false success.
+- Soft-deleted tiles and thoughts do not count.
+- Hourly limits are intentionally not implemented here; model daily/monthly/PAYG limits in Autumn.
+- Autumn `past_due` subscriptions are treated as active access here while payment retry is in progress. If you want access blocked during `past_due`, enable that policy in Autumn first.
+
+#### Usage endpoint
+`GET /api/billing/usage` returns local active counts, local estimated storage usage, and Autumn allowance metadata. Loading it reconciles active resource counts and the current estimated storage MB to Autumn.
+
+#### Testing
+Automated tests must not call the real Autumn API. The backend test script sets `AUTUMN_DISABLED=true`, so billing checks fail open and storage usage remains local. Test Autumn itself only in an explicit integration test suite against a sandbox account with cleanup.

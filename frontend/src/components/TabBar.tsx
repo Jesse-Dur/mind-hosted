@@ -6,9 +6,10 @@ import { TabBarOutline } from "./TabBarOutline"
 import { Tooltip } from "./Tooltip"
 import { getTabShortcutAction, newCanvasShortcutLabel, tabShortcutLabel } from "../utils/tabShortcuts"
 import { getCrossCanvasDrag, moveCrossCanvasDrag, setCrossCanvasDragEnteredCanvas, subscribeCrossCanvasDrag, subscribeCrossCanvasDragPointer } from "../utils/crossCanvasDrag"
+import { createCrossCanvasTabHoverController, type CrossCanvasTabHoverController } from "../utils/crossCanvasTabHover"
 import { canvasIdentityKey } from "../utils/canvasIdentity"
 import type { Canvas } from "../types"
-import type { CanvasDeleteOptions } from "../api/client"
+import type { CanvasDeleteOptions } from "../store/types"
 
 const BAR_H = 14
 const JUT_H = 28
@@ -70,13 +71,34 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
   }, [])
   const scrollRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
   const renameRef = useRef<HTMLInputElement>(null)
   const dragRef = useRef<DragState | null>(null)
   const dragCleanupRef = useRef<(() => void) | null>(null)
   const displayCanvasesRef = useRef<Canvas[]>([])
   const tabRefs = useRef(new Map<number, HTMLDivElement>())
-  const crossDragHoverIdRef = useRef<number | null>(null)
-  const crossDragTimerRef = useRef<number | null>(null)
+  const crossDragHoverControllerRef = useRef<CrossCanvasTabHoverController | null>(null)
+
+  if (!crossDragHoverControllerRef.current) {
+    crossDragHoverControllerRef.current = createCrossCanvasTabHoverController({
+      dwellMs: CROSS_CANVAS_TAB_DWELL_MS,
+      scheduler: {
+        setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
+        clearTimeout: (handle) => window.clearTimeout(handle),
+      },
+      onHoverChange: setCrossDragHoverId,
+      onDwell: (canvasId) => {
+        const session = getCrossCanvasDrag()
+        if (!session || useStore.getState().activeCanvasId === canvasId || findCrossDragTab(session.clientX, session.clientY) !== canvasId) {
+          crossDragHoverControllerRef.current?.clearHover()
+          return
+        }
+        setCrossCanvasDragEnteredCanvas(canvasId)
+        setActiveCanvas(canvasId)
+        crossDragHoverControllerRef.current?.clearHover()
+      },
+    })
+  }
 
   const sorted = [...canvases].sort((a, b) => {
     if (a.is_favourite !== b.is_favourite) return a.is_favourite ? -1 : 1
@@ -106,9 +128,13 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
 
   useEffect(() => {
     if (!contextMenu) return
-    const close = () => setContextMenu(null)
-    window.addEventListener("click", close)
-    return () => window.removeEventListener("click", close)
+    function closeOnOutsidePress(event: PointerEvent) {
+      if (event.target instanceof Node && contextMenuRef.current?.contains(event.target)) return
+      // Close before a drag can raise the canvas above the tab bar's stacking context.
+      setContextMenu(null)
+    }
+    window.addEventListener("pointerdown", closeOnOutsidePress, true)
+    return () => window.removeEventListener("pointerdown", closeOnOutsidePress, true)
   }, [contextMenu])
 
   useEffect(() => {
@@ -165,14 +191,7 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
   }
 
   function clearCrossDragHover() {
-    if (crossDragTimerRef.current !== null) {
-      window.clearTimeout(crossDragTimerRef.current)
-      crossDragTimerRef.current = null
-    }
-    if (crossDragHoverIdRef.current !== null) {
-      crossDragHoverIdRef.current = null
-      setCrossDragHoverId(null)
-    }
+    crossDragHoverControllerRef.current?.clearHover()
   }
 
   function findCrossDragTab(clientX: number, clientY: number) {
@@ -188,17 +207,7 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
   }
 
   function armCrossDragHover(canvasId: number) {
-    if (crossDragHoverIdRef.current === canvasId) return
-    clearCrossDragHover()
-    crossDragHoverIdRef.current = canvasId
-    setCrossDragHoverId(canvasId)
-    crossDragTimerRef.current = window.setTimeout(() => {
-      const session = getCrossCanvasDrag()
-      if (!session || crossDragHoverIdRef.current !== canvasId || useStore.getState().activeCanvasId === canvasId) return
-      setCrossCanvasDragEnteredCanvas(canvasId)
-      setActiveCanvas(canvasId)
-      clearCrossDragHover()
-    }, CROSS_CANVAS_TAB_DWELL_MS)
+    crossDragHoverControllerRef.current?.requestHover(canvasId)
   }
 
   function updateCrossDragHover(clientX: number, clientY: number) {
@@ -211,7 +220,9 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
   }
 
   function handleNewTab() {
-    const { canvas, persisted } = addCanvas("New Canvas")
+    const creation = addCanvas("New Canvas")
+    if (!creation) return
+    const { canvas, persisted } = creation
     const canvasKey = canvasIdentityKey(canvas)
     setNewTabKey(canvasKey)
     setTimeout(() => setNewTabKey((current) => current === canvasKey ? null : current), 350)
@@ -246,6 +257,13 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
   function handleRemove(canvas: Canvas) {
     setContextMenu(null)
     if (canvases.length === 1) return
+    const state = useStore.getState()
+    const canvasTiles = state.activeCanvasId === canvas.id ? state.tiles : state.tileCache.get(canvas.id)
+    if (canvasTiles?.length === 0) {
+      // A known-empty canvas has no contents that need a deletion choice.
+      void removeCanvas(canvas.id, { mode: "deleteContents" })
+      return
+    }
     setDeleteCanvas(canvas)
   }
 
@@ -645,7 +663,7 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
         </div>
 
         {contextMenu && (
-          <div onClick={(e) => e.stopPropagation()} style={{ position: "fixed", top: contextMenu.y, left: contextMenu.x, background: "#fff", border: "1px solid #e0e0e0", borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.1)", zIndex: 200, minWidth: 160, padding: 4 }}>
+          <div ref={contextMenuRef} onClick={(e) => e.stopPropagation()} style={{ position: "fixed", top: contextMenu.y, left: contextMenu.x, background: "#fff", border: "1px solid #e0e0e0", borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.1)", zIndex: 200, minWidth: 160, padding: 4 }}>
             {[
               { label: contextMenu.canvas.is_favourite ? "Unfavourite" : "★ Favourite", action: () => handleFavourite(contextMenu.canvas) },
               { label: "Rename", action: () => startRename(contextMenu.canvas) },
@@ -659,12 +677,12 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
           </div>
         )}
         {deleteCanvas && (
-            <CanvasDeleteDialog
-              canvas={deleteCanvas}
-              canvases={canvases}
-              onCancel={() => setDeleteCanvas(null)}
-              onConfirm={confirmRemove}
-            />
+          <CanvasDeleteDialog
+            canvas={deleteCanvas}
+            canvases={canvases}
+            onCancel={() => setDeleteCanvas(null)}
+            onConfirm={confirmRemove}
+          />
         )}
       </div>
     </>

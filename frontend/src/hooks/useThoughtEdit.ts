@@ -5,7 +5,6 @@ import type { Thought } from "../types"
 export function useThoughtEdit(thought: Thought) {
   const { updateThoughtContent } = useStore()
   const [editing, setEditing] = useState(false)
-  const [saving, setSaving] = useState(false)
   const [content, setContent] = useState(thought.content)
   const intentToEdit = useRef(false)
 
@@ -34,14 +33,9 @@ export function useThoughtEdit(thought: Thought) {
     setContent(trimmed || thought.content)
     setEditing(false)
     if (trimmed && trimmed !== thought.content) {
-      setSaving(true)
-      const start = Date.now()
-      updateThoughtContent(thought.id, trimmed).finally(() => {
-        const elapsed = Date.now() - start
-        setTimeout(() => setSaving(false), Math.max(0, 500 - elapsed))
-      })
+      void updateThoughtContent(thought.id, trimmed)
     }
   }
 
-  return { editing, saving, content, saveEditing, startEditing, setIntent, cancelEditing }
+  return { editing, content, saveEditing, startEditing, setIntent, cancelEditing }
 }

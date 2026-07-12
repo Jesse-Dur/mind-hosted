@@ -1,10 +1,13 @@
+// This file defines the app store contract and the slice interfaces that compose it.
 import type { StateCreator } from "zustand"
-import type { Canvas, Tag, Thought, Tile } from "../types"
-import type { CanvasDeleteOptions } from "../api/client"
+import type { BillingCreationLimitFeature, BillingLimitFeature, BillingLimitNotice, BillingOverage, BillingPlanImpact, BillingPlanSwitchResult, BillingPlans, BillingUsage, Canvas, HistoryEvent, Tag, Thought, Tile } from "../types"
 
 export type AiStatus = "idle" | "processing" | "queued" | "limited"
 export type CanvasOrderUpdate = Pick<Canvas, "id" | "sort_order" | "is_favourite">
 export type AiPriority = "low" | "medium" | "high"
+export type CanvasDeleteOptions =
+  | { mode: "deleteContents" }
+  | { mode: "moveContents"; targetCanvasId: number }
 
 export type CanvasCreation = {
   canvas: Canvas
@@ -23,6 +26,11 @@ export interface UiSlice {
   sidebarOpen: boolean
   canvasHeight: number
   highlightedId: { type: "tile" | "thought"; id: number } | null
+  recentLocalTileChangeIds: Map<number, number>
+  remoteChangedTileIds: Set<number>
+  remoteChangedThoughtIds: Set<number>
+  markLocalTileChange: (tileId: number) => void
+  markRemoteChanges: (tileIds: number[], thoughtIds: number[]) => void
   setHighlight: (type: "tile" | "thought", id: number) => void
   setSpotlightOpen: (open: boolean) => void
   setSidebarOpen: (open: boolean) => void
@@ -35,7 +43,7 @@ export interface CanvasSlice {
   activeCanvasId: number | null
   loadCanvases: () => Promise<number | null>
   setActiveCanvas: (id: number) => void
-  addCanvas: (name: string) => CanvasCreation
+  addCanvas: (name: string) => CanvasCreation | null
   updateCanvas: (id: number, data: Partial<Pick<Canvas, "name" | "sort_order" | "is_favourite">>) => Promise<void>
   removeCanvas: (id: number, options: CanvasDeleteOptions) => Promise<void>
   reorderCanvases: (updates: CanvasOrderUpdate[]) => void
@@ -52,8 +60,6 @@ export interface CanvasDataSlice {
 }
 
 export interface TileSlice {
-  inFlightTileMoves: Set<number>
-  newestTileId: number | null
   addTile: (tile: Omit<Tile, "id" | "created_at">) => Promise<void>
   moveTileLocal: (id: number, data: Partial<Tile>, fallbackTile?: Tile) => void
   updateTile: (id: number, data: Partial<Tile>) => Promise<void | Tile>
@@ -62,9 +68,7 @@ export interface TileSlice {
 }
 
 export interface ThoughtSlice {
-  newThoughtIds: Set<number>
   thoughtStableKeys: Map<number, number>
-  inFlightMoves: Set<number>
   addThought: (thought: Omit<Thought, "id" | "created_at">) => Promise<void>
   addThoughtToTile: (tileId: number, content: string, tags: string[]) => Promise<void>
   adoptTemporaryTileThoughts: (temporaryTileId: number, savedTileId: number) => Promise<void>
@@ -83,6 +87,19 @@ export interface TagSlice {
   removeTag: (id: number) => Promise<void>
 }
 
+export interface HistorySlice {
+  historyEvents: HistoryEvent[]
+  historyNextCursor: string | null
+  historyHasMore: boolean
+  historyLoaded: boolean
+  historyRefreshing: boolean
+  historyLoadingMore: boolean
+  newHistoryIds: Set<number>
+  hydrateHistoryCache: () => Promise<void>
+  refreshHistory: () => Promise<void>
+  loadMoreHistory: () => Promise<void>
+}
+
 export interface AiSlice {
   aiStatus: AiStatus
   loadAiStatus: () => Promise<void>
@@ -91,12 +108,67 @@ export interface AiSlice {
   processAiInput: (input: string, priority?: AiPriority) => void
 }
 
+export interface SyncSlice {
+  syncPendingCount: number
+  startSyncRuntime: () => Promise<void>
+  syncNow: () => Promise<void>
+}
+
+export interface BillingSlice {
+  billingUsage: BillingUsage | null
+  billingPlans: BillingPlans | null
+  billingUsageLoading: boolean
+  billingPlansLoading: boolean
+  billingUsageError: string | null
+  billingPlansError: string | null
+  billingChangedFeatureIds: Set<BillingUsage["features"][number]["id"]>
+  billingOverageModalOpen: boolean
+  billingOverageDismissReady: boolean
+  billingOverageDismissSeconds: number
+  billingCreationLimitNotice: BillingLimitNotice | null
+  hydrateBillingCache: () => Promise<void>
+  preloadBillingUsage: () => Promise<BillingUsage>
+  refreshBillingUsage: () => Promise<BillingUsage>
+  preloadBillingPlans: () => Promise<BillingPlans>
+  refreshBillingPlans: () => Promise<BillingPlans>
+  previewBillingPlanImpact: (planId: string) => Promise<BillingPlanImpact>
+  switchBillingPlan: (planId: string, confirmedOverLimit?: boolean) => Promise<BillingPlanSwitchResult>
+  openBillingOverageModal: (options?: { immediateDismiss?: boolean }) => void
+  closeBillingOverageModal: () => void
+  setBillingOverageDismissState: (state: { ready: boolean; seconds: number }) => void
+  showBillingCreationLimitNotice: (feature: BillingLimitFeature, options?: { resetAt?: string | null }) => void
+  dismissBillingCreationLimitNotice: () => void
+  canCreateBillingFeature: (feature: BillingCreationLimitFeature) => boolean
+  adjustBillingFeatureUsage: (feature: BillingCreationLimitFeature, delta: number) => void
+  assertBillingEditingAllowed: () => void
+  assertBillingCreationAllowed: (feature: BillingOverage["suspended_creation"][number]) => void
+  resetBillingState: () => void
+}
+
+export interface SessionSlice {
+  resetStore: () => void
+}
+
+export type CachedWorkspaceHydration = {
+  activeCanvasId: number | null
+  hasUsableCache: boolean
+}
+
+export interface WorkspaceRestoreSlice {
+  restoreCachedWorkspace: () => Promise<CachedWorkspaceHydration>
+}
+
 export type AppStore = UiSlice
+  & WorkspaceRestoreSlice
   & CanvasSlice
   & CanvasDataSlice
   & TileSlice
   & ThoughtSlice
   & TagSlice
+  & HistorySlice
   & AiSlice
+  & SyncSlice
+  & BillingSlice
+  & SessionSlice
 
 export type StoreSlice<Slice> = StateCreator<AppStore, [], [], Slice>

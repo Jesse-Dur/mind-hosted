@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef } from "react"
-import { useAuth } from "@clerk/clerk-react"
-import { createApi } from "../api/client"
-import type { HistoryEvent } from "../types"
+// This file owns the history list only; startup and data warmup happen in the central coordinator.
+import { useEffect, useState, useRef, useCallback } from "react"
+import { useStore } from "../store"
 
 const ACTION_LABELS: Record<string, string> = {
   "tile.create": "Created tile",
@@ -81,40 +80,45 @@ function ExpandDetail({ isAI, action, detail, visible }: { isAI: boolean; action
   )
 }
 
-export function HistoryPanel({ active, sidebarOpen }: { active: boolean; sidebarOpen: boolean }) {
-  const [events, setEvents] = useState<HistoryEvent[]>([])
-  const [loading, setLoading] = useState(false)
+export function HistoryPanel() {
   const [expanded, setExpanded] = useState<number | null>(null)
-  const { getToken } = useAuth()
+  const observer = useRef<IntersectionObserver | null>(null)
+  const {
+    historyEvents: events,
+    historyLoadingMore,
+    historyHasMore,
+    historyNextCursor,
+    loadMoreHistory,
+  } = useStore()
 
-  useEffect(() => {
-    if (active && sidebarOpen) {
-      setLoading(true)
-      createApi(getToken).history.list().then((e) => { setEvents(e); setLoading(false) })
-    }
-  }, [active, sidebarOpen, getToken])
+  const loadMoreMarker = useCallback((node: HTMLDivElement | null) => {
+    observer.current?.disconnect()
+    if (!node || historyLoadingMore || !historyHasMore || !historyNextCursor) return
+
+    observer.current = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) void loadMoreHistory()
+    }, { rootMargin: "120px 0px" })
+    observer.current.observe(node)
+  }, [historyHasMore, historyLoadingMore, historyNextCursor, loadMoreHistory])
 
   return (
     <div style={{ flex: 1, overflowY: "auto" }}>
-      <style>{`@keyframes historyIn { from { opacity:0; transform:translateY(4px) } to { opacity:1; transform:translateY(0) } }`}</style>
-      {loading && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {[1,2,3,4].map((i) => (
-            <div key={i} style={{ borderBottom: "1px solid #f5f5f5", paddingBottom: 12 }}>
-              <div style={{ height: 10, width: 80, borderRadius: 4, background: "#f0f0f0", marginBottom: 6 }} />
-              <div style={{ height: 12, width: "60%", borderRadius: 4, background: "#f5f5f5" }} />
-            </div>
-          ))}
-        </div>
-      )}
-      {!loading && events.length === 0 && <p style={{ fontSize: 12, color: "#ccc" }}>No history yet</p>}
-      {!loading && events.map((e, i) => {
+      {events.length === 0 && <p style={{ fontSize: 12, color: "#ccc" }}>No history yet</p>}
+      {events.map((e, i) => {
         const detail = (typeof e.detail === "string" ? JSON.parse(e.detail) : e.detail) as Record<string, unknown>
         const isExpanded = expanded === e.id
         const isAI = e.action === "ai.process"
+        const markerIndex = Math.max(events.length - 25, 0)
 
         return (
-          <div key={e.id} style={{ borderBottom: "1px solid #f5f5f5", padding: "8px 0", animation: `historyIn 0.25s ease ${i * 0.02}s both`, opacity: 0 }}>
+          <div
+            key={e.id}
+            ref={i === markerIndex ? loadMoreMarker : undefined}
+            style={{
+              borderBottom: "1px solid #f5f5f5",
+              padding: "8px 0",
+            }}
+          >
             <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
               <div style={{ flex: 1 }}>
                 <p style={{ fontSize: 11, color: "#bbb", marginBottom: 2 }}>{formatTime(e.created_at)}</p>

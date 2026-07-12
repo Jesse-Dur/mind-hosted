@@ -1,22 +1,40 @@
-import { useState, useEffect } from "react"
+// App.tsx owns the top-level shell, auth gate, and startup sequencing entry point.
+import { useEffect, useState } from "react"
 import { SignedIn, SignedOut, SignInButton, useAuth } from "@clerk/clerk-react"
 import { Canvas } from "./components/Canvas"
-import { Sidebar } from "./components/Sidebar"
-import { Spotlight } from "./components/Spotlight"
+import { CreationLimitNotice } from "./components/CreationLimitNotice"
 import { AiStatusPill } from "./components/AiStatusPill"
 import { LoadingScreen } from "./components/LoadingScreen"
+import { OverageNotice } from "./components/OverageNotice"
+import { PlansModal } from "./components/PlansModal"
+import { Sidebar } from "./components/Sidebar"
 import { TabBar } from "./components/TabBar"
 import { Tooltip } from "./components/Tooltip"
+import { Spotlight } from "./components/Spotlight"
 import { useStore, setGetToken } from "./store"
-import { scheduleIdleTask } from "./utils/scheduleIdleTask"
+import { clearReauthRequired } from "./auth/reauthSignal"
+import { bootstrapCriticalWorkspace, startDeferredWorkspaceWarmup, startSidebarWarmupOnHover } from "./startup/workspaceStartup"
 
 export default function App() {
   const { getToken, isSignedIn, isLoaded } = useAuth()
-  const { loadTiles, loadThoughts, loadTags, loadCanvases, hydrateRemainingCanvases, setSpotlightOpen, spotlightOpen, sidebarOpen, setSidebarOpen, tabsVisible } = useStore()
+  const { syncNow, setSpotlightOpen, spotlightOpen, sidebarOpen, setSidebarOpen, tabsVisible, resetStore } = useStore()
   const [openedByMic, setOpenedByMic] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [tabBarVisible, setTabBarVisible] = useState(tabsVisible)
   const [tabBarAnimating, setTabBarAnimating] = useState(false)
+  const [plansOpen, setPlansOpen] = useState(() => window.location.hash === "#plans")
+
+  function closeSpotlight() {
+    setSpotlightOpen(false)
+    setOpenedByMic(false)
+  }
+
+  function closePlans() {
+    if (window.location.hash === "#plans") {
+      window.history.pushState(null, "", `${window.location.pathname}${window.location.search}`)
+    }
+    setPlansOpen(false)
+  }
 
   // Delay unmount of TabBar so slide-out animation can play
   useEffect(() => {
@@ -33,41 +51,42 @@ export default function App() {
   useEffect(() => { setGetToken(getToken) }, [getToken])
 
   useEffect(() => {
+    function onHashChange() {
+      setPlansOpen(window.location.hash === "#plans")
+    }
+
+    onHashChange()
+    window.addEventListener("hashchange", onHashChange)
+    return () => window.removeEventListener("hashchange", onHashChange)
+  }, [])
+
+  useEffect(() => {
+    if (!isLoaded || isSignedIn) return
+    // A real sign-out is already handled by Clerk; clear the quiet sync pause so
+    // a future sign-in starts from a clean auth state.
+    clearReauthRequired()
+    resetStore()
+  }, [isLoaded, isSignedIn, resetStore])
+
+  useEffect(() => {
     if (!isLoaded) return
     if (!isSignedIn) { setLoaded(true); return }
     let cancelled = false
-    let settleTimer: number | null = null
-    let cancelIdleHydration: (() => void) | null = null
 
     async function boot() {
-      // Load canvases first so the restored tab id is known before canvas data is fetched.
-      const initialCanvasId = await loadCanvases()
+      const result = await bootstrapCriticalWorkspace()
       if (cancelled) return
-
-      const initialCanvasData = initialCanvasId === null
-        ? Promise.resolve()
-        : Promise.all([loadTiles(initialCanvasId), loadThoughts(initialCanvasId)]).then(() => undefined)
-      await Promise.all([initialCanvasData, loadTags()])
-      if (cancelled) return
-
       setLoaded(true)
-      settleTimer = window.setTimeout(() => {
-        const hydrate = () => {
-          if (!cancelled) hydrateRemainingCanvases().catch(console.error)
-        }
-        cancelIdleHydration = scheduleIdleTask(hydrate)
-      }, 350)
+      startDeferredWorkspaceWarmup(result.activeCanvasId, result.hasUsableCache)
     }
 
     boot().catch(console.error)
-    const poll = setInterval(loadThoughts, 15000)
+    const poll = setInterval(syncNow, 15000)
     return () => {
       cancelled = true
-      if (settleTimer !== null) window.clearTimeout(settleTimer)
-      cancelIdleHydration?.()
       clearInterval(poll)
     }
-  }, [isLoaded, isSignedIn, loadCanvases, loadTiles, loadThoughts, loadTags, hydrateRemainingCanvases])
+  }, [isLoaded, isSignedIn, syncNow])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -82,7 +101,6 @@ export default function App() {
         if (!spotlightOpen) {
           setOpenedByMic(true)
           setSpotlightOpen(true)
-          setTimeout(() => window.dispatchEvent(new CustomEvent("mic-shortcut")), 50)
         } else {
           window.dispatchEvent(new CustomEvent("mic-shortcut"))
         }
@@ -110,14 +128,20 @@ export default function App() {
       <SignedIn>
         <Sidebar />
         {tabBarVisible && <TabBar slidingOut={tabBarAnimating} />}
+        <OverageNotice tabsVisible={tabsVisible} />
+        <CreationLimitNotice tabsVisible={tabsVisible} />
         {!tabsVisible && (
           <div style={{ position: "fixed", top: 12, left: 12, zIndex: 50, display: "flex", alignItems: "center", gap: 6 }}>
             <Tooltip label="Sidebar" placement="bottom" align="start">
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
-                style={{ background: "none", border: "none", cursor: "pointer", width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.15s ease", color: "#aaa" }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "#ebebeb")}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "#ebebeb"
+                  startSidebarWarmupOnHover()
+                }}
+                onFocus={() => { startSidebarWarmupOnHover() }}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+                style={{ background: "none", border: "none", cursor: "pointer", width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.15s ease", color: "#aaa" }}
                 aria-label="Sidebar"
               >
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ pointerEvents: "none" }}>
@@ -129,7 +153,8 @@ export default function App() {
           </div>
         )}
         <Canvas tabBarVisible={tabsVisible} />
-        {spotlightOpen && <Spotlight openedByMic={openedByMic} onClose={() => { setSpotlightOpen(false); setOpenedByMic(false) }} />}
+        {spotlightOpen && <Spotlight openedByMic={openedByMic} onClose={closeSpotlight} />}
+        {plansOpen && <PlansModal onClose={closePlans} />}
       </SignedIn>
     </>
   )

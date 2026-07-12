@@ -1,37 +1,95 @@
+import type { Tag } from "../types"
 import type { StoreSlice, TagSlice } from "./types"
-import { getApi } from "./apiAuth"
+import { cachedTags, removeLocalThoughtTag } from "../sync/cache"
+import { enqueueDelete, enqueueUpsert } from "../sync/engine"
+import { createClientId, createTemporarySyncId } from "../sync/ids"
+import { fetchAndCacheSnapshot } from "../sync/snapshot"
+import { isApiUnauthorizedError } from "../api/errors"
+
+function optimisticTag(name: string, color: string): Tag {
+  const clientId = createClientId("tag")
+  return {
+    id: createTemporarySyncId(),
+    client_id: clientId,
+    name,
+    color,
+  }
+}
+
+function renameThoughtTags(tags: string[], oldName: string | undefined, newName: string) {
+  return oldName ? tags.map((tag) => tag === oldName ? newName : tag) : tags
+}
 
 export const createTagSlice: StoreSlice<TagSlice> = (set, get) => ({
   tags: [],
 
   loadTags: async () => {
-    const tags = await getApi().tags.list()
-    set({ tags })
+    const cached = await cachedTags()
+    if (cached.length > 0) {
+      set({ tags: cached })
+      return await (async () => {
+        try {
+          await fetchAndCacheSnapshot(get().activeCanvasId)
+          set({ tags: await cachedTags() })
+        } catch (error) {
+          if (isApiUnauthorizedError(error)) return
+          console.error(error)
+        }
+      })()
+    }
+    try {
+      await fetchAndCacheSnapshot(get().activeCanvasId)
+      set({ tags: await cachedTags() })
+    } catch (error) {
+      if (isApiUnauthorizedError(error)) return
+      console.error(error)
+    }
   },
 
   addTag: async (name, color) => {
-    const tag = await getApi().tags.create(name, color)
-    set((s) => ({ tags: [...s.tags.filter((item) => item.name !== name), tag] }))
+    get().assertBillingEditingAllowed()
+    const tag = optimisticTag(name, color)
+    set((s) => ({ tags: [...s.tags.filter((item) => item.name !== name), tag].sort((a, b) => a.name.localeCompare(b.name)) }))
+    await enqueueUpsert("tag", tag)
   },
 
   updateTag: async (id, name, color) => {
+    get().assertBillingEditingAllowed()
     const oldTag = get().tags.find((tag) => tag.id === id)
-    const tag = await getApi().tags.update(id, name, color)
+    let updatedTag: Tag | undefined
     set((s) => ({
-      tags: s.tags.map((item) => item.id === id ? tag : item),
+      tags: s.tags.map((item) => {
+        if (item.id !== id) return item
+        updatedTag = { ...item, name, color }
+        return updatedTag
+      }).sort((a, b) => a.name.localeCompare(b.name)),
       thoughts: s.thoughts.map((thought) => ({
         ...thought,
-        tags: thought.tags.map((thoughtTag) => oldTag && thoughtTag === oldTag.name ? name : thoughtTag),
+        tags: renameThoughtTags(thought.tags, oldTag?.name, name),
       })),
       thoughtCache: new Map([...s.thoughtCache].map(([canvasId, thoughts]) => [canvasId, thoughts.map((thought) => ({
         ...thought,
-        tags: thought.tags.map((thoughtTag) => oldTag && thoughtTag === oldTag.name ? name : thoughtTag),
+        tags: renameThoughtTags(thought.tags, oldTag?.name, name),
       }))])),
     }))
+    if (updatedTag) await enqueueUpsert("tag", updatedTag)
   },
 
   removeTag: async (id) => {
-    await getApi().tags.remove(id)
-    set((s) => ({ tags: s.tags.filter((tag) => tag.id !== id) }))
+    const tag = get().tags.find((item) => item.id === id)
+    set((s) => ({
+      tags: s.tags.filter((item) => item.id !== id),
+      thoughts: tag ? s.thoughts.map((thought) => ({
+        ...thought,
+        tags: thought.tags.filter((name) => name !== tag.name),
+      })) : s.thoughts,
+      thoughtCache: tag ? new Map([...s.thoughtCache].map(([canvasId, thoughts]) => [canvasId, thoughts.map((thought) => ({
+        ...thought,
+        tags: thought.tags.filter((name) => name !== tag.name),
+      }))])) : s.thoughtCache,
+    }))
+    if (!tag) return
+    await removeLocalThoughtTag(tag.name)
+    await enqueueDelete("tag", tag)
   },
 })

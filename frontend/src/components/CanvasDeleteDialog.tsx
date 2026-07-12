@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import type { Canvas } from "../types"
-import type { CanvasDeleteOptions } from "../api/client"
+import type { CanvasDeleteOptions } from "../store/types"
 
 type CanvasDeleteDialogProps = {
   canvas: Canvas

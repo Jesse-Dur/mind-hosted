@@ -23,6 +23,7 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
     setTimeout(() => inputRef.current?.focus(), 50)
   })
   const openedByMicRef = useRef(openedByMic)
+  const startedMicFromOpenRef = useRef(false)
   const showRecordingHints = micState === "recording" || micState === "loading" || (openedByMicRef.current && !query.trim())
   const showShortcutHint = micState === "idle" && !openedByMicRef.current && !query.trim()
   const isAIMode = query.startsWith(">")
@@ -46,6 +47,8 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
     visibleTiles.some((t) => t.title.toLowerCase().includes(query.toLowerCase())) ||
     visibleThoughts.some((t) => t.content.toLowerCase().includes(query.toLowerCase()))
   const highlightAI = !hasMatches || isAIMode
+  // Keep the search box hot after UI interactions so typing can continue without an extra click.
+  const focusInput = () => requestAnimationFrame(() => inputRef.current?.focus())
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -85,11 +88,12 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
       setPastThoughts(th)
     }
     setShowPast((v) => !v)
+    focusInput()
   }
 
   function handleNewTile(title?: string) {
     const { x, y } = findEmptySpot(tiles, 280, 200)
-    addTile({ title: title ?? "New Tile", x, y, width: 280, height: 200, importance: 1, visible: true, canvas_id: activeCanvasId })
+    void addTile({ title: title ?? "New Tile", x, y, width: 280, height: 200, importance: 1, visible: true, canvas_id: activeCanvasId }).catch(console.error)
     onClose()
   }
 
@@ -132,6 +136,12 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
       ? <><em style={{ fontStyle: "normal", opacity: 0.8 }}>{query.trim()}</em><span style={{ marginLeft: 4, color: "#bbb", fontSize: 11 }}>→ AI</span></>
       : "Send to AI"
 
+  useEffect(() => {
+    if (!openedByMic || startedMicFromOpenRef.current || micState !== "idle") return
+    startedMicFromOpenRef.current = true
+    handleMic()
+  }, [handleMic, micState, openedByMic])
+
   return (
     <>
       <style>{`
@@ -146,7 +156,17 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
         onMouseDown={() => onClose()}
         style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.2)", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 120, zIndex: 100 }}
       >
-        <div onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} style={{ width: 560, background: "#fff", border: "1px solid #e0e0e0", borderRadius: 12, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.12)" }}>
+        <div
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => {
+            e.stopPropagation()
+            if (e.target !== inputRef.current) {
+              e.preventDefault()
+              focusInput()
+            }
+          }}
+          style={{ width: 560, background: "#fff", border: "1px solid #e0e0e0", borderRadius: 12, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.12)" }}
+        >
 
           {/* Input row with mic button */}
           <div style={{ position: "relative", display: "flex", alignItems: "center", borderBottom: "1px solid #ebebeb" }}>

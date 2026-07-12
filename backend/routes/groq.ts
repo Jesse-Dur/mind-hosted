@@ -4,6 +4,11 @@ import { tilesDb } from "../db/tiles"
 import { thoughtsDb } from "../db/thoughts"
 import { tagsDb } from "../db/tags"
 import { historyDb } from "../db/history"
+import { syncDb, type SyncPayload } from "../db/sync"
+import { autumnAccessDeniedResponse, isAutumnAccessDeniedError } from "../billing/errors"
+import { consumeAutumnFeature } from "../billing/entitlements"
+import { autumnFeatures } from "../billing/features"
+import type { Thought } from "../types"
 
 export const groqRoute = new Hono()
 
@@ -28,10 +33,10 @@ function getStatus(userId: string): AiStatus {
   return userStatus.get(userId) ?? "idle"
 }
 
-groqRoute.get("/status", (c) => {
+groqRoute.get("/status", async (c) => {
   const auth = getAuth(c)
   if (!auth?.userId) return c.json({ status: "idle" })
-  return c.json({ status: getStatus(auth.userId) })
+  return c.json({ status: getStatus(auth.userId), latest_revision: await syncDb.latestRevision(auth.userId) })
 })
 
 const TOOLS = [
@@ -137,6 +142,45 @@ const TOOLS = [
 ]
 
 const SEARCH_TOOLS = new Set(["search_by_tag", "search_by_tile", "search_thoughts"])
+// Low-limit logs are intentionally metadata-only so backend diagnostics never expose user thoughts.
+const LOW_REMAINING_REQUESTS = 2
+const LOW_REMAINING_TOKENS = 2000
+
+type AiUsageStats = { totalInput: number; totalOutput: number; totalTokens: number; iterations: number }
+type RateLimitSnapshot = { remainingReqs: string | null; remainingTokens: string | null; resetTokens: string | null }
+
+function parseRateLimitValue(value: string | null) {
+  if (value === null) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function isLowRateLimit(snapshot: RateLimitSnapshot) {
+  const remainingReqs = parseRateLimitValue(snapshot.remainingReqs)
+  const remainingTokens = parseRateLimitValue(snapshot.remainingTokens)
+  return (remainingReqs !== null && remainingReqs <= LOW_REMAINING_REQUESTS)
+    || (remainingTokens !== null && remainingTokens <= LOW_REMAINING_TOKENS)
+}
+
+function logRateLimitStatus(reqId: string, reason: "low" | "hit", snapshot: RateLimitSnapshot, stats: AiUsageStats, waitMs?: number) {
+  const wait = waitMs === undefined ? "" : ` wait_seconds=${waitMs / 1000}`
+  console.warn(
+    `[ai:${reqId}] rate_limit_${reason}`
+    + ` remaining_requests=${snapshot.remainingReqs ?? "unknown"}`
+    + ` remaining_tokens=${snapshot.remainingTokens ?? "unknown"}`
+    + ` reset_tokens=${snapshot.resetTokens ?? "unknown"}`
+    + ` token_input=${stats.totalInput}`
+    + ` token_output=${stats.totalOutput}`
+    + ` token_total=${stats.totalTokens}`
+    + ` iterations=${stats.iterations}`
+    + wait
+  )
+}
+
+function logAiProcessError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  console.error(`[ai] process failed: ${message}`)
+}
 
 export async function classifyAndStore(input: string, userId: string): Promise<{ totalInput: number; totalOutput: number; totalTokens: number; iterations: number }> {
   const stats = { totalInput: 0, totalOutput: 0, totalTokens: 0, iterations: 0 }
@@ -146,6 +190,28 @@ export async function classifyAndStore(input: string, userId: string): Promise<{
   const tagList = tags.map((t) => t.name).join(", ")
 
   const allThoughts = await thoughtsDb.list(userId)
+  const allowedThoughtIds = new Set<number>()
+  const knownThoughts = new Map<number, Thought>()
+  const rememberThought = (thought: Thought) => {
+    const normalized = {
+      ...thought,
+      id: Number(thought.id),
+      tile_id: Number(thought.tile_id),
+      sort_order: Number(thought.sort_order),
+    }
+    allowedThoughtIds.add(normalized.id)
+    knownThoughts.set(normalized.id, normalized)
+    return normalized
+  }
+  const rememberThoughts = (thoughts: Thought[]) => thoughts.map(rememberThought)
+  const knownThought = (id: number) => knownThoughts.get(id) ?? null
+  const syncThoughtUpsert = async (serverId: number | null, payload: SyncPayload) => {
+    const result = await syncDb.apply(userId, `ai:${crypto.randomUUID()}`, "thought", "upsert", null, serverId, payload, { writeHistory: false })
+    const entity = result.entity
+    return entity && "tile_id" in entity && "content" in entity ? rememberThought(entity) : null
+  }
+  const syncThoughtDelete = (serverId: number) =>
+    syncDb.apply(userId, `ai:${crypto.randomUUID()}`, "thought", "delete", null, serverId, {}, { writeHistory: false })
   const inputTags = tags.filter((t) => {
     const re = new RegExp(`\\b${t.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i")
     return re.test(input)
@@ -163,9 +229,7 @@ export async function classifyAndStore(input: string, userId: string): Promise<{
     : ""
 
   const reqId = Math.random().toString(36).slice(2, 6)
-  const log = (msg: string) => console.log(`[${reqId}] ${msg}`)
 
-  console.log(`\n🤖 [${reqId}] AI input: "${input.replace(/[\r\n]/g, " ")}"`)
   setStatus(userId, "processing")
 
   type Message = { role: string; content: string; name?: string; tool_call_id?: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] }
@@ -213,8 +277,6 @@ Available tags: ${tagList || "none"}
   }
 
   for (let i = 0; i < 8; i++) {
-    log(`🔄 Iteration ${i + 1}...`)
-
     const sessionMsg = buildSessionState()
     const messages: Message[] = sessionMsg ? [...baseMessages, sessionMsg] : [...baseMessages]
 
@@ -244,36 +306,33 @@ Available tags: ${tagList || "none"}
     const remainingReqs = res.headers.get("x-ratelimit-remaining-requests")
     const remainingTokens = res.headers.get("x-ratelimit-remaining-tokens")
     const resetTokens = res.headers.get("x-ratelimit-reset-tokens")
-    if (remainingReqs || remainingTokens) {
-      log(`📊 rate limit — requests remaining: ${remainingReqs}, tokens remaining: ${remainingTokens}, reset: ${resetTokens}`)
-    }
+    const rateLimitSnapshot = { remainingReqs, remainingTokens, resetTokens }
     stats.iterations++
     if (data.usage || data.eval_count) {
       const inp = data.usage?.prompt_tokens ?? data.prompt_eval_count ?? 0
       const out = data.usage?.completion_tokens ?? data.eval_count ?? 0
       const total = data.usage?.total_tokens ?? (inp + out)
-      const reasoningTokens = data.usage?.completion_tokens_details?.reasoning_tokens
       stats.totalInput += inp
       stats.totalOutput += out
       stats.totalTokens += total
-      const totalLabel = reasoningTokens ? `total (incl. reasoning): ${total}` : `total (excl. reasoning): ${total}`
-      log(`🔢 input: ${inp}, output: ${out}${reasoningTokens ? `, reasoning: ${reasoningTokens}` : ""}, ${totalLabel}`)
+    }
+    if (res.status !== 429 && isLowRateLimit(rateLimitSnapshot)) {
+      logRateLimitStatus(reqId, "low", rateLimitSnapshot, stats)
     }
 
     if (!data.choices?.[0]) {
       const errMsg = data.error?.message ?? "unknown"
-      log(`Bad response ${res.status}: ${errMsg}`)
       if (res.status === 429) {
         const retryAfter = res.headers.get("retry-after")
         const wait = retryAfter ? Number(retryAfter) * 1000 : 10000
         setStatus(userId, wait > 60000 ? "limited" : "queued")
-        log(`⏳ Rate limited — waiting ${wait / 1000}s (reset: ${resetTokens})`)
+        logRateLimitStatus(reqId, "hit", rateLimitSnapshot, stats, wait)
         await new Promise((r) => setTimeout(r, wait))
         setStatus(userId, "processing")
         continue
       }
+      console.error(`[ai:${reqId}] bad response ${res.status}: ${errMsg}`)
       if (res.status >= 400 && res.status < 500) {
-        log(`❌ Non-retryable error ${res.status} — aborting`)
         setStatus(userId, "idle")
         return stats
       }
@@ -301,17 +360,12 @@ Available tags: ${tagList || "none"}
           try {
             const parsed = JSON.parse(c.function.arguments)
             const key = `${c.function.name}:${JSON.stringify(parsed, Object.keys(parsed).sort())}`
-            if (executedCalls.has(key)) { log(`⚠️ Skipping duplicate: ${c.function.name}`); return false }
+            if (executedCalls.has(key)) return false
           } catch { /* if parse fails let it through */ }
           return true
         })
-    if (rawCalls.length > filteredCalls.length) {
-      log(`⚠️ Trimmed tool calls: ${rawCalls.length} → ${filteredCalls.length} (dupes/cap/search-action separation)`)
-    }
-    log(`💬 ${filteredCalls.length ? `→ ${filteredCalls.map((c) => c.function.name).join(", ")}` : (msg.content ?? "").slice(0, 150)}`)
 
     if (!filteredCalls.length) {
-      log(`✅ Done: ${historyActions.join(" | ") || "no actions"}`)
       if (historyActions.length > 0) {
         await historyDb.log(userId, "ai.process",
           historyActions.length === 1 ? `AI: ${historyActions[0]}` : `AI: ${historyActions.length} actions`,
@@ -326,7 +380,6 @@ Available tags: ${tagList || "none"}
 
     for (const call of filteredCalls) {
       if (call.function.name === "done") {
-        log(`✅ Done: ${historyActions.join(" | ") || "no actions"}`)
         if (historyActions.length > 0) {
           await historyDb.log(userId, "ai.process",
             historyActions.length === 1 ? `AI: ${historyActions[0]}` : `AI: ${historyActions.length} actions`,
@@ -347,11 +400,11 @@ Available tags: ${tagList || "none"}
         if (call.function.name === "search_thoughts") {
           const query = String(args.query ?? "")
           const keywords = query.toLowerCase().split(/\s+/).filter(Boolean)
-          const results = allThoughts
+          const matchedThoughts = rememberThoughts(allThoughts
             .filter((t) => keywords.some((kw) => t.content.toLowerCase().includes(kw)))
-            .slice(0, 8)
-            .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => ti.id === t.tile_id)?.title ?? "?", tags: t.tags }))
-          log(`🔍 search("${query}") → ${results.length} result(s)${results.length ? ": " + results.map((r) => `[${r.id}] "${r.content}"`).join(", ") : ""}`)
+            .slice(0, 8))
+          const results = matchedThoughts
+            .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => Number(ti.id) === t.tile_id)?.title ?? "?", tags: t.tags }))
           const resultStr = results.length
             ? results.map((r) => `id:${r.id} "${r.content}" (tile:"${r.tile_title}"${r.tags.length ? ` tags:[${r.tags.join(",")}]` : ""})`).join(", ")
             : "no results"
@@ -362,11 +415,11 @@ Available tags: ${tagList || "none"}
 
         } else if (call.function.name === "search_by_tag") {
           const tag = String(args.tag ?? "")
-          const results = allThoughts
+          const matchedThoughts = rememberThoughts(allThoughts
             .filter((t) => t.tags.some((tg) => tg.toLowerCase().includes(tag.toLowerCase())))
-            .slice(0, 8)
-            .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => ti.id === t.tile_id)?.title ?? "?", tags: t.tags }))
-          log(`🏷️ search_by_tag("${tag}") → ${results.length} result(s)${results.length ? ": " + results.map((r) => `[${r.id}] "${r.content}"`).join(", ") : ""}`)
+            .slice(0, 8))
+          const results = matchedThoughts
+            .map((t) => ({ id: t.id, content: t.content, tile_id: t.tile_id, tile_title: tiles.find((ti) => Number(ti.id) === t.tile_id)?.title ?? "?", tags: t.tags }))
           const resultStr = results.length
             ? results.map((r) => `id:${r.id} "${r.content}" (tile:"${r.tile_title}")`).join(", ")
             : "no results"
@@ -377,9 +430,9 @@ Available tags: ${tagList || "none"}
 
         } else if (call.function.name === "search_by_tile") {
           const tileId = Number(args.tile_id)
-          const results = (await thoughtsDb.list(userId, { tileId })).slice(0, 20).map((t) => ({ id: t.id, content: t.content, tags: t.tags }))
+          const matchedThoughts = rememberThoughts((await thoughtsDb.list(userId, { tileId })).slice(0, 20))
+          const results = matchedThoughts.map((t) => ({ id: t.id, content: t.content, tags: t.tags }))
           const tileName = tiles.find((t) => Number(t.id) === tileId)?.title ?? tileId
-          log(`📂 search_by_tile(${tileId} "${tileName}") → ${results.length} result(s)`)
           const resultStr = results.length
             ? results.map((r) => `id:${r.id} "${r.content}"${r.tags.length ? ` tags:[${r.tags.join(",")}]` : ""}`).join(", ")
             : "no results"
@@ -396,15 +449,17 @@ Available tags: ${tagList || "none"}
           } else {
             const validTile = tiles.find((t) => Number(t.id) === tileId)
             if (!validTile) {
-              log(`⚠️ create_thought: tile_id ${tileId} not found`)
               result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
             } else {
               const validTags = ((args.tags as string[]) ?? []).filter((t) => tags.some((tag) => tag.name === t))
-              const thought = await thoughtsDb.create({ tile_id: tileId, content, tags: validTags, sort_order: 0 }, userId, true)
-              const action = `Created "${thought.content}" in "${validTile.title}"`
-              historyActions.push(action)
-              log(`✏️ ${action}`)
-              result = `Created thought id:${thought.id}`
+              const thought = await syncThoughtUpsert(null, { tile_id: tileId, content, tags: validTags })
+              if (!thought) {
+                result = "Error: create did not return a thought"
+              } else {
+                const action = `Created "${thought.content}" in "${validTile.title}"`
+                historyActions.push(action)
+                result = `Created thought id:${thought.id}`
+              }
             }
           }
 
@@ -413,25 +468,37 @@ Available tags: ${tagList || "none"}
           const content = String(args.content ?? "")
           if (!id || !content) {
             result = "Error: missing thought_id or content"
+          } else if (!allowedThoughtIds.has(id)) {
+            result = `Error: thought_id ${id} was not returned by a search in this session. Search first, then update the returned id.`
           } else {
+            const existing = knownThought(id)
+            if (!existing) {
+              result = `Error: thought_id ${id} is not available from this session's search results. Search again before updating.`
+              continue
+            }
             const validTags = args.tags ? (args.tags as string[]).filter((t) => tags.some((tag) => tag.name === t)) : undefined
-            await thoughtsDb.update(id, content, userId, validTags, true)
+            const updatedThought = await syncThoughtUpsert(id, {
+              tile_id: existing.tile_id,
+              content,
+              tags: validTags ?? existing.tags,
+              sort_order: existing.sort_order,
+            })
             const action = `Updated thought ${id} → "${content}"`
             historyActions.push(action)
-            log(`✏️ ${action}`)
-            result = "Updated"
+            result = updatedThought ? "Updated" : "Error: update did not return a thought"
           }
 
         } else if (call.function.name === "delete_thought") {
           const id = Number(args.thought_id)
           if (!id) {
             result = "Error: missing thought_id"
+          } else if (!allowedThoughtIds.has(id)) {
+            result = `Error: thought_id ${id} was not returned by a search in this session. Search first, then delete the returned id.`
           } else {
-            const existing = allThoughts.find((t) => Number(t.id) === id)
-            await thoughtsDb.remove(id, userId, true)
+            const existing = knownThought(id)
+            await syncThoughtDelete(id)
             const label = existing ? `"${existing.content.slice(0, 40)}"` : `thought ${id}`
             historyActions.push(`Deleted ${label}`)
-            log(`🗑️ Deleted ${label}`)
             result = "Deleted"
           }
 
@@ -440,23 +507,34 @@ Available tags: ${tagList || "none"}
           const tileId = Number(args.tile_id)
           if (!id || !tileId) {
             result = "Error: missing ids"
+          } else if (!allowedThoughtIds.has(id)) {
+            result = `Error: thought_id ${id} was not returned by a search in this session. Search first, then move the returned id.`
           } else {
             const validTile = tiles.find((t) => Number(t.id) === tileId)
             if (!validTile) {
-              log(`⚠️ move_thought: tile_id ${tileId} not found`)
               result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
             } else {
-              await thoughtsDb.move(id, tileId, userId, undefined, true)
+              const existing = knownThought(id)
+              if (!existing) {
+                result = `Error: thought_id ${id} is not available from this session's search results. Search again before moving.`
+                continue
+              }
+              const targetThoughts = await thoughtsDb.list(userId, { tileId })
+              const sortOrder = Math.max(-1, ...targetThoughts.map((thought) => Number(thought.sort_order))) + 1
+              await syncThoughtUpsert(id, {
+                tile_id: tileId,
+                content: existing.content,
+                tags: existing.tags,
+                sort_order: sortOrder,
+              })
               const action = `Moved thought ${id} to "${validTile.title}"`
               historyActions.push(action)
-              log(`📦 ${action}`)
               result = "Moved"
             }
           }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        log(`⚠️ Tool error (${call.function.name}): ${msg}`)
         result = `Error executing ${call.function.name}: ${msg}. Try again with valid parameters.`
       }
 
@@ -465,7 +543,6 @@ Available tags: ${tagList || "none"}
     }
   }
 
-  log("   ⚠️ Loop exhausted")
   setStatus(userId, "idle")
   return stats
 }
@@ -477,17 +554,23 @@ groqRoute.post("/process", async (c) => {
   const { input: rawInput, priority = "medium" } = await c.req.json() as { input: string; priority: string }
   const input = String(rawInput ?? "").slice(0, 500)
   if (!input.trim()) return c.json({ error: "Empty input" }, 400)
+  try {
+    await consumeAutumnFeature(auth.userId, autumnFeatures.aiProcessingRequests)
+  } catch (error) {
+    if (isAutumnAccessDeniedError(error)) return c.json(autumnAccessDeniedResponse(error), 429)
+    throw error
+  }
   const max = CONCURRENCY[priority] ?? 2
   const jobId = crypto.randomUUID()
 
   if (running < max) {
     running++
-    classifyAndStore(input, auth.userId).catch(console.error).finally(() => running--)
+    classifyAndStore(input, auth.userId).catch(logAiProcessError).finally(() => running--)
   } else {
     setStatus(auth.userId, "queued")
     setTimeout(() => {
       running++
-      classifyAndStore(input, auth.userId).catch(console.error).finally(() => running--)
+      classifyAndStore(input, auth.userId).catch(logAiProcessError).finally(() => running--)
     }, priority === "low" ? 5000 : 1000)
   }
 
