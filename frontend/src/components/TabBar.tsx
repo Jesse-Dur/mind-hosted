@@ -257,6 +257,13 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
   function handleRemove(canvas: Canvas) {
     setContextMenu(null)
     if (canvases.length === 1) return
+    const state = useStore.getState()
+    const canvasTiles = state.activeCanvasId === canvas.id ? state.tiles : state.tileCache.get(canvas.id)
+    if (canvasTiles?.length === 0) {
+      // A known-empty canvas has no contents that need a deletion choice.
+      void removeCanvas(canvas.id, { mode: "deleteContents" })
+      return
+    }
     setDeleteCanvas(canvas)
   }
 
