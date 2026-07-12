@@ -1,6 +1,6 @@
 import type { Tag } from "../types"
 import type { StoreSlice, TagSlice } from "./types"
-import { cachedTags } from "../sync/cache"
+import { cachedTags, removeLocalThoughtTag } from "../sync/cache"
 import { enqueueDelete, enqueueUpsert } from "../sync/engine"
 import { createClientId, createTemporarySyncId } from "../sync/ids"
 import { fetchAndCacheSnapshot } from "../sync/snapshot"
@@ -77,7 +77,19 @@ export const createTagSlice: StoreSlice<TagSlice> = (set, get) => ({
 
   removeTag: async (id) => {
     const tag = get().tags.find((item) => item.id === id)
-    set((s) => ({ tags: s.tags.filter((item) => item.id !== id) }))
-    if (tag) await enqueueDelete("tag", tag)
+    set((s) => ({
+      tags: s.tags.filter((item) => item.id !== id),
+      thoughts: tag ? s.thoughts.map((thought) => ({
+        ...thought,
+        tags: thought.tags.filter((name) => name !== tag.name),
+      })) : s.thoughts,
+      thoughtCache: tag ? new Map([...s.thoughtCache].map(([canvasId, thoughts]) => [canvasId, thoughts.map((thought) => ({
+        ...thought,
+        tags: thought.tags.filter((name) => name !== tag.name),
+      }))])) : s.thoughtCache,
+    }))
+    if (!tag) return
+    await removeLocalThoughtTag(tag.name)
+    await enqueueDelete("tag", tag)
   },
 })

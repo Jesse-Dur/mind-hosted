@@ -61,7 +61,21 @@ export async function deleteEntity(userId: string, entityType: SyncEntityType, s
     return thought ?? null
   }
   const [tag] = await sql<Tag[]>`SELECT * FROM tags WHERE id = ${serverId} AND user_id = ${userId}`
-  await sql`DELETE FROM tags WHERE id = ${serverId} AND user_id = ${userId}`
-  if (tag) await addStorageDelta(userId, -estimateTagStorage(tag))
+  if (!tag) return null
+  let thoughtTagDelta = 0
+  await sql.begin(async (tx) => {
+    const thoughts = await tx<Thought[]>`
+      SELECT * FROM thoughts WHERE user_id = ${userId} AND deleted_at IS NULL AND ${tag.name} = ANY(tags)
+    `
+    for (const thought of thoughts) {
+      const updatedTags = thought.tags.filter((name) => name !== tag.name)
+      thoughtTagDelta += estimateThoughtStorage({ content: thought.content, tags: updatedTags }) - estimateThoughtStorage(thought)
+      await tx`UPDATE thoughts SET tags = ${updatedTags}, updated_at = NOW() WHERE id = ${thought.id} AND user_id = ${userId}`
+    }
+    // The tag and its thought references must disappear atomically so snapshots
+    // can never expose a deleted definition alongside stale tag labels.
+    await tx`DELETE FROM tags WHERE id = ${serverId} AND user_id = ${userId}`
+  })
+  await addStorageDelta(userId, -estimateTagStorage(tag) + thoughtTagDelta)
   return tag ?? null
 }

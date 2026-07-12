@@ -7,6 +7,8 @@ import {
   outboxRecord,
   resetFrontendState,
   syncDb,
+  tag,
+  thought,
   tile,
   useStore,
 } from "../test/syncTestHarness"
@@ -50,6 +52,66 @@ beforeEach(async () => {
 })
 
 describe("frontend sync pull", () => {
+  test("remote tag deletes remove the tag from cached and visible thoughts", async () => {
+    const deletedTag = tag({ id: 40, client_id: "tag-client", name: "cleanup" })
+    const taggedThought = thought({ id: 30, client_id: "thought-client", tags: ["cleanup", "keep"] })
+    await syncDb.entities.bulkPut([
+      entityRecord({
+        entityType: "tag",
+        clientId: "tag-client",
+        serverId: 40,
+        tempId: null,
+        canvasId: null,
+        status: "clean",
+        data: deletedTag,
+      }),
+      entityRecord({
+        entityType: "thought",
+        clientId: "thought-client",
+        serverId: 30,
+        tempId: null,
+        canvasId: 10,
+        status: "dirty",
+        data: taggedThought,
+      }),
+    ])
+    await syncDb.outbox.put(outboxRecord({
+      opId: "pending-thought-edit",
+      entityType: "thought",
+      action: "upsert",
+      clientId: "thought-client",
+      serverId: 30,
+      payload: { tags: ["cleanup", "keep"] },
+    }))
+    useStore.setState({
+      tags: [deletedTag],
+      thoughts: [taggedThought],
+      thoughtCache: new Map([[10, [taggedThought]]]),
+    })
+    pullResponse = {
+      latest_revision: 2,
+      events: [{
+        revision: 2,
+        canvas_id: null,
+        entity_type: "tag",
+        entity_id: 40,
+        client_id: "tag-client",
+        op_id: "remote-tag-delete",
+        action: "delete",
+        data: { id: 40, client_id: "tag-client", name: "cleanup" },
+        created_at: "2026-01-01T00:00:00.000Z",
+      }],
+    }
+
+    await pullSync()
+
+    expect(useStore.getState().tags).toHaveLength(0)
+    expect(useStore.getState().thoughts[0]?.tags).toEqual(["keep"])
+    expect(useStore.getState().thoughtCache.get(10)?.[0]?.tags).toEqual(["keep"])
+    expect((await syncDb.entities.get(entityKey("thought", "thought-client")))?.data).toMatchObject({ tags: ["keep"] })
+    expect((await syncDb.outbox.get("pending-thought-edit"))?.payload).toMatchObject({ tags: ["keep"] })
+  })
+
   test("pending local changes are not overwritten by stale remote upserts", async () => {
     const localTile = tile({ id: 20, client_id: "tile-client", title: "Local" })
     await syncDb.entities.put(entityRecord({

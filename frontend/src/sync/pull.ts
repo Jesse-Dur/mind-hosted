@@ -1,5 +1,5 @@
 import { getApi } from "../store/apiAuth"
-import { cacheServerEntity, metadataNumber, setMetadataNumber } from "./cache"
+import { cacheServerEntity, metadataNumber, removeLocalThoughtTag, setMetadataNumber } from "./cache"
 import { entityFromPayload, isTile, positiveIntegerField } from "./entityPayload"
 import { getEntityRecord, payloadForEntity } from "./entities"
 import { entityKey } from "./ids"
@@ -73,6 +73,9 @@ async function applyPullEvent(event: SyncPullEvent) {
     if (await hasPendingLocal(event.entity_type, event.client_id, event.entity_id)) return
     if (event.entity_type === "canvas") {
       await moveLocalCanvasContents(event.entity_id, positiveIntegerField(event.data.targetCanvasId))
+    }
+    if (event.entity_type === "tag" && typeof event.data.name === "string") {
+      await removeLocalThoughtTag(event.data.name)
     }
     await deleteLocalEntity(event.entity_type, event.client_id, event.entity_id)
     removeRemoteEntity(event.entity_type, event.entity_id, event.data)

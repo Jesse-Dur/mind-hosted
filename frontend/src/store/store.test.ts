@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import {
   canvas,
+  entityKey,
   entityRecord,
   resetFrontendState,
   syncDb,
@@ -545,8 +546,20 @@ describe("frontend store optimistic updates", () => {
 
   test("billing edit freeze still allows tag deletion", async () => {
     const existingTag = tag({ id: 40, client_id: "tag-40", name: "cleanup" })
+    const taggedThought = thought({ id: 30, client_id: "thought-30", tags: ["cleanup", "keep"] })
+    await syncDb.entities.put(entityRecord({
+      entityType: "thought",
+      clientId: "thought-30",
+      serverId: 30,
+      tempId: null,
+      canvasId: 10,
+      status: "clean",
+      data: taggedThought,
+    }))
     useStore.setState({
       tags: [existingTag],
+      thoughts: [taggedThought],
+      thoughtCache: new Map([[10, [taggedThought]]]),
       billingUsage: billingUsage({
         overage: {
           is_over_limit: true,
@@ -560,6 +573,9 @@ describe("frontend store optimistic updates", () => {
     await useStore.getState().removeTag(existingTag.id)
 
     expect(useStore.getState().tags).toHaveLength(0)
+    expect(useStore.getState().thoughts[0]?.tags).toEqual(["keep"])
+    expect(useStore.getState().thoughtCache.get(10)?.[0]?.tags).toEqual(["keep"])
+    expect((await syncDb.entities.get(entityKey("thought", "thought-30")))?.data).toMatchObject({ tags: ["keep"] })
     expect(await syncDb.outbox.where("entityType").equals("tag").toArray()).toMatchObject([
       { action: "delete", clientId: "tag-40" },
     ])

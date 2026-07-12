@@ -88,6 +88,31 @@ async function renameCachedThoughtTags(oldName: string, newName: string) {
   }))
 }
 
+export async function removeLocalThoughtTag(tagName: string) {
+  const thoughtRecords = await syncDb.entities.where("entityType").equals("thought").toArray()
+  await Promise.all(thoughtRecords.map(async (record) => {
+    if (!isThought(record.data) || !record.data.tags.includes(tagName)) return Promise.resolve()
+    // Thought tags are stored by name, so removing the tag definition must also
+    // clean durable edits so a later offline flush cannot restore the label.
+    const pendingOperations = await syncDb.outbox.where("clientId").equals(record.clientId).toArray()
+    await Promise.all([
+      syncDb.entities.put({
+        ...record,
+        data: { ...record.data, tags: record.data.tags.filter((tag) => tag !== tagName) },
+        updatedAt: Date.now(),
+      }),
+      ...pendingOperations.map((operation) => {
+        if (operation.entityType !== "thought" || operation.action !== "upsert" || !Array.isArray(operation.payload.tags)) return Promise.resolve()
+        return syncDb.outbox.put({
+          ...operation,
+          payload: { ...operation.payload, tags: operation.payload.tags.filter((tag) => tag !== tagName) },
+          updatedAt: Date.now(),
+        })
+      }),
+    ])
+  }))
+}
+
 export async function cacheServerEntity(entityType: SyncEntityType, entity: SyncEntity, preserveDirty = true) {
   const serverClient = serverClientId(entityType, entity.id)
   const clientId = entity.client_id ?? serverClient

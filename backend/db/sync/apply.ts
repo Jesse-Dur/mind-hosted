@@ -3,6 +3,7 @@ import { logEvent, recordApplied } from "./events"
 import { upsertCanvas, upsertTag, upsertThought, upsertTile } from "./upsert"
 import { assertBillingSyncAccess, requiresBillingEditingAccess } from "../../billing/syncAccess"
 import { getBillingUsageStatus } from "../../billing/usageStatus"
+import type { Tag } from "../../types"
 import type { ApplyOptions, DeletePayload, SyncAction, SyncEntityType, SyncPayload, SyncResult } from "./types"
 
 export async function applySyncOperation(userId: string, opId: string, entityType: SyncEntityType, action: SyncAction, clientId: string | null, serverId: number | null, payload: SyncPayload, options: ApplyOptions = {}) {
@@ -22,7 +23,12 @@ export async function applySyncOperation(userId: string, opId: string, entityTyp
           : await upsertTag(userId, clientId, serverId, payload)
     : await deleteEntity(userId, entityType, serverId, payload as DeletePayload)
   const finalClientId = clientId ?? entity?.client_id ?? null
-  const revision = await logEvent(userId, entityType, action, opId, entity, finalClientId, action === "upsert" ? (entity as unknown as SyncPayload) : { id: serverId, client_id: finalClientId, ...payload })
+  // Identity fields come from the applied mutation, never from the caller's
+  // free-form payload, so a malformed delete cannot publish misleading cleanup data.
+  const deleteEventPayload = entityType === "tag" && entity
+    ? { ...payload, id: serverId, client_id: finalClientId, name: (entity as Tag).name }
+    : { ...payload, id: serverId, client_id: finalClientId }
+  const revision = await logEvent(userId, entityType, action, opId, entity, finalClientId, action === "upsert" ? (entity as unknown as SyncPayload) : deleteEventPayload)
   const result: SyncResult = {
     op_id: opId,
     entity_type: entityType,

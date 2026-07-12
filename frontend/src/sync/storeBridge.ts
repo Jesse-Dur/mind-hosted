@@ -66,6 +66,10 @@ function targetCanvasIdFromPayload(payload: SyncPayload | undefined) {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null
 }
 
+function deletedTagNameFromPayload(payload: SyncPayload | undefined) {
+  return typeof payload?.name === "string" ? payload.name : null
+}
+
 function renameThoughtTags(tags: string[], oldName: string | undefined, newName: string) {
   return oldName && oldName !== newName ? tags.map((tag) => tag === oldName ? newName : tag) : tags
 }
@@ -241,6 +245,17 @@ export function removeRemoteEntity(entityType: SyncEntityType, serverId: number 
         thoughtCache: updateMapList(state.thoughtCache, (thoughts) => thoughts.filter((item) => item.id !== serverId)),
       }
     }
-    return { tags: state.tags.filter((item) => item.id !== serverId) }
+    const deletedTagName = deletedTagNameFromPayload(payload)
+    return {
+      tags: state.tags.filter((item) => item.id !== serverId),
+      thoughts: deletedTagName ? state.thoughts.map((thought) => ({
+        ...thought,
+        tags: thought.tags.filter((tag) => tag !== deletedTagName),
+      })) : state.thoughts,
+      thoughtCache: deletedTagName ? updateMapList(state.thoughtCache, (thoughts) => thoughts.map((thought) => ({
+        ...thought,
+        tags: thought.tags.filter((tag) => tag !== deletedTagName),
+      }))) : state.thoughtCache,
+    }
   })
 }

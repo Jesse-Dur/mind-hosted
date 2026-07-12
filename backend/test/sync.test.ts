@@ -129,6 +129,34 @@ if (!process.env.DATABASE_URL) {
       expect(thoughtRows[1]?.tags).toEqual(["work"])
     })
 
+    test("deleting a tag removes it from thoughts and publishes its name", async () => {
+      const canvasId = await createCanvas(syncDb, USER_A, "tag-delete-canvas")
+      const tileId = await createTile(syncDb, USER_A, canvasId, "tag-delete-tile")
+      await syncDb.apply(USER_A, "tag-delete-thought-op", "thought", "upsert", "tag-delete-thought", null, {
+        tile_id: tileId,
+        content: "Tagged thought",
+        tags: ["cleanup", "keep"],
+        sort_order: 0,
+      })
+      const tagResult = await syncDb.apply(USER_A, "tag-delete-create-op", "tag", "upsert", "tag-delete-tag", null, {
+        name: "cleanup",
+        color: "#123456",
+      })
+
+      await syncDb.apply(USER_A, "tag-delete-op", "tag", "delete", "tag-delete-tag", Number(tagResult.server_id), {
+        name: "caller-supplied-wrong-name",
+      })
+
+      const thoughts = await sql<{ tags: string[] }[]>`
+        SELECT tags FROM thoughts WHERE user_id = ${USER_A} AND client_id = 'tag-delete-thought'
+      `
+      const events = await sql<{ data: Record<string, unknown> }[]>`
+        SELECT data FROM sync_events WHERE user_id = ${USER_A} AND op_id = 'tag-delete-op'
+      `
+      expect(thoughts[0]?.tags).toEqual(["keep"])
+      expect(events[0]?.data).toMatchObject({ name: "cleanup" })
+    })
+
     test("invalid child references are rejected before writing", async () => {
       await expect(syncDb.apply(USER_A, "bad-tile-op", "tile", "upsert", "bad-tile-client", null, {
         canvas_id: 999999999,
