@@ -71,6 +71,7 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
   }, [])
   const scrollRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
   const renameRef = useRef<HTMLInputElement>(null)
   const dragRef = useRef<DragState | null>(null)
   const dragCleanupRef = useRef<(() => void) | null>(null)
@@ -127,9 +128,13 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
 
   useEffect(() => {
     if (!contextMenu) return
-    const close = () => setContextMenu(null)
-    window.addEventListener("click", close)
-    return () => window.removeEventListener("click", close)
+    function closeOnOutsidePress(event: PointerEvent) {
+      if (event.target instanceof Node && contextMenuRef.current?.contains(event.target)) return
+      // Close before a drag can raise the canvas above the tab bar's stacking context.
+      setContextMenu(null)
+    }
+    window.addEventListener("pointerdown", closeOnOutsidePress, true)
+    return () => window.removeEventListener("pointerdown", closeOnOutsidePress, true)
   }, [contextMenu])
 
   useEffect(() => {
@@ -651,7 +656,7 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
         </div>
 
         {contextMenu && (
-          <div onClick={(e) => e.stopPropagation()} style={{ position: "fixed", top: contextMenu.y, left: contextMenu.x, background: "#fff", border: "1px solid #e0e0e0", borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.1)", zIndex: 200, minWidth: 160, padding: 4 }}>
+          <div ref={contextMenuRef} onClick={(e) => e.stopPropagation()} style={{ position: "fixed", top: contextMenu.y, left: contextMenu.x, background: "#fff", border: "1px solid #e0e0e0", borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.1)", zIndex: 200, minWidth: 160, padding: 4 }}>
             {[
               { label: contextMenu.canvas.is_favourite ? "Unfavourite" : "★ Favourite", action: () => handleFavourite(contextMenu.canvas) },
               { label: "Rename", action: () => startRename(contextMenu.canvas) },
