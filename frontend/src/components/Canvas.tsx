@@ -125,6 +125,8 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
 
   function onMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if ((e.target as HTMLElement) !== canvasRef.current) return
+    // Context-clicks must remain passive so they cannot leave a tile draft armed.
+    if (e.button !== 0 || e.ctrlKey) return
     e.preventDefault()
     const { x, y } = toCanvas(e.clientX, e.clientY)
     const sx = snap(x), sy = snap(y)
