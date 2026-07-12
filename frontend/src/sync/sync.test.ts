@@ -156,6 +156,50 @@ describe("frontend sync cache", () => {
     expect(await syncDb.entities.get(entityKey("tile", "dirty-tile"))).toBeDefined()
   })
 
+  test("snapshot reconciliation keeps thoughts while a moved parent tile is still pending", async () => {
+    await syncDb.entities.put(entityRecord({
+      entityType: "tile",
+      clientId: "moved-tile",
+      serverId: 20,
+      tempId: null,
+      canvasId: 11,
+      status: "dirty",
+      data: tile({ id: 20, client_id: "moved-tile", canvas_id: 11 }),
+    }))
+    await syncDb.outbox.put(outboxRecord({
+      opId: "moved-tile-op",
+      entityType: "tile",
+      action: "upsert",
+      clientId: "moved-tile",
+      serverId: 20,
+      payload: { canvas_id: 11, title: "Moved" },
+    }))
+    await syncDb.entities.put(entityRecord({
+      entityType: "thought",
+      clientId: "moved-thought",
+      serverId: 30,
+      tempId: null,
+      canvasId: 11,
+      status: "clean",
+      data: thought({ id: 30, client_id: "moved-thought", tile_id: 20, content: "Keep me" }),
+    }))
+
+    const snapshot: SyncSnapshotResponse = {
+      revision: 1,
+      active_canvas_id: 11,
+      canvases: [canvas({ id: 11 })],
+      tags: [],
+      tiles: [],
+      thoughts: [],
+    }
+
+    await cacheSyncSnapshot(snapshot)
+
+    expect(await syncDb.entities.get(entityKey("thought", "moved-thought"))).toBeDefined()
+    expect(await cachedThoughtsForCanvas(11)).toHaveLength(1)
+    expect((await cachedThoughtsForCanvas(11))[0]?.content).toBe("Keep me")
+  })
+
   test("server tag rename rewrites cached thought tag labels", async () => {
     await cacheServerEntity("tag", tag({ id: 40, client_id: "tag-client", name: "old" }))
     await cacheServerEntity("tile", tile({ id: 20, client_id: "tile-client", canvas_id: 10 }))

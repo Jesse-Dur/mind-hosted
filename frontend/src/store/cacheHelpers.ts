@@ -1,7 +1,36 @@
 import type { Thought, Tile } from "../types"
+import { isTemporaryId } from "../utils/optimisticIdentity"
+
+// These helpers keep visible canvas state stable while sync refreshes arrive.
+// Refreshes should update entity data without shuffling the user's current view.
 
 export function upsertTile(list: Tile[], tile: Tile) {
   return [...list.filter((item) => item.id !== tile.id), tile]
+}
+
+export function mergeVisibleEntities<T extends { id: number }>(existing: T[], incoming: T[]) {
+  const incomingById = new Map(incoming.map((item) => [item.id, item]))
+  const next: T[] = []
+  const keptIds = new Set<number>()
+
+  for (const item of existing) {
+    const replacement = incomingById.get(item.id)
+    if (replacement) {
+      next.push(replacement)
+      keptIds.add(item.id)
+      continue
+    }
+    if (isTemporaryId(item.id)) {
+      next.push(item)
+      keptIds.add(item.id)
+    }
+  }
+
+  for (const item of incoming) {
+    if (!keptIds.has(item.id)) next.push(item)
+  }
+
+  return next
 }
 
 export function findTileInState(id: number, tiles: Tile[], tileCache: Map<number, Tile[]>) {

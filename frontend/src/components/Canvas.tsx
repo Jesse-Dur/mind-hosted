@@ -34,6 +34,7 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
   const CANVAS_H = canvasHeight
   const CANVAS_W = Math.floor(Math.round(canvasHeight * (16 / 9)) / GRID) * GRID
   const [draft, setDraft] = useState<Draft | null>(null)
+  const draftRef = useRef<Draft | null>(null)
   const [scale, setScale] = useState(1)
   const [displayedTiles, setDisplayedTiles] = useState(tiles)
   const [displayedThoughts, setDisplayedThoughts] = useState(thoughts)
@@ -108,40 +109,80 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
     return { x: (clientX - rect.left) / scale, y: (clientY - rect.top) / scale }
   }
 
+  function clearSelection() {
+    window.getSelection()?.removeAllRanges()
+  }
+
+  function finishDraft() {
+    const current = draftRef.current
+    if (!current) return
+    draftRef.current = null
+    setDraft(null)
+    if (current.width >= MIN && current.height >= MIN) {
+      void addTile({ title: "New Tile", ...clamp(current.x, current.y, current.width, current.height), importance: 1, visible: true, canvas_id: null }).catch(console.error)
+    }
+  }
+
   function onMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if ((e.target as HTMLElement) !== canvasRef.current) return
+    e.preventDefault()
     const { x, y } = toCanvas(e.clientX, e.clientY)
     const sx = snap(x), sy = snap(y)
-    setDraft({ startX: sx, startY: sy, x: sx, y: sy, width: GRID, height: GRID })
+    clearSelection()
+    const nextDraft = { startX: sx, startY: sy, x: sx, y: sy, width: GRID, height: GRID }
+    draftRef.current = nextDraft
+    setDraft(nextDraft)
   }
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setDraft(null)
+      if (e.key === "Escape") {
+        draftRef.current = null
+        setDraft(null)
+        clearSelection()
+      }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [])
 
-  function onMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+  useEffect(() => {
     if (!draft) return
+    const previousUserSelect = document.body.style.userSelect
+    // Block browser text selection while the user is drawing a new tile.
+    document.body.style.userSelect = "none"
+    clearSelection()
+
+    function onWindowMouseUp() {
+      finishDraft()
+    }
+
+    window.addEventListener("mouseup", onWindowMouseUp)
+    return () => {
+      document.body.style.userSelect = previousUserSelect
+      window.removeEventListener("mouseup", onWindowMouseUp)
+      clearSelection()
+    }
+  }, [Boolean(draft)])
+
+  function onMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    const current = draftRef.current
+    if (!current) return
     const { x, y } = toCanvas(e.clientX, e.clientY)
     const curX = snap(x), curY = snap(y)
-    setDraft({
-      ...draft,
-      x: Math.min(draft.startX, curX),
-      y: Math.min(draft.startY, curY),
-      width: Math.max(MIN, Math.abs(curX - draft.startX)),
-      height: Math.max(MIN, Math.abs(curY - draft.startY)),
-    })
+    const nextDraft = {
+      ...current,
+      x: Math.min(current.startX, curX),
+      y: Math.min(current.startY, curY),
+      width: Math.max(MIN, Math.abs(curX - current.startX)),
+      height: Math.max(MIN, Math.abs(curY - current.startY)),
+    }
+    draftRef.current = nextDraft
+    setDraft(nextDraft)
   }
 
   function onMouseUp() {
-    if (!draft) return
-    if (draft.width >= MIN && draft.height >= MIN) {
-      void addTile({ title: "New Tile", ...clamp(draft.x, draft.y, draft.width, draft.height), importance: 1, visible: true, canvas_id: null }).catch(console.error)
-    }
-    setDraft(null)
+    finishDraft()
   }
 
   function dragSessionTilePosition(session: TileDragSession, tile: TileType) {
@@ -170,7 +211,22 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
     : []
 
   return (
-    <div style={{ position: "fixed", top: TAB_OFFSET, left: 0, right: 0, bottom: 0, overflow: immuneTile ? "visible" : "hidden", background: "#f5f5f5", display: "flex", alignItems: "center", justifyContent: "center", zIndex: immuneTile ? 80 : 0 }}>
+    <div
+      style={{
+        position: "fixed",
+        top: TAB_OFFSET,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        overflow: immuneTile ? "visible" : "hidden",
+        background: "#f5f5f5",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        // Keep the dragged canvas above the page, but below the banner and sidebar layers.
+        zIndex: immuneTile ? 60 : 0,
+      }}
+    >
       <div
         data-mind-canvas
         ref={canvasRef}

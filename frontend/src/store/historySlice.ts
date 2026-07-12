@@ -1,6 +1,7 @@
 import type { HistoryEvent, HistoryPage } from "../types"
 import { getApi } from "./apiAuth"
 import type { HistorySlice, StoreSlice } from "./types"
+import { readHistoryCache, writeHistoryCache } from "../sync/queryCache"
 
 const HISTORY_PAGE_SIZE = 50
 const HISTORY_NEW_ITEM_ANIMATION_MS = 1200
@@ -39,6 +40,14 @@ function mergePage(page: HistoryPage, state: HistorySlice) {
   }
 }
 
+function persistHistoryCache(state: HistorySlice) {
+  void writeHistoryCache({
+    historyEvents: state.historyEvents,
+    historyNextCursor: state.historyNextCursor,
+    historyHasMore: state.historyHasMore,
+  }).catch(console.error)
+}
+
 export const createHistorySlice: StoreSlice<HistorySlice> = (set, get) => ({
   historyEvents: [],
   historyNextCursor: null,
@@ -47,6 +56,20 @@ export const createHistorySlice: StoreSlice<HistorySlice> = (set, get) => ({
   historyRefreshing: false,
   historyLoadingMore: false,
   newHistoryIds: new Set<number>(),
+
+  hydrateHistoryCache: async () => {
+    const cached = await readHistoryCache()
+    if (!cached) return
+    const state = get()
+    if (state.historyLoaded && state.historyEvents.length > 0) return
+    set({
+      historyEvents: cached.historyEvents,
+      historyNextCursor: cached.historyNextCursor,
+      historyHasMore: cached.historyHasMore,
+      historyLoaded: true,
+      newHistoryIds: new Set(),
+    })
+  },
 
   refreshHistory: async () => {
     if (get().historyRefreshing) return
@@ -58,6 +81,17 @@ export const createHistorySlice: StoreSlice<HistorySlice> = (set, get) => ({
       set((state) => {
         const merged = mergePage(page, state)
         insertedIds = merged.insertedIds
+        const nextState: HistorySlice = {
+          ...state,
+          historyEvents: merged.historyEvents,
+          historyNextCursor: merged.historyNextCursor,
+          historyHasMore: merged.historyHasMore,
+          historyLoaded: merged.historyLoaded,
+          historyRefreshing: state.historyRefreshing,
+          historyLoadingMore: state.historyLoadingMore,
+          newHistoryIds: merged.newHistoryIds,
+        }
+        persistHistoryCache(nextState)
         return {
           historyEvents: merged.historyEvents,
           historyNextCursor: merged.historyNextCursor,
@@ -92,6 +126,17 @@ export const createHistorySlice: StoreSlice<HistorySlice> = (set, get) => ({
       const page = await getApi().history.list(state.historyNextCursor, HISTORY_PAGE_SIZE)
       set((current) => {
         const merged = mergePage(page, current)
+        const nextState: HistorySlice = {
+          ...current,
+          historyEvents: merged.historyEvents,
+          historyNextCursor: merged.historyNextCursor,
+          historyHasMore: merged.historyHasMore,
+          historyLoaded: merged.historyLoaded,
+          historyRefreshing: current.historyRefreshing,
+          historyLoadingMore: current.historyLoadingMore,
+          newHistoryIds: merged.newHistoryIds,
+        }
+        persistHistoryCache(nextState)
         return {
           historyEvents: merged.historyEvents,
           historyNextCursor: merged.historyNextCursor,

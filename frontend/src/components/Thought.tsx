@@ -25,9 +25,9 @@ const thoughtAnimationStyles = `
   100% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0); }
 }
 @keyframes remoteThoughtUpdate {
-  0% { background: #eff6ff; border-color: #60a5fa; box-shadow: 0 0 0 2px rgba(59,130,246,0.24); }
-  60% { background: #f8fbff; border-color: #bfdbfe; box-shadow: 0 0 0 2px rgba(59,130,246,0.12); }
-  100% { background: #fafafa; border-color: #ebebeb; box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+  0% { background: #f5f3ff; border-color: #a78bfa; box-shadow: 0 0 0 2px rgba(124,58,237,0.24); }
+  60% { background: #faf7ff; border-color: #c4b5fd; box-shadow: 0 0 0 2px rgba(124,58,237,0.12); }
+  100% { background: #fafafa; border-color: #ebebeb; box-shadow: 0 0 0 0 rgba(124,58,237,0); }
 }
 `
 

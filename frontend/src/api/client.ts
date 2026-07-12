@@ -1,4 +1,4 @@
-import type { BillingUsage, Canvas, HistoryEvent, HistoryPage, Tag, Thought, Tile } from "../types"
+import type { BillingPlanImpact, BillingPlanSwitchResult, BillingPlans, BillingUsage, Canvas, HistoryEvent, HistoryPage, Tag, Thought, Tile } from "../types"
 import type { SyncPullResponse, SyncPushOperation, SyncPushResponse, SyncSnapshotResponse } from "../sync/types"
 import { isReauthRequired, notifyReauthRequired } from "../auth/reauthSignal"
 import { ApiRateLimitError, ApiUnauthorizedError } from "./errors"
@@ -46,13 +46,17 @@ function normalizeHistoryPage(page: HistoryPage): HistoryPage {
 }
 
 function normalizeSnapshot(snapshot: SyncSnapshotResponse): SyncSnapshotResponse {
+  const canvases = Array.isArray(snapshot.canvases) ? snapshot.canvases : []
+  const tags = Array.isArray(snapshot.tags) ? snapshot.tags : []
+  const tiles = Array.isArray(snapshot.tiles) ? snapshot.tiles : []
+  const thoughts = Array.isArray(snapshot.thoughts) ? snapshot.thoughts : []
   return {
-    revision: Number(snapshot.revision),
-    active_canvas_id: snapshot.active_canvas_id === null ? null : Number(snapshot.active_canvas_id),
-    canvases: snapshot.canvases.map(normalizeCanvas),
-    tags: snapshot.tags.map(normalizeTag),
-    tiles: snapshot.tiles.map(normalizeTile),
-    thoughts: snapshot.thoughts.map(normalizeThought),
+    revision: Number(snapshot.revision ?? 0),
+    active_canvas_id: snapshot.active_canvas_id === null || snapshot.active_canvas_id === undefined ? null : Number(snapshot.active_canvas_id),
+    canvases: canvases.map(normalizeCanvas),
+    tags: tags.map(normalizeTag),
+    tiles: tiles.map(normalizeTile),
+    thoughts: thoughts.map(normalizeThought),
   }
 }
 
@@ -183,6 +187,12 @@ export function createApi(getToken: GetToken) {
 
     billing: {
       usage: () => req<BillingUsage>("/billing/usage", getToken),
+      plans: () => req<BillingPlans>("/billing/plans", getToken),
+      planImpact: (planId: string) => {
+        const params = new URLSearchParams({ plan_id: planId })
+        return req<BillingPlanImpact>(`/billing/plan-impact?${params.toString()}`, getToken)
+      },
+      switchPlan: (planId: string, confirmedOverLimit = false) => req<BillingPlanSwitchResult>("/billing/switch-plan", getToken, { method: "POST", body: JSON.stringify({ plan_id: planId, confirmed_over_limit: confirmedOverLimit }) }),
     },
 
     sync: {

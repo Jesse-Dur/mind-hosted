@@ -150,15 +150,25 @@ async function reconcileSnapshot(snapshot: SyncSnapshotResponse) {
   const serverTileIds = new Set(snapshot.tiles.map((tile) => Number(tile.id)))
   const serverThoughtIds = new Set(snapshot.thoughts.map((thought) => Number(thought.id)))
   const localTileRecords = await syncDb.entities.where("entityType").equals("tile").toArray()
-  const localCanvasTileIds = new Set(localTileRecords
-    .map((record) => record.data)
-    .filter(isTile)
-    .filter((tile) => tile.canvas_id === canvasId)
-    .map((tile) => tile.id))
+  const localCanvasTileRecords = localTileRecords
+    .filter((record): record is LocalEntityRecord => isTile(record.data) && record.data.canvas_id === canvasId)
+  const localCanvasTileIds = new Set(localCanvasTileRecords.map((record) => record.data.id))
+  const localCanvasTileRecordsById = new Map(localCanvasTileRecords.map((record) => [record.data.id, record]))
 
   await Promise.all([
     deleteCleanMissingRecords("tile", serverTileIds, (record) => isTile(record.data) && record.data.canvas_id === canvasId),
-    deleteCleanMissingRecords("thought", serverThoughtIds, (record) => isThought(record.data) && localCanvasTileIds.has(record.data.tile_id)),
+    syncDb.entities.where("entityType").equals("thought").toArray().then(async (records) => {
+      await Promise.all(records.map(async (record) => {
+        if (!isThought(record.data) || !localCanvasTileIds.has(record.data.tile_id)) return
+        if (record.serverId === null || serverThoughtIds.has(record.serverId)) return
+        // A stale snapshot can arrive before a moved tile's write is fully
+        // reflected server-side. Keep its thoughts until the tile sync settles.
+        const parentTile = localCanvasTileRecordsById.get(record.data.tile_id)
+        if (parentTile && await pendingOutboxFor(parentTile.clientId)) return
+        if (await pendingOutboxFor(record.clientId)) return
+        await syncDb.entities.delete(record.key)
+      }))
+    }),
   ])
 }
 

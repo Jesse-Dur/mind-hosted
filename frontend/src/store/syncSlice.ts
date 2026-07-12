@@ -1,3 +1,4 @@
+// This slice owns sync runtime startup and the derived pending-count badge state.
 import type { StoreSlice, SyncSlice } from "./types"
 import { startSyncRuntime, syncInBackground } from "../sync/engine"
 import { syncDb } from "../sync/localDb"
@@ -11,7 +12,7 @@ async function pendingCount() {
 export const createSyncSlice: StoreSlice<SyncSlice> = (set) => ({
   syncPendingCount: 0,
 
-  initializeSync: async () => {
+  startSyncRuntime: async () => {
     if (!runtimeStarted) {
       runtimeStarted = true
       startSyncRuntime()

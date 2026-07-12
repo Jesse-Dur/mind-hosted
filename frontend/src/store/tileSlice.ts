@@ -3,7 +3,6 @@ import type { StoreSlice, TileSlice } from "./types"
 import { findThoughtsForTile, findTileInState, upsertTile, visibleThoughts, visibleTiles } from "./cacheHelpers"
 import { enqueueDelete, enqueueUpsert } from "../sync/engine"
 import { createClientId, createTemporarySyncId } from "../sync/ids"
-import { assertCreationAllowed, assertEditingAllowed } from "../billing/access"
 
 function buildOptimisticTile(data: Omit<Tile, "id" | "created_at">, activeCanvasId: number | null): Tile {
   const clientId = createClientId("tile")
@@ -19,7 +18,10 @@ function buildOptimisticTile(data: Omit<Tile, "id" | "created_at">, activeCanvas
 
 export const createTileSlice: StoreSlice<TileSlice> = (set, get) => ({
   addTile: async (data) => {
-    assertCreationAllowed("tiles")
+    if (!get().canCreateBillingFeature("tiles")) {
+      get().showBillingCreationLimitNotice("tiles")
+      return
+    }
     const { activeCanvasId } = get()
     const tile = buildOptimisticTile(data, activeCanvasId)
     set((s) => {
@@ -27,21 +29,27 @@ export const createTileSlice: StoreSlice<TileSlice> = (set, get) => ({
       if (tile.canvas_id !== null) tileCache.set(tile.canvas_id, [...(tileCache.get(tile.canvas_id) ?? []), tile])
       return { tiles: [...s.tiles, tile], tileCache }
     })
+    get().markLocalTileChange(tile.id)
+    get().adjustBillingFeatureUsage("tiles", 1)
     await enqueueUpsert("tile", tile)
   },
 
   moveTileLocal: (id, data, fallbackTile) => {
-    assertEditingAllowed()
+    get().assertBillingEditingAllowed()
     const { tiles } = get()
     if (tiles.some((tile) => tile.id === id)) {
       set({ tiles: tiles.map((tile) => (tile.id === id ? { ...tile, ...data } : tile)) })
+      get().markLocalTileChange(id)
       return
     }
-    if (fallbackTile) set({ tiles: [...tiles, { ...fallbackTile, ...data }] })
+    if (fallbackTile) {
+      set({ tiles: [...tiles, { ...fallbackTile, ...data }] })
+      get().markLocalTileChange(id)
+    }
   },
 
   updateTile: async (id, data) => {
-    assertEditingAllowed()
+    get().assertBillingEditingAllowed()
     let updatedTile: Tile | undefined
     set((s) => {
       const tileCache = new Map(s.tileCache)
@@ -61,12 +69,15 @@ export const createTileSlice: StoreSlice<TileSlice> = (set, get) => ({
         tileCache,
       }
     })
-    if (updatedTile) await enqueueUpsert("tile", updatedTile)
+    if (updatedTile) {
+      get().markLocalTileChange(id)
+      await enqueueUpsert("tile", updatedTile)
+    }
     return updatedTile
   },
 
   moveTileToCanvas: async (id, targetCanvasId, x, y) => {
-    assertEditingAllowed()
+    get().assertBillingEditingAllowed()
     const initial = get()
     const tile = findTileInState(id, initial.tiles, initial.tileCache)
     if (!tile) return
@@ -103,6 +114,7 @@ export const createTileSlice: StoreSlice<TileSlice> = (set, get) => ({
       }
     })
 
+    get().markLocalTileChange(id)
     await enqueueUpsert("tile", movedTile)
   },
 
@@ -123,6 +135,8 @@ export const createTileSlice: StoreSlice<TileSlice> = (set, get) => ({
         thoughtCache,
       }
     })
+    get().adjustBillingFeatureUsage("tiles", -1)
+    get().adjustBillingFeatureUsage("thoughts", -tileThoughts.length)
     get().discardThoughtsForTile(id)
     await Promise.all([
       ...tileThoughts.map((thought) => enqueueDelete("thought", thought)),

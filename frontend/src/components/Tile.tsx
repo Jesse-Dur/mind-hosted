@@ -15,9 +15,9 @@ const tileAnimationStyles = `
   100% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0); }
 }
 @keyframes remoteTileUpdate {
-  0% { background: rgba(239,246,255,0.98); border-color: #60a5fa; box-shadow: 0 0 0 2px rgba(59,130,246,0.28), 0 12px 28px rgba(59,130,246,0.14); }
-  60% { background: rgba(239,246,255,0.98); border-color: #93c5fd; box-shadow: 0 0 0 2px rgba(59,130,246,0.18), 0 8px 18px rgba(59,130,246,0.10); }
-  100% { background: rgba(255,255,255,0.95); border-color: #e0e0e0; box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+  0% { background: rgba(245,243,255,0.98); border-color: #a78bfa; box-shadow: 0 0 0 2px rgba(124,58,237,0.24), 0 12px 28px rgba(124,58,237,0.12); }
+  60% { background: rgba(245,243,255,0.98); border-color: #c4b5fd; box-shadow: 0 0 0 2px rgba(124,58,237,0.16), 0 8px 18px rgba(124,58,237,0.08); }
+  100% { background: rgba(255,255,255,0.95); border-color: #e0e0e0; box-shadow: 0 0 0 0 rgba(124,58,237,0); }
 }
 `
 

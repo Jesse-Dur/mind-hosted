@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from "react"
+// This file owns the history list only; startup and data warmup happen in the central coordinator.
+import { useEffect, useState, useRef, useCallback } from "react"
 import { useStore } from "../store"
 
 const ACTION_LABELS: Record<string, string> = {
@@ -79,25 +80,16 @@ function ExpandDetail({ isAI, action, detail, visible }: { isAI: boolean; action
   )
 }
 
-export function HistoryPanel({ sidebarOpen }: { sidebarOpen: boolean }) {
+export function HistoryPanel() {
   const [expanded, setExpanded] = useState<number | null>(null)
   const observer = useRef<IntersectionObserver | null>(null)
   const {
     historyEvents: events,
-    historyLoaded,
-    historyRefreshing,
     historyLoadingMore,
     historyHasMore,
     historyNextCursor,
-    refreshHistory,
     loadMoreHistory,
   } = useStore()
-
-  useEffect(() => {
-    if (sidebarOpen) {
-      void refreshHistory()
-    }
-  }, [sidebarOpen, refreshHistory])
 
   const loadMoreMarker = useCallback((node: HTMLDivElement | null) => {
     observer.current?.disconnect()
@@ -109,22 +101,10 @@ export function HistoryPanel({ sidebarOpen }: { sidebarOpen: boolean }) {
     observer.current.observe(node)
   }, [historyHasMore, historyLoadingMore, historyNextCursor, loadMoreHistory])
 
-  const loadingInitial = !historyLoaded && historyRefreshing
-
   return (
     <div style={{ flex: 1, overflowY: "auto" }}>
-      {loadingInitial && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {[1,2,3,4].map((i) => (
-            <div key={i} style={{ borderBottom: "1px solid #f5f5f5", paddingBottom: 12 }}>
-              <div style={{ height: 10, width: 80, borderRadius: 4, background: "#f0f0f0", marginBottom: 6 }} />
-              <div style={{ height: 12, width: "60%", borderRadius: 4, background: "#f5f5f5" }} />
-            </div>
-          ))}
-        </div>
-      )}
-      {!loadingInitial && events.length === 0 && <p style={{ fontSize: 12, color: "#ccc" }}>No history yet</p>}
-      {!loadingInitial && events.map((e, i) => {
+      {events.length === 0 && <p style={{ fontSize: 12, color: "#ccc" }}>No history yet</p>}
+      {events.map((e, i) => {
         const detail = (typeof e.detail === "string" ? JSON.parse(e.detail) : e.detail) as Record<string, unknown>
         const isExpanded = expanded === e.id
         const isAI = e.action === "ai.process"

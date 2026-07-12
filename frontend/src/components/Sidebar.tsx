@@ -1,10 +1,11 @@
+// This file owns the sidebar shell and tab selection, and it warms sidebar data on open.
 import { useEffect, useState } from "react"
-import { useAuth } from "@clerk/clerk-react"
 import { useStore } from "../store"
 import { HistoryPanel } from "./HistoryPanel"
 import { SettingsPanel } from "./SettingsPanel"
 import { TagsPanel } from "./TagsPanel"
-import { UsagePanel, preloadBillingUsage } from "./UsagePanel"
+import { UsagePanel } from "./UsagePanel"
+import { startSidebarWarmupOnOpen } from "../startup/workspaceStartup"
 
 type Tab = "tags" | "history" | "usage" | "settings"
 
@@ -14,21 +15,17 @@ const TABS: { id: Tab; label: string }[] = [
 ]
 
 export function Sidebar() {
-  const { getToken } = useAuth()
-  const { sidebarOpen, setSidebarOpen, refreshHistory } = useStore()
+  const { sidebarOpen, setSidebarOpen } = useStore()
   const [activeTab, setActiveTab] = useState<Tab>("tags")
-  const [usageRefreshKey, setUsageRefreshKey] = useState(0)
-
-  useEffect(() => {
-    if (!sidebarOpen) return
-    void refreshHistory()
-    void preloadBillingUsage(getToken).catch(console.error)
-  }, [getToken, refreshHistory, sidebarOpen])
 
   function selectTab(tab: Tab) {
     setActiveTab(tab)
-    if (tab === "usage") setUsageRefreshKey((key) => key + 1)
   }
+
+  useEffect(() => {
+    if (!sidebarOpen) return
+    void startSidebarWarmupOnOpen()
+  }, [sidebarOpen])
 
   return (
     <>
@@ -95,7 +92,8 @@ export function Sidebar() {
             </svg>
           </button>
         </div>
-        {/* tabs + close */}
+
+        {/* Tabs stay mounted so switching is instant once the panel code has been warmed. */}
         <div style={{ display: "flex", alignItems: "center", gap: 2, marginBottom: 16, borderBottom: "1px solid #ebebeb", paddingBottom: 10 }}>
           {TABS.map((tab) => (
             <button
@@ -123,10 +121,9 @@ export function Sidebar() {
             </svg>
           </button>
         </div>
-
         {activeTab === "tags" && <TagsPanel />}
-        {activeTab === "history" && <HistoryPanel sidebarOpen={sidebarOpen} />}
-        {activeTab === "usage" && <UsagePanel refreshKey={usageRefreshKey} />}
+        {activeTab === "history" && <HistoryPanel />}
+        {activeTab === "usage" && <UsagePanel />}
         {activeTab === "settings" && <SettingsPanel />}
       </div>
     </>

@@ -1,3 +1,4 @@
+import Dexie from "dexie"
 import { IDBKeyRange, indexedDB } from "fake-indexeddb"
 import type { Canvas, Tag, Thought, Tile } from "../types"
 import type { LocalEntityRecord, OutboxRecord } from "../sync/types"
@@ -7,6 +8,8 @@ type TestWindow = {
   clearTimeout: (handle: number) => void
   addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
   removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
+  indexedDB?: typeof indexedDB
+  IDBKeyRange?: typeof IDBKeyRange
 }
 
 type TestNavigator = {
@@ -56,11 +59,15 @@ const globals = globalThis as unknown as {
 
 globals.indexedDB = indexedDB
 globals.IDBKeyRange = IDBKeyRange
+Dexie.dependencies.indexedDB = indexedDB
+Dexie.dependencies.IDBKeyRange = IDBKeyRange
 globals.window = {
   setTimeout: () => 1,
   clearTimeout: () => {},
   addEventListener: () => {},
   removeEventListener: () => {},
+  indexedDB,
+  IDBKeyRange,
 }
 globals.navigator = {}
 globals.document = {
@@ -169,10 +176,12 @@ export async function resetFrontendState() {
     syncDb.entities.clear(),
     syncDb.outbox.clear(),
     syncDb.metadata.clear(),
+    syncDb.queryCache.clear(),
   ])
   globals.localStorage.clear()
   clearReauthRequired()
   setGetToken(() => Promise.resolve("test-token"))
+  useStore.getState().resetBillingState()
   useStore.setState({
     canvases: [],
     activeCanvasId: null,
@@ -189,8 +198,25 @@ export async function resetFrontendState() {
     historyRefreshing: false,
     historyLoadingMore: false,
     newHistoryIds: new Set(),
+    billingUsage: null,
+    billingPlans: null,
+    billingUsageLoading: false,
+    billingPlansLoading: false,
+    billingUsageError: null,
+    billingPlansError: null,
+    billingChangedFeatureIds: new Set(),
+    billingOverageModalOpen: false,
+    billingOverageDismissReady: false,
+    billingOverageDismissSeconds: 0,
+    recentLocalTileChangeIds: new Map(),
     remoteChangedTileIds: new Set(),
     remoteChangedThoughtIds: new Set(),
     syncPendingCount: 0,
+    aiStatus: "idle",
+    sidebarOpen: false,
+    spotlightOpen: false,
+    tabsVisible: true,
+    canvasHeight: 1440,
+    highlightedId: null,
   })
 }

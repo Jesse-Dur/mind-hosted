@@ -79,6 +79,18 @@ export type BillingFeatureUsage = {
   cost: string | null
 }
 
+export type BillingLimitFeature = BillingFeatureUsage["id"]
+
+export type BillingCreationLimitFeature = Extract<BillingLimitFeature, "canvases" | "tiles" | "thoughts">
+
+export type BillingLimitNotice = {
+  feature: BillingLimitFeature
+  shownAt: number
+  resetAt?: string | null
+}
+
+export type BillingCreationLimitNotice = BillingLimitNotice & { feature: BillingCreationLimitFeature }
+
 export type BillingPlan = {
   id: string
   name: string
@@ -106,4 +118,44 @@ export type BillingUsage = {
   plans: BillingPlan[]
   features: BillingFeatureUsage[]
   overage: BillingOverage
+}
+
+export type BillingPlanAction = "current" | "scheduled" | "subscribe" | "upgrade" | "downgrade" | "unavailable"
+
+export type BillingPlanFeature = {
+  id: BillingFeatureUsage["id"]
+  label: string
+  unit: string
+  limit: number | null
+  unlimited: boolean
+  display: string
+  cost: string | null
+}
+
+export type BillingPlanOption = {
+  id: string
+  name: string
+  description: string | null
+  cost: string
+  action: BillingPlanAction
+  features: BillingPlanFeature[]
+}
+
+export type BillingPlans = {
+  customer_id: string
+  plans: BillingPlanOption[]
+}
+
+export type BillingPlanImpact = {
+  target_plan_id: string
+  target_plan_name: string
+  action: BillingPlanAction
+  blocking_overages: BillingOverageItem[]
+  at_limit_resources: BillingOverageItem["id"][]
+  will_freeze_editing: boolean
+}
+
+export type BillingPlanSwitchResult = {
+  customer_id: string
+  payment_url: string | null
 }

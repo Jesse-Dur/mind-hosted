@@ -1,5 +1,7 @@
 import type { AiSlice, StoreSlice } from "./types"
 import { getApi } from "./apiAuth"
+import { isApiRateLimitError } from "../api/errors"
+import type { BillingLimitFeature } from "../types"
 
 export const createAiSlice: StoreSlice<AiSlice> = (set, get) => ({
   aiStatus: "idle",
@@ -55,6 +57,13 @@ export const createAiSlice: StoreSlice<AiSlice> = (set, get) => ({
     if (!trimmed) return
     set({ aiStatus: "processing" })
     get().startAiPolling()
-    getApi().ai.process(trimmed, priority).catch(console.error)
+    getApi().ai.process(trimmed, priority).catch((error: unknown) => {
+      set({ aiStatus: "idle" })
+      if (isApiRateLimitError(error)) {
+        get().showBillingCreationLimitNotice(error.featureId as BillingLimitFeature, { resetAt: error.resetAt })
+        return
+      }
+      console.error(error)
+    })
   },
 })

@@ -1,10 +1,11 @@
-import type { BootSlice, StoreSlice } from "./types"
+// This slice restores cached workspace state from local storage and IndexedDB.
+import type { CachedWorkspaceHydration, StoreSlice, WorkspaceRestoreSlice } from "./types"
 import { getStoredActiveCanvasId, writeStoredActiveCanvasId } from "./storage"
 import { cachedCanvases, cachedTags, cachedThoughtsForCanvas, cachedTiles } from "../sync/cache"
 import { setSyncActiveCanvas } from "../sync/engine"
 
-export const createBootSlice: StoreSlice<BootSlice> = (set) => ({
-  hydrateCachedWorkspace: async () => {
+export const createWorkspaceRestoreSlice: StoreSlice<WorkspaceRestoreSlice> = (set) => ({
+  restoreCachedWorkspace: async () => {
     const canvases = await cachedCanvases()
     if (canvases.length === 0) {
       setSyncActiveCanvas(null)
@@ -32,9 +33,8 @@ export const createBootSlice: StoreSlice<BootSlice> = (set) => ({
       thoughtCache: activeCanvasId === null ? new Map() : new Map([[activeCanvasId, thoughts]]),
     })
 
-    // Once localStorage/cache reveals the active canvas, sync can start without
-    // waiting for the loading overlay or animation lifecycle.
+    // The sync engine can follow the restored active canvas immediately; it does not need the shell to finish fading.
     setSyncActiveCanvas(activeCanvasId)
-    return { activeCanvasId, hasUsableCache: true }
+    return { activeCanvasId, hasUsableCache: true } satisfies CachedWorkspaceHydration
   },
 })

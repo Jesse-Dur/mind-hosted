@@ -1,75 +1,10 @@
-import { useEffect, useMemo, useState } from "react"
-import { useAuth } from "@clerk/clerk-react"
-import { createApi } from "../api/client"
-import type { BillingFeatureUsage, BillingUsage } from "../types"
-
-type GetTokenOptions = { skipCache?: boolean }
-type GetToken = (options?: GetTokenOptions) => Promise<string | null>
-
-let cachedUsage: BillingUsage | null = null
-let pendingUsage: Promise<BillingUsage> | null = null
+// This file owns the usage view only; startup and preload orchestration live elsewhere.
+import { useEffect, useMemo } from "react"
+import { useStore } from "../store"
+import type { BillingFeatureUsage } from "../types"
+import { startBillingWarmupOnPlans } from "../startup/workspaceStartup"
 const ACCENT_BAR = "#8b5cf6"
 const OVER_LIMIT_BAR = "#dc2626"
-
-export function preloadBillingUsage(getToken: GetToken) {
-  if (cachedUsage) return Promise.resolve(cachedUsage)
-  if (pendingUsage) return pendingUsage
-
-  pendingUsage = createApi(getToken).billing.usage()
-    .then((usage) => {
-      cachedUsage = usage
-      return usage
-    })
-    .finally(() => {
-      pendingUsage = null
-    })
-
-  return pendingUsage
-}
-
-export function refreshBillingUsage(getToken: GetToken) {
-  const request = createApi(getToken).billing.usage()
-  const trackedRequest = request
-    .then((usage) => {
-      cachedUsage = usage
-      return usage
-    })
-    .finally(() => {
-      if (pendingUsage === trackedRequest) pendingUsage = null
-    })
-  pendingUsage = trackedRequest
-  return pendingUsage
-}
-
-function usageSnapshot(usage: BillingUsage | null) {
-  if (!usage) return ""
-  return JSON.stringify({
-    plans: usage.plans.map((plan) => [plan.id, plan.name, plan.cost]),
-    features: usage.features.map((feature) => [
-      feature.id,
-      feature.used,
-      feature.limit,
-      feature.remaining,
-      feature.unlimited,
-      feature.cost,
-    ]),
-  })
-}
-
-function changedFeatureIds(previous: BillingUsage | null, next: BillingUsage) {
-  const previousFeatures = new Map(previous?.features.map((feature) => [feature.id, feature]))
-  return new Set(next.features
-    .filter((feature) => {
-      const before = previousFeatures.get(feature.id)
-      return !before
-        || before.used !== feature.used
-        || before.limit !== feature.limit
-        || before.remaining !== feature.remaining
-        || before.unlimited !== feature.unlimited
-        || before.cost !== feature.cost
-    })
-    .map((feature) => feature.id))
-}
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: value >= 10 ? 0 : 1 }).format(value)
@@ -91,29 +26,10 @@ function barColor(feature: BillingFeatureUsage) {
   return feature.limit !== null && feature.used > feature.limit ? OVER_LIMIT_BAR : ACCENT_BAR
 }
 
-function UsageSkeleton() {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ height: 50, borderBottom: "1px solid #f2f2f2", paddingBottom: 14 }}>
-        <div style={{ height: 11, width: 88, borderRadius: 4, background: "#f0f0f0", marginBottom: 8 }} />
-        <div style={{ height: 16, width: 150, borderRadius: 4, background: "#f5f5f5" }} />
-      </div>
-      {[1, 2, 3, 4].map((row) => (
-        <div key={row}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 7 }}>
-            <div style={{ height: 10, width: 82, borderRadius: 4, background: "#f0f0f0" }} />
-            <div style={{ height: 10, width: 58, borderRadius: 4, background: "#f5f5f5" }} />
-          </div>
-          <div style={{ height: 7, borderRadius: 999, background: "#f4f4f4" }} />
-        </div>
-      ))}
-    </div>
-  )
-}
-
 function UsageRow({ feature, changed }: { feature: BillingFeatureUsage; changed: boolean }) {
   const percent = barPercent(feature)
   const hasBar = feature.limit !== null && !feature.unlimited
+  const overLimit = feature.limit !== null && feature.used > feature.limit
 
   return (
     <div
@@ -126,7 +42,14 @@ function UsageRow({ feature, changed }: { feature: BillingFeatureUsage; changed:
     >
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: hasBar ? 7 : 2 }}>
         <p style={{ fontSize: 13, color: "#333", fontWeight: 600 }}>{feature.label}</p>
-        <p style={{ fontSize: 11, color: "#999", textAlign: "right", whiteSpace: "nowrap" }}>{formatUsage(feature)}</p>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+          <p style={{ fontSize: 11, color: "#999", textAlign: "right", whiteSpace: "nowrap" }}>{formatUsage(feature)}</p>
+          {overLimit && (
+            <p style={{ fontSize: 10.5, fontWeight: 700, color: "#b91c1c", textAlign: "right" }}>
+              Over limit
+            </p>
+          )}
+        </div>
       </div>
 
       {hasBar && (
@@ -142,17 +65,20 @@ function UsageRow({ feature, changed }: { feature: BillingFeatureUsage; changed:
           />
         </div>
       )}
-
     </div>
   )
 }
 
-export function UsagePanel({ refreshKey }: { refreshKey: number }) {
-  const { getToken } = useAuth()
-  const [usage, setUsage] = useState<BillingUsage | null>(cachedUsage)
-  const [loading, setLoading] = useState(cachedUsage === null)
-  const [error, setError] = useState<string | null>(null)
-  const [changedIds, setChangedIds] = useState<Set<BillingFeatureUsage["id"]>>(new Set())
+export function UsagePanel() {
+  const usage = useStore((state) => state.billingUsage)
+  const loading = useStore((state) => state.billingUsageLoading)
+  const error = useStore((state) => state.billingUsageError)
+  const changedIds = useStore((state) => state.billingChangedFeatureIds)
+  const refreshUsage = useStore((state) => state.refreshBillingUsage)
+
+  useEffect(() => {
+    void startBillingWarmupOnPlans()
+  }, [])
 
   const planSummary = useMemo(() => {
     if (!usage || usage.plans.length === 0) return null
@@ -164,42 +90,14 @@ export function UsagePanel({ refreshKey }: { refreshKey: number }) {
     }
   }, [usage])
 
-  async function loadUsage({ forceRefresh }: { forceRefresh: boolean }) {
-    setLoading(cachedUsage === null)
-    setError(null)
-    try {
-      const before = cachedUsage
-      const next = forceRefresh ? await refreshBillingUsage(getToken) : await preloadBillingUsage(getToken)
-      const changed = usageSnapshot(before) === usageSnapshot(next) ? new Set<BillingFeatureUsage["id"]>() : changedFeatureIds(before, next)
-      setUsage(next)
-      setChangedIds(changed)
-      if (changed.size > 0) {
-        window.setTimeout(() => setChangedIds(new Set()), 1200)
-      }
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load usage")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (cachedUsage) {
-      setUsage(cachedUsage)
-      setLoading(false)
-    }
-    // Refresh in the background every time the Usage tab mounts; cached data stays visible.
-    void loadUsage({ forceRefresh: cachedUsage !== null })
-  }, [getToken, refreshKey])
-
-  if (loading) return <UsageSkeleton />
+  if (loading && usage === null) return null
 
   if (error) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <p style={{ fontSize: 12, color: "#999", lineHeight: 1.45 }}>Usage could not be loaded.</p>
         <button
-          onClick={() => loadUsage({ forceRefresh: true })}
+          onClick={() => { void refreshUsage().catch(console.error) }}
           style={{ alignSelf: "flex-start", fontSize: 12, fontWeight: 600, padding: "6px 12px", borderRadius: 6, border: "none", background: "#1a1a1a", color: "#fff", cursor: "pointer" }}
         >
           Retry
@@ -223,8 +121,6 @@ export function UsagePanel({ refreshKey }: { refreshKey: number }) {
             type="button"
             onClick={() => { window.location.hash = "plans" }}
             style={{ fontSize: 11, fontWeight: 700, color: "#1a1a1a", background: "#f5f5f5", border: "1px solid #e5e5e5", borderRadius: 6, padding: "6px 9px", cursor: "pointer", flexShrink: 0, transition: "background 0.15s ease, border-color 0.15s ease" }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = "#eee"; e.currentTarget.style.borderColor = "#ddd" }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "#f5f5f5"; e.currentTarget.style.borderColor = "#e5e5e5" }}
           >
             View plans
           </button>
@@ -234,7 +130,11 @@ export function UsagePanel({ refreshKey }: { refreshKey: number }) {
       {usage && usage.features.length > 0 ? (
         <div>
           {usage.features.map((feature) => (
-            <UsageRow key={feature.id} feature={feature} changed={changedIds.has(feature.id)} />
+            <UsageRow
+              key={feature.id}
+              feature={feature}
+              changed={changedIds.has(feature.id)}
+            />
           ))}
         </div>
       ) : (

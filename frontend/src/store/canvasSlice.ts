@@ -8,7 +8,6 @@ import { createClientId, createTemporarySyncId } from "../sync/ids"
 import { advanceLoadGeneration } from "./loadGeneration"
 import { fetchAndCacheSnapshot } from "../sync/snapshot"
 import { isApiUnauthorizedError } from "../api/errors"
-import { assertCreationAllowed, assertEditingAllowed } from "../billing/access"
 
 export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
   canvases: [],
@@ -120,7 +119,10 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
   },
 
   addCanvas: (name) => {
-    assertCreationAllowed("canvases")
+    if (!get().canCreateBillingFeature("canvases")) {
+      get().showBillingCreationLimitNotice("canvases")
+      return null
+    }
     const { canvases } = get()
     const clientId = createClientId("canvas")
     const tempId = createTemporarySyncId()
@@ -139,6 +141,7 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
       tileCache: new Map(s.tileCache).set(tempId, []),
       thoughtCache: new Map(s.thoughtCache).set(tempId, []),
     }))
+    get().adjustBillingFeatureUsage("canvases", 1)
 
     const persisted = enqueueUpsert("canvas", tempCanvas).then(() => tempCanvas)
     void persisted.catch(console.error)
@@ -147,7 +150,7 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
   },
 
   updateCanvas: async (id, data) => {
-    assertEditingAllowed()
+    get().assertBillingEditingAllowed()
     let updatedCanvas: Canvas | undefined
     set((s) => ({
       canvases: s.canvases.map((canvas) => {
@@ -160,7 +163,7 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
   },
 
   reorderCanvases: (updates) => {
-    assertEditingAllowed()
+    get().assertBillingEditingAllowed()
     const byId = new Map(updates.map((update) => [update.id, update]))
     const changed: Canvas[] = []
     set((s) => ({
@@ -239,7 +242,7 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
         thoughtCache,
       }
     })
-
+    get().adjustBillingFeatureUsage("canvases", -1)
     await enqueueDelete("canvas", removedCanvas, {
       mode: options.mode,
       ...(options.mode === "moveContents" ? { targetCanvasId: options.targetCanvasId } : {}),
@@ -251,6 +254,8 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
         ...sourceThoughts.map((thought) => enqueueDelete("thought", thought)),
         ...sourceTiles.map((tile) => enqueueDelete("tile", tile)),
       ])
+      get().adjustBillingFeatureUsage("tiles", -sourceTiles.length)
+      get().adjustBillingFeatureUsage("thoughts", -sourceThoughts.length)
     }
   },
 })

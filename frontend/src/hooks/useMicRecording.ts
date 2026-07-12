@@ -1,5 +1,8 @@
 import { useState, useRef } from "react"
 import { createApi } from "../api/client"
+import { isApiRateLimitError } from "../api/errors"
+import { useStore } from "../store"
+import type { BillingLimitFeature } from "../types"
 
 type MicState = "idle" | "loading" | "recording" | "transcribing"
 type GetToken = () => Promise<string | null>
@@ -20,6 +23,14 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
     setMicError(msg)
     setMicState("idle")
     setTimeout(() => setMicError(null), 3000)
+  }
+
+  function showRateLimitNotice(error: unknown) {
+    if (!isApiRateLimitError(error)) return false
+    useStore.getState().showBillingCreationLimitNotice(error.featureId as BillingLimitFeature, { resetAt: error.resetAt })
+    setMicError(null)
+    setMicState("idle")
+    return true
   }
 
   // releases the microphone hardware — clears the browser recording indicator
@@ -105,7 +116,8 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
         const { text } = await createApi(getToken).whisper.transcribe(blob)
         if (text.trim()) onTranscript(text.trim())
         else showError("No speech detected")
-      } catch {
+      } catch (error: unknown) {
+        if (showRateLimitNotice(error)) return
         showError("Transcription failed")
       } finally {
         setMicState("idle")
@@ -161,7 +173,8 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
         const { text } = await createApi(getToken).whisper.transcribe(blob)
         if (text.trim()) onDone(text.trim())
         else showError("No speech detected")
-      } catch {
+      } catch (error: unknown) {
+        if (showRateLimitNotice(error)) return
         showError("Transcription failed")
       } finally {
         setMicState("idle")

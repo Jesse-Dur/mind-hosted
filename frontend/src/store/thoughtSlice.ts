@@ -11,7 +11,6 @@ import {
 } from "./cacheHelpers"
 import { enqueueDelete, enqueueUpsert } from "../sync/engine"
 import { createClientId, createTemporarySyncId } from "../sync/ids"
-import { assertCreationAllowed, assertEditingAllowed } from "../billing/access"
 
 function optimisticThought(tileId: number, content: string, tags: string[], sortOrder: number): Thought {
   const clientId = createClientId("thought")
@@ -37,7 +36,10 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
   thoughtStableKeys: new Map<number, number>(),
 
   addThought: async (data) => {
-    assertCreationAllowed("thoughts")
+    if (!get().canCreateBillingFeature("thoughts")) {
+      get().showBillingCreationLimitNotice("thoughts")
+      return
+    }
     const { activeCanvasId } = get()
     const tempThought = optimisticThought(data.tile_id, data.content, data.tags, data.sort_order)
     set((s) => {
@@ -45,11 +47,15 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
       if (activeCanvasId !== null) thoughtCache.set(activeCanvasId, [...(thoughtCache.get(activeCanvasId) ?? []), tempThought])
       return { thoughts: [...s.thoughts, tempThought], thoughtCache }
     })
+    get().adjustBillingFeatureUsage("thoughts", 1)
     await enqueueUpsert("thought", tempThought)
   },
 
   addThoughtToTile: async (tileId, content, tags) => {
-    assertCreationAllowed("thoughts")
+    if (!get().canCreateBillingFeature("thoughts")) {
+      get().showBillingCreationLimitNotice("thoughts")
+      return
+    }
     const state = get()
     const maxOrder = Math.max(-1, ...state.thoughts.filter((thought) => thought.tile_id === tileId).map((thought) => thought.sort_order))
     const tempThought = optimisticThought(tileId, content, tags, maxOrder + 1)
@@ -65,6 +71,7 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
         thoughtStableKeys: new Map(s.thoughtStableKeys).set(tempThought.id, stableKey),
       }
     })
+    get().adjustBillingFeatureUsage("thoughts", 1)
     await enqueueUpsert("thought", tempThought)
   },
 
@@ -92,7 +99,7 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
   },
 
   moveThoughtToTile: async (id, tileId, options) => {
-    assertEditingAllowed()
+    get().assertBillingEditingAllowed()
     const initial = get()
     const thought = findThoughtInState(id, initial.thoughts, initial.thoughtCache)
     if (!thought || (thought.tile_id === tileId && (!options?.orderedIds || options.orderedIds.length === 0))) return
@@ -148,11 +155,12 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
         thoughtStableKeys: keys,
       }
     })
+    get().adjustBillingFeatureUsage("thoughts", -1)
     if (thought) void enqueueDelete("thought", thought)
   },
 
   updateThoughtContent: async (id, content) => {
-    assertEditingAllowed()
+    get().assertBillingEditingAllowed()
     let updatedThought: Thought | undefined
     set((s) => {
       const thoughtCache = new Map(s.thoughtCache)
@@ -176,7 +184,7 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
   },
 
   updateThoughtTags: async (id, tags) => {
-    assertEditingAllowed()
+    get().assertBillingEditingAllowed()
     let updatedThought: Thought | undefined
     set((s) => {
       const thoughtCache = new Map(s.thoughtCache)
