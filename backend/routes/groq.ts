@@ -232,7 +232,7 @@ export async function classifyAndStore(input: string, userId: string): Promise<{
 
   setStatus(userId, "processing")
 
-  type Message = { role: string; content: string; name?: string; tool_call_id?: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] }
+  type Message = { role: string; content: string }
   const baseMessages: Message[] = [
     {
       role: "system",
@@ -381,8 +381,11 @@ Available tags: ${tagList || "none"}
 
     if (hasSearches) searchIterations++
 
+    // A failed sibling must keep a same-turn done() from silently ending unfinished work.
+    let iterationFailed = false
     for (const call of filteredCalls) {
       if (call.function.name === "done") {
+        if (iterationFailed) continue
         if (historyActions.length > 0) {
           await historyDb.log(userId, "ai.process",
             historyActions.length === 1 ? `AI: ${historyActions[0]}` : `AI: ${historyActions.length} actions`,
@@ -395,9 +398,10 @@ Available tags: ${tagList || "none"}
 
       let args: Record<string, unknown> = {}
       try { args = JSON.parse(call.function.arguments) } catch {
+        iterationFailed = true
         continue
       }
-      let result = ""
+      let callSucceeded = false
 
       try {
         if (call.function.name === "search_thoughts") {
@@ -412,9 +416,7 @@ Available tags: ${tagList || "none"}
             ? results.map((r) => `id:${r.id} "${r.content}" (tile:"${r.tile_title}"${r.tags.length ? ` tags:[${r.tags.join(",")}]` : ""})`).join(", ")
             : "no results"
           searchLog.push({ tool: "search_thoughts", arg: `"${query}"`, results: resultStr })
-          result = results.length
-            ? `Found: ${JSON.stringify(results)}. NOW call update_thought/delete_thought/move_thought immediately. Do not search again.`
-            : `No results for "${query}". Call create_thought now — do not search again.`
+          callSucceeded = true
 
         } else if (call.function.name === "search_by_tag") {
           const tag = String(args.tag ?? "")
@@ -427,9 +429,7 @@ Available tags: ${tagList || "none"}
             ? results.map((r) => `id:${r.id} "${r.content}" (tile:"${r.tile_title}")`).join(", ")
             : "no results"
           searchLog.push({ tool: "search_by_tag", arg: `"${tag}"`, results: resultStr })
-          result = results.length
-            ? `Found: ${JSON.stringify(results)}. Use the same tile_id as these results for any new related thoughts. NOW act immediately.`
-            : `No thoughts tagged "${tag}"`
+          callSucceeded = true
 
         } else if (call.function.name === "search_by_tile") {
           const tileId = Number(args.tile_id)
@@ -440,28 +440,20 @@ Available tags: ${tagList || "none"}
             ? results.map((r) => `id:${r.id} "${r.content}"${r.tags.length ? ` tags:[${r.tags.join(",")}]` : ""}`).join(", ")
             : "no results"
           searchLog.push({ tool: "search_by_tile", arg: `${tileId} "${tileName}"`, results: resultStr })
-          result = results.length
-            ? `Found in tile "${tileName}": ${JSON.stringify(results)}. If the user's input is about any of these subjects (even if adding new detail or context), call update_thought on the matching one. Only call create_thought if nothing is related.`
-            : `No thoughts in tile ${tileId}. Call create_thought.`
+          callSucceeded = true
 
         } else if (call.function.name === "create_thought") {
           const tileId = Number(args.tile_id)
           const content = String(args.content ?? "")
-          if (!tileId || !content) {
-            result = "Error: missing tile_id or content"
-          } else {
+          if (tileId && content) {
             const validTile = tiles.find((t) => Number(t.id) === tileId)
-            if (!validTile) {
-              result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
-            } else {
+            if (validTile) {
               const validTags = ((args.tags as string[]) ?? []).filter((t) => tags.some((tag) => tag.name === t))
               const thought = await syncThoughtUpsert(null, { tile_id: tileId, content, tags: validTags })
-              if (!thought) {
-                result = "Error: create did not return a thought"
-              } else {
+              if (thought) {
                 const action = `Created "${thought.content}" in "${validTile.title}"`
                 historyActions.push(action)
-                result = `Created thought id:${thought.id}`
+                callSucceeded = true
               }
             }
           }
@@ -469,80 +461,67 @@ Available tags: ${tagList || "none"}
         } else if (call.function.name === "update_thought") {
           const id = Number(args.thought_id)
           const content = String(args.content ?? "")
-          if (!id || !content) {
-            result = "Error: missing thought_id or content"
-          } else if (!allowedThoughtIds.has(id)) {
-            result = `Error: thought_id ${id} was not returned by a search in this session. Search first, then update the returned id.`
-          } else {
+          if (id && content && allowedThoughtIds.has(id)) {
             const existing = knownThought(id)
-            if (!existing) {
-              result = `Error: thought_id ${id} is not available from this session's search results. Search again before updating.`
-              continue
+            if (existing) {
+              const validTags = args.tags ? (args.tags as string[]).filter((t) => tags.some((tag) => tag.name === t)) : undefined
+              const updatedThought = await syncThoughtUpsert(id, {
+                tile_id: existing.tile_id,
+                content,
+                tags: validTags ?? existing.tags,
+                sort_order: existing.sort_order,
+              })
+              if (updatedThought) {
+                const action = `Updated thought ${id} → "${content}"`
+                historyActions.push(action)
+                callSucceeded = true
+              }
             }
-            const validTags = args.tags ? (args.tags as string[]).filter((t) => tags.some((tag) => tag.name === t)) : undefined
-            const updatedThought = await syncThoughtUpsert(id, {
-              tile_id: existing.tile_id,
-              content,
-              tags: validTags ?? existing.tags,
-              sort_order: existing.sort_order,
-            })
-            const action = `Updated thought ${id} → "${content}"`
-            historyActions.push(action)
-            result = updatedThought ? "Updated" : "Error: update did not return a thought"
           }
 
         } else if (call.function.name === "delete_thought") {
           const id = Number(args.thought_id)
-          if (!id) {
-            result = "Error: missing thought_id"
-          } else if (!allowedThoughtIds.has(id)) {
-            result = `Error: thought_id ${id} was not returned by a search in this session. Search first, then delete the returned id.`
-          } else {
+          if (id && allowedThoughtIds.has(id)) {
             const existing = knownThought(id)
             await syncThoughtDelete(id)
             const label = existing ? `"${existing.content.slice(0, 40)}"` : `thought ${id}`
             historyActions.push(`Deleted ${label}`)
-            result = "Deleted"
+            callSucceeded = true
           }
 
         } else if (call.function.name === "move_thought") {
           const id = Number(args.thought_id)
           const tileId = Number(args.tile_id)
-          if (!id || !tileId) {
-            result = "Error: missing ids"
-          } else if (!allowedThoughtIds.has(id)) {
-            result = `Error: thought_id ${id} was not returned by a search in this session. Search first, then move the returned id.`
-          } else {
+          if (id && tileId && allowedThoughtIds.has(id)) {
             const validTile = tiles.find((t) => Number(t.id) === tileId)
-            if (!validTile) {
-              result = `Error: tile_id ${tileId} does not exist. Valid tile IDs: ${tiles.map((t) => `${Number(t.id)} ("${t.title}")`).join(", ")}`
-            } else {
+            if (validTile) {
               const existing = knownThought(id)
-              if (!existing) {
-                result = `Error: thought_id ${id} is not available from this session's search results. Search again before moving.`
-                continue
+              if (existing) {
+                const targetThoughts = await thoughtsDb.list(userId, { tileId })
+                const sortOrder = Math.max(-1, ...targetThoughts.map((thought) => Number(thought.sort_order))) + 1
+                const movedThought = await syncThoughtUpsert(id, {
+                  tile_id: tileId,
+                  content: existing.content,
+                  tags: existing.tags,
+                  sort_order: sortOrder,
+                })
+                if (movedThought) {
+                  const action = `Moved thought ${id} to "${validTile.title}"`
+                  historyActions.push(action)
+                  callSucceeded = true
+                }
               }
-              const targetThoughts = await thoughtsDb.list(userId, { tileId })
-              const sortOrder = Math.max(-1, ...targetThoughts.map((thought) => Number(thought.sort_order))) + 1
-              await syncThoughtUpsert(id, {
-                tile_id: tileId,
-                content: existing.content,
-                tags: existing.tags,
-                sort_order: sortOrder,
-              })
-              const action = `Moved thought ${id} to "${validTile.title}"`
-              historyActions.push(action)
-              result = "Moved"
             }
           }
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        result = `Error executing ${call.function.name}: ${msg}. Try again with valid parameters.`
-      }
+      } catch { /* A rejected tool call remains retryable on the next fresh-context iteration. */ }
 
-      const callKey = `${call.function.name}:${JSON.stringify(JSON.parse(call.function.arguments), Object.keys(JSON.parse(call.function.arguments)).sort())}`
-      executedCalls.add(callKey)
+      if (callSucceeded) {
+        const callKey = `${call.function.name}:${JSON.stringify(args, Object.keys(args).sort())}`
+        executedCalls.add(callKey)
+      } else {
+        iterationFailed = true
+      }
     }
   }
 
