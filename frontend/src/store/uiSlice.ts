@@ -1,20 +1,25 @@
 import type { StoreSlice, UiSlice } from "./types"
-import { readStoredCanvasHeight, readStoredTabsVisible, writeStoredCanvasHeight, writeStoredTabsVisible } from "./storage"
+import { getApi } from "./apiAuth"
 
 const REMOTE_CHANGE_ANIMATION_MS = 900
 const LOCAL_TILE_CHANGE_SUPPRESSION_MS = 12000
+export const DEFAULT_CANVAS_HEIGHT = 1440
+export const DEFAULT_TABS_VISIBLE = true
 
 let remoteChangeTimer: ReturnType<typeof setTimeout> | null = null
+let canvasHeightRevision = 0
+let tabsVisibleRevision = 0
+let settingsSessionRevision = 0
 
 function serverIds(ids: number[]) {
   return ids.filter((id) => Number.isInteger(id) && id > 0)
 }
 
-export const createUiSlice: StoreSlice<UiSlice> = (set) => ({
-  tabsVisible: readStoredTabsVisible(),
+export const createUiSlice: StoreSlice<UiSlice> = (set, get) => ({
+  tabsVisible: DEFAULT_TABS_VISIBLE,
   spotlightOpen: false,
   sidebarOpen: false,
-  canvasHeight: readStoredCanvasHeight(),
+  canvasHeight: DEFAULT_CANVAS_HEIGHT,
   highlightedId: null,
   recentLocalTileChangeIds: new Map(),
   remoteChangedTileIds: new Set(),
@@ -61,12 +66,55 @@ export const createUiSlice: StoreSlice<UiSlice> = (set) => ({
     set({ highlightedId: { type, id } })
     setTimeout(() => set({ highlightedId: null }), 3500)
   },
-  setCanvasHeight: (height) => {
-    writeStoredCanvasHeight(height)
-    set({ canvasHeight: height })
+  loadUserSettings: async () => {
+    const canvasLoadRevision = canvasHeightRevision
+    const tabsLoadRevision = tabsVisibleRevision
+    const sessionRevision = settingsSessionRevision
+    const settings = await getApi().settings.get()
+    if (sessionRevision !== settingsSessionRevision) return
+    // A startup response must not replace a choice made while that request was in flight.
+    if (canvasLoadRevision === canvasHeightRevision) {
+      set({ canvasHeight: settings.canvas_height })
+    }
+    if (tabsLoadRevision === tabsVisibleRevision) {
+      set({ tabsVisible: settings.tabs_visible })
+    }
   },
-  setTabsVisible: (visible) => {
-    writeStoredTabsVisible(visible)
+  resetUserSettings: () => {
+    // Invalidate in-flight reads when the signed-in user changes.
+    settingsSessionRevision += 1
+    canvasHeightRevision = 0
+    tabsVisibleRevision = 0
+    set({ canvasHeight: DEFAULT_CANVAS_HEIGHT, tabsVisible: DEFAULT_TABS_VISIBLE })
+  },
+  setCanvasHeight: async (height) => {
+    // Update immediately while the authenticated request makes the choice durable across devices.
+    const sessionRevision = settingsSessionRevision
+    const updateRevision = ++canvasHeightRevision
+    set({ canvasHeight: height })
+    const api = getApi()
+    try {
+      await api.settings.update({ canvas_height: height })
+      if (sessionRevision === settingsSessionRevision && updateRevision !== canvasHeightRevision) {
+        // Reassert the newest value if overlapping requests reached the server out of order.
+        await api.settings.update({ canvas_height: get().canvasHeight })
+      }
+    } catch (error) {
+      console.error(error)
+    }
+  },
+  setTabsVisible: async (visible) => {
+    const sessionRevision = settingsSessionRevision
+    const updateRevision = ++tabsVisibleRevision
     set({ tabsVisible: visible })
+    const api = getApi()
+    try {
+      await api.settings.update({ tabs_visible: visible })
+      if (sessionRevision === settingsSessionRevision && updateRevision !== tabsVisibleRevision) {
+        await api.settings.update({ tabs_visible: get().tabsVisible })
+      }
+    } catch (error) {
+      console.error(error)
+    }
   },
 })

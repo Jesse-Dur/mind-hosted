@@ -12,6 +12,7 @@ type SqlClient = typeof Sql
 type SyncDbClient = typeof SyncDb
 
 async function cleanup(sql: SqlClient) {
+  await sql`DELETE FROM user_settings WHERE user_id = ANY(${TEST_USERS})`
   await sql`DELETE FROM user_usage WHERE user_id = ANY(${TEST_USERS})`
   await sql`DELETE FROM sync_applied_ops WHERE user_id = ANY(${TEST_USERS})`
   await sql`DELETE FROM sync_events WHERE user_id = ANY(${TEST_USERS})`
@@ -53,9 +54,10 @@ if (!process.env.DATABASE_URL) {
   })
 } else {
   const { sql } = await import("../db/client")
+  const { settingsDb } = await import("../db/settings")
   const { syncDb } = await import("../db/sync")
 
-  describe("backend sync db", () => {
+  describe("backend database integration", () => {
     beforeEach(async () => {
       await cleanup(sql)
     })
@@ -299,6 +301,19 @@ if (!process.env.DATABASE_URL) {
 
       expect(afterChildCleanup.storageBytes).toBe(afterCanvasDelete.storageBytes)
       expect(recalculated.storageBytes).toBe(afterChildCleanup.storageBytes)
+    })
+
+    test("user settings return defaults until preferences are saved", async () => {
+      expect(await settingsDb.get(USER_A)).toEqual({ canvas_height: 1440, tabs_visible: true })
+    })
+
+    test("settings are partial updates isolated per user", async () => {
+      await settingsDb.update(USER_A, { canvas_height: 2160 })
+      await settingsDb.update(USER_A, { tabs_visible: false })
+      await settingsDb.update(USER_B, { canvas_height: 1080 })
+
+      expect(await settingsDb.get(USER_A)).toEqual({ canvas_height: 2160, tabs_visible: false })
+      expect(await settingsDb.get(USER_B)).toEqual({ canvas_height: 1080, tabs_visible: true })
     })
   })
 }

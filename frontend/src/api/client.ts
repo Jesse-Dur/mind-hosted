@@ -1,4 +1,4 @@
-import type { BillingPlanImpact, BillingPlanSwitchResult, BillingPlans, BillingUsage, Canvas, HistoryEvent, HistoryPage, Tag, Thought, Tile } from "../types"
+import type { BillingPlanImpact, BillingPlanSwitchResult, BillingPlans, BillingUsage, Canvas, HistoryEvent, HistoryPage, Tag, Thought, Tile, UserSettings } from "../types"
 import type { SyncPullResponse, SyncPushOperation, SyncPushResponse, SyncSnapshotResponse } from "../sync/types"
 import { isReauthRequired, notifyReauthRequired } from "../auth/reauthSignal"
 import { ApiRateLimitError, ApiUnauthorizedError } from "./errors"
@@ -193,6 +193,14 @@ export function createApi(getToken: GetToken) {
         return req<BillingPlanImpact>(`/billing/plan-impact?${params.toString()}`, getToken)
       },
       switchPlan: (planId: string, confirmedOverLimit = false) => req<BillingPlanSwitchResult>("/billing/switch-plan", getToken, { method: "POST", body: JSON.stringify({ plan_id: planId, confirmed_over_limit: confirmedOverLimit }) }),
+    },
+
+    settings: {
+      get: () => req<UserSettings>("/settings", getToken),
+      update: (settings: Partial<UserSettings>) => req<UserSettings>("/settings", getToken, {
+        method: "PATCH",
+        body: JSON.stringify(settings),
+      }),
     },
 
     sync: {

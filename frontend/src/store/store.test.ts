@@ -175,6 +175,37 @@ describe("frontend store optimistic updates", () => {
     expect(useStore.getState().syncPendingCount).toBe(0)
   })
 
+  test("settings load from and save to the authenticated user record", async () => {
+    const globals = globalThis as unknown as {
+      fetch: (path: string, init?: RequestInit) => Promise<Response>
+      localStorage: { getItem: (key: string) => string | null }
+    }
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    globals.fetch = async (path, init) => {
+      const url = requestUrl(path)
+      requests.push({ url, init })
+      return new Response(JSON.stringify({ canvas_height: 2160, tabs_visible: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    }
+
+    await useStore.getState().loadUserSettings()
+    expect(useStore.getState().canvasHeight).toBe(2160)
+    expect(useStore.getState().tabsVisible).toBe(false)
+
+    await useStore.getState().setCanvasHeight(1080)
+    await useStore.getState().setTabsVisible(true)
+    expect(useStore.getState().canvasHeight).toBe(1080)
+    expect(useStore.getState().tabsVisible).toBe(true)
+    expect(requests.map((request) => request.url)).toEqual(["/api/settings", "/api/settings", "/api/settings"])
+    expect(requests[1]?.init?.method).toBe("PATCH")
+    expect(JSON.parse(String(requests[1]?.init?.body))).toEqual({ canvas_height: 1080 })
+    expect(JSON.parse(String(requests[2]?.init?.body))).toEqual({ tabs_visible: true })
+    expect(globals.localStorage.getItem("canvasHeight")).toBeNull()
+    expect(globals.localStorage.getItem("tabsVisible")).toBeNull()
+  })
+
   test("sidebar hover warmup kicks off history and usage requests", async () => {
     const globals = globalThis as unknown as {
       fetch: (path: string, init?: RequestInit) => Promise<Response>
@@ -675,9 +706,11 @@ describe("frontend store optimistic updates", () => {
     expect(() => useStore.getState().assertBillingCreationAllowed("tiles")).toThrow("At limit")
   })
 
-  test("store reset clears billing state and the restored active canvas", () => {
+  test("store reset clears user-specific settings, billing state, and the restored active canvas", () => {
     useStore.setState({
       activeCanvasId: 10,
+      canvasHeight: 2160,
+      tabsVisible: false,
       billingUsage: billingUsage(),
       billingPlans: billingPlans(),
       billingUsageError: "usage failed",
@@ -692,6 +725,8 @@ describe("frontend store optimistic updates", () => {
     const state = useStore.getState()
 
     expect(state.activeCanvasId).toBeNull()
+    expect(state.canvasHeight).toBe(1440)
+    expect(state.tabsVisible).toBe(true)
     expect(state.billingUsage).toBeNull()
     expect(state.billingPlans).toBeNull()
     expect(state.billingUsageError).toBeNull()

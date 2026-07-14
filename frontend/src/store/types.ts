@@ -34,8 +34,10 @@ export interface UiSlice {
   setHighlight: (type: "tile" | "thought", id: number) => void
   setSpotlightOpen: (open: boolean) => void
   setSidebarOpen: (open: boolean) => void
-  setCanvasHeight: (height: number) => void
-  setTabsVisible: (visible: boolean) => void
+  loadUserSettings: () => Promise<void>
+  resetUserSettings: () => void
+  setCanvasHeight: (height: number) => Promise<void>
+  setTabsVisible: (visible: boolean) => Promise<void>
 }
 
 export interface CanvasSlice {

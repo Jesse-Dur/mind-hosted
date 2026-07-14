@@ -5,6 +5,7 @@ import type { SessionSlice, StoreSlice } from "./types"
 export const createSessionSlice: StoreSlice<SessionSlice> = (set, get) => ({
   resetStore: () => {
     get().resetBillingState()
+    get().resetUserSettings()
     writeStoredActiveCanvasId(null)
     set({
       canvases: [],

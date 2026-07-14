@@ -61,6 +61,11 @@ export interface HistoryEvent {
   created_at: string
 }
 
+export interface UserSettings {
+  canvas_height: number
+  tabs_visible: boolean
+}
+
 export interface HistoryPage {
   events: HistoryEvent[]
   nextCursor: string | null

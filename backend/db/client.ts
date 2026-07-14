@@ -108,4 +108,13 @@ await sql.unsafe(`
     storage_synced_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+
+  CREATE TABLE IF NOT EXISTS user_settings (
+    user_id TEXT PRIMARY KEY,
+    canvas_height INTEGER NOT NULL DEFAULT 1440 CHECK (canvas_height IN (1080, 1440, 2160)),
+    tabs_visible BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
+  ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tabs_visible BOOLEAN NOT NULL DEFAULT TRUE;
 `)

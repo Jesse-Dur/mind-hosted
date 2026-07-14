@@ -35,7 +35,7 @@ export function SettingsPanel() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span style={{ fontSize: 13, color: "#333" }}>Show tab bar</span>
           <button
-            onClick={() => setTabsVisible(!tabsVisible)}
+            onClick={() => { void setTabsVisible(!tabsVisible) }}
             style={{ width: 36, height: 20, borderRadius: 99, border: "none", cursor: "pointer", background: tabsVisible ? "#1a1a1a" : "#ddd", transition: "background 0.2s", position: "relative" }}
           >
             <span style={{ position: "absolute", top: 2, left: tabsVisible ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
@@ -52,7 +52,7 @@ export function SettingsPanel() {
           max={2}
           step={1}
           value={idx}
-          onChange={(e) => setCanvasHeight(OPTIONS[Number(e.target.value)].value)}
+          onChange={(e) => { void setCanvasHeight(OPTIONS[Number(e.target.value)].value) }}
           style={{ width: "100%", accentColor: "#1a1a1a", cursor: "pointer" }}
         />
 

@@ -57,6 +57,8 @@ async function warmBillingOnPlans() {
 
 export async function bootstrapCriticalWorkspace(): Promise<WorkspaceBootstrapResult> {
   const store = useStore.getState()
+  // Start the authenticated settings read early, but preserve cached workspace startup's no-network wait.
+  void store.loadUserSettings().catch(console.error)
   await store.startSyncRuntime()
 
   const cached = await store.restoreCachedWorkspace()

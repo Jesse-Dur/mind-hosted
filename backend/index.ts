@@ -8,6 +8,7 @@ import { historyRoute } from "./routes/history"
 import { whisperRoute } from "./routes/whisper"
 import { syncRoute } from "./routes/sync"
 import { billingRoute } from "./routes/billing"
+import { settingsRoute } from "./routes/settings"
 import "./db/client"
 
 const app = new Hono()
@@ -22,5 +23,6 @@ app.route("/api/history", historyRoute)
 app.route("/api/whisper", whisperRoute)
 app.route("/api/sync", syncRoute)
 app.route("/api/billing", billingRoute)
+app.route("/api/settings", settingsRoute)
 
 export default { port: 3000, fetch: app.fetch }
