@@ -1,4 +1,2 @@
 export { enqueueDelete, enqueueUpsert } from "./outbox"
-export { flushSyncQueue } from "./flush"
-export { pullSync } from "./pull"
-export { setSyncActiveCanvas, startSyncRuntime, syncActiveCanvas, syncInBackground } from "./runtime"
+export { setSyncActiveCanvas, startSyncRuntime, syncInBackground } from "./runtime"

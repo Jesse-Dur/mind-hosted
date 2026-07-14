@@ -20,13 +20,6 @@ function requestUrl(path: string | Request) {
   return typeof path === "string" ? path : path.url
 }
 
-async function waitForRequest(requests: string[], pattern: string) {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    if (requests.some((request) => request.includes(pattern))) return
-    await Promise.resolve()
-  }
-}
-
 function billingUsage(overrides: Partial<BillingUsage> = {}): BillingUsage {
   return {
     customer_id: "billing-customer",

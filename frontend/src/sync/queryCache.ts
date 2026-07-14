@@ -57,11 +57,3 @@ export async function writeBillingPlansCache(billingPlans: BillingPlans) {
     updatedAt: Date.now(),
   })
 }
-
-export async function clearQueryCache() {
-  await Promise.all([
-    syncDb.queryCache.delete(HISTORY_CACHE_KEY),
-    syncDb.queryCache.delete(BILLING_USAGE_CACHE_KEY),
-    syncDb.queryCache.delete(BILLING_PLANS_CACHE_KEY),
-  ])
-}

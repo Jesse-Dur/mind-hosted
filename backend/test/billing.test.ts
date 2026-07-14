@@ -246,14 +246,8 @@ describe("billing plan comparison", () => {
 
 describe("billing enforcement", () => {
   test("frozen sync blocks upserts but preserves every delete", () => {
-    expect(() => assertBillingSyncAccess("canvas", "upsert", true)).toThrow("Editing is frozen")
-    expect(() => assertBillingSyncAccess("tile", "upsert", true)).toThrow("Editing is frozen")
-    expect(() => assertBillingSyncAccess("thought", "upsert", true)).toThrow("Editing is frozen")
-    expect(() => assertBillingSyncAccess("tag", "upsert", true)).toThrow("Editing is frozen")
-    expect(() => assertBillingSyncAccess("canvas", "delete", true)).not.toThrow()
-    expect(() => assertBillingSyncAccess("tile", "delete", true)).not.toThrow()
-    expect(() => assertBillingSyncAccess("thought", "delete", true)).not.toThrow()
-    expect(() => assertBillingSyncAccess("tag", "delete", true)).not.toThrow()
+    expect(() => assertBillingSyncAccess("upsert", true)).toThrow("Editing is frozen")
+    expect(() => assertBillingSyncAccess("delete", true)).not.toThrow()
   })
 
   test("absolute resource reconciliation is idempotent", async () => {

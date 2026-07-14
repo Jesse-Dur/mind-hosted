@@ -7,9 +7,9 @@ import type { Tag } from "../../types"
 import type { ApplyOptions, DeletePayload, SyncAction, SyncEntityType, SyncPayload, SyncResult } from "./types"
 
 export async function applySyncOperation(userId: string, opId: string, entityType: SyncEntityType, action: SyncAction, clientId: string | null, serverId: number | null, payload: SyncPayload, options: ApplyOptions = {}) {
-  if (requiresBillingEditingAccess(entityType, action)) {
+  if (requiresBillingEditingAccess(action)) {
     const billing = await getBillingUsageStatus(userId, { syncResources: false, syncStorage: false })
-    assertBillingSyncAccess(entityType, action, billing.overage.editing_frozen)
+    assertBillingSyncAccess(action, billing.overage.editing_frozen)
   }
 
   const writeHistory = options.writeHistory ?? true

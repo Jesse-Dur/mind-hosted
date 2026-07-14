@@ -199,7 +199,7 @@ async function testCreateWithTag(ids: Ids) {
   return { passed: !!hasTag, reason: hasTag ? undefined : `thought not found or missing tags, got: ${JSON.stringify(found)}`, stats }
 }
 
-async function testDeleteThought(ids: Ids) {
+async function testDeleteThought() {
   const stats = await classifyAndStore("Delete the call dentist task", TEST_USER)
   const deleted = await getDeletedThoughts()
   const found = deleted.find((t) => t.content.toLowerCase().includes("dentist"))

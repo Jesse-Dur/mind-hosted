@@ -45,14 +45,6 @@ export interface Tag {
   updated_at?: string
 }
 
-export interface OllamaJob {
-  id: string
-  input: string
-  priority: "low" | "medium" | "high"
-  status: "pending" | "processing" | "done" | "error"
-  created_at: string
-}
-
 export interface HistoryEvent {
   id: number
   action: string
@@ -93,8 +85,6 @@ export type BillingLimitNotice = {
   shownAt: number
   resetAt?: string | null
 }
-
-export type BillingCreationLimitNotice = BillingLimitNotice & { feature: BillingCreationLimitFeature }
 
 export type BillingPlan = {
   id: string

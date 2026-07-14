@@ -4,13 +4,9 @@ import { pullSyncEvents } from "./sync/pull"
 import { syncSnapshot } from "./sync/snapshot"
 
 export type {
-  ApplyOptions,
   SyncAction,
   SyncEntityType,
-  SyncEvent,
   SyncPayload,
-  SyncResult,
-  SyncSnapshot,
 } from "./sync/types"
 
 export const syncDb = {

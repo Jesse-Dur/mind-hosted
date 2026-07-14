@@ -34,4 +34,3 @@ export const useStore = create<AppStore>((set, get, store) => ({
 registerSyncStore(() => useStore.getState(), (updater) => useStore.setState(updater))
 
 export { setGetToken } from "./apiAuth"
-export type { AiStatus, AppStore } from "./types"
