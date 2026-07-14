@@ -42,7 +42,7 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 | Frontend | React + TypeScript + Vite (hosted on Vercel) |
 | State | Zustand |
 | Offline storage | IndexedDB via Dexie |
-| AI | Groq (`openai/gpt-oss-120b`) |
+| AI | Groq (`qwen/qwen3.6-27b`) |
 | Auth | Clerk |
 
 ---
