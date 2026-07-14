@@ -287,10 +287,13 @@ Available tags: ${tagList || "none"}
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "qwen/qwen3-32b",
+        model: "openai/gpt-oss-120b",
         messages,
         tools: searchIterations >= MAX_SEARCH_ITERATIONS ? TOOLS.filter((t) => !SEARCH_TOOLS.has(t.function.name)) : TOOLS,
         temperature: 0.1,
+        // This flow only needs focused tool selection, so low effort preserves the free token quota.
+        reasoning_effort: "low",
+        include_reasoning: false,
       }),
       signal: AbortSignal.timeout(60000),
     })
