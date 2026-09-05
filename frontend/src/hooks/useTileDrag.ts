@@ -6,7 +6,7 @@ import type { Thought, Tile } from "../types"
 const GRID = 24
 function snap(n: number) { return Math.round(n / GRID) * GRID }
 
-export function useTileDrag(tile: Tile, tileThoughts: Thought[], scale: number) {
+export function useTileDrag(tile: Tile, tileThoughts: Thought[], scale: number, minimumWidth = GRID * 4) {
   const updateTile = useStore((s) => s.updateTile)
   const moveTileLocal = useStore((s) => s.moveTileLocal)
   const moveTileToCanvas = useStore((s) => s.moveTileToCanvas)
@@ -110,14 +110,14 @@ export function useTileDrag(tile: Tile, tileThoughts: Thought[], scale: number) 
     function onMove(e: MouseEvent) {
       if (!resize.current) return
       e.preventDefault()
-      const width = Math.min(snap(CANVAS_W - tile.x), Math.max(GRID * 4, snap(resize.current.tw + (e.clientX - resize.current.mx) / scale)))
+      const width = Math.min(snap(CANVAS_W - tile.x), Math.max(minimumWidth, snap(resize.current.tw + (e.clientX - resize.current.mx) / scale)))
       const height = Math.min(snap(CANVAS_H - tile.y), Math.max(GRID * 4, snap(resize.current.th + (e.clientY - resize.current.my) / scale)))
       useStore.getState().moveTileLocal(tile.id, { width, height })
     }
 
     function onUp(e: MouseEvent) {
       if (resize.current) {
-        const width = Math.min(snap(CANVAS_W - tile.x), Math.max(GRID * 4, snap(resize.current.tw + (e.clientX - resize.current.mx) / scale)))
+        const width = Math.min(snap(CANVAS_W - tile.x), Math.max(minimumWidth, snap(resize.current.tw + (e.clientX - resize.current.mx) / scale)))
         const height = Math.min(snap(CANVAS_H - tile.y), Math.max(GRID * 4, snap(resize.current.th + (e.clientY - resize.current.my) / scale)))
         updateTile(tile.id, { width, height })
       }

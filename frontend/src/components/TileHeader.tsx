@@ -3,12 +3,18 @@ import { useStore } from "../store"
 import { CloseButton } from "./CloseButton"
 import { SavingSpinner } from "./SavingSpinner"
 import { isTemporaryId } from "../utils/optimisticIdentity"
+import { DEFAULT_CANVAS_FONT_SIZE } from "../utils/canvasFontSize"
 import type { Tile } from "../types"
 
-export function TileHeader({ tile, onDragDown, editing, setEditing }: { tile: Tile; onDragDown: (e: React.MouseEvent) => void; editing: boolean; setEditing: (v: boolean) => void }) {
+export function TileHeader({ tile, fontSize, onDragDown, editing, setEditing }: { tile: Tile; fontSize: number; onDragDown: (e: React.MouseEvent) => void; editing: boolean; setEditing: (v: boolean) => void }) {
   const { updateTile, removeTile } = useStore()
   const [saving, setSaving] = useState(false)
   const [title, setTitle] = useState(tile.title)
+  const closeScale = fontSize / DEFAULT_CANVAS_FONT_SIZE
+  const closeSize = fontSize < DEFAULT_CANVAS_FONT_SIZE
+    ? Math.max(14, Math.round(22 * closeScale))
+    : Math.max(22, Math.round(fontSize * 1.1))
+  const closeIconSize = Math.max(6, Math.round(8 * closeScale))
 
   useEffect(() => {
     if (!editing) setTitle(tile.title)
@@ -55,7 +61,7 @@ export function TileHeader({ tile, onDragDown, editing, setEditing }: { tile: Ti
           ref={(el) => { if (el) el.addEventListener("scroll", () => { el.scrollLeft = 0 }) }}
           onMouseDown={(e) => e.stopPropagation()}
           style={{
-            fontSize: 13, fontWeight: 600, color: "#1a1a1a",
+            fontSize, lineHeight: 1.25, fontWeight: 600, color: "#1a1a1a",
             outline: "none", border: "none", background: "transparent",
             padding: 0, fontFamily: "inherit",
             cursor: "text",
@@ -67,7 +73,7 @@ export function TileHeader({ tile, onDragDown, editing, setEditing }: { tile: Ti
       </div>
       <div style={{ marginRight: 6, display: "flex", alignItems: "center", gap: 4 }}>
         {saving && <SavingSpinner />}
-        <CloseButton onClick={() => removeTile(tile.id)} size={22} />
+        <CloseButton onClick={() => removeTile(tile.id)} size={closeSize} iconSize={closeIconSize} />
       </div>
     </div>
   )

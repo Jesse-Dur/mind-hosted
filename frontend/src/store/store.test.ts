@@ -13,7 +13,9 @@ import {
 } from "../test/syncTestHarness"
 import { bootstrapCriticalWorkspace, startBillingWarmupOnPlans, startSidebarWarmupOnHover, startSidebarWarmupOnOpen } from "../startup/workspaceStartup"
 import { mergeVisibleEntities } from "./cacheHelpers"
+import { readStoredCanvasFontSize } from "./storage"
 import { writeBillingPlansCache, writeBillingUsageCache, writeHistoryCache } from "../sync/queryCache"
+import { DEFAULT_CANVAS_FONT_SIZE, MAX_CANVAS_FONT_SIZE, MIN_CANVAS_FONT_SIZE } from "../utils/canvasFontSize"
 import type { BillingPlans, BillingUsage } from "../types"
 
 function requestUrl(path: string | Request) {
@@ -52,6 +54,23 @@ function billingPlans(overrides: Partial<BillingPlans> = {}): BillingPlans {
 
 beforeEach(async () => {
   await resetFrontendState()
+})
+
+describe("canvas font size preference", () => {
+  test("persists valid values and clamps values outside the supported range", () => {
+    useStore.getState().setCanvasFontSize(24)
+    expect(useStore.getState().canvasFontSize).toBe(24)
+    expect(localStorage.getItem("canvasFontSize")).toBe("24")
+
+    useStore.getState().setCanvasFontSize(100)
+    expect(useStore.getState().canvasFontSize).toBe(MAX_CANVAS_FONT_SIZE)
+
+    useStore.getState().setCanvasFontSize(1)
+    expect(useStore.getState().canvasFontSize).toBe(MIN_CANVAS_FONT_SIZE)
+
+    localStorage.setItem("canvasFontSize", "not-a-size")
+    expect(readStoredCanvasFontSize()).toBe(DEFAULT_CANVAS_FONT_SIZE)
+  })
 })
 
 describe("frontend store optimistic updates", () => {

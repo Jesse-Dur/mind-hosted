@@ -4,7 +4,10 @@ import { TileHeader } from "./TileHeader"
 import { TileContent } from "./TileContent"
 import { useTileDrag } from "../hooks/useTileDrag"
 import { getCrossCanvasDrag, subscribeCrossCanvasDrag } from "../utils/crossCanvasDrag"
+import { getEffectiveCanvasFontSize, getEnforcedTileBounds, getMinimumTileWidth } from "../utils/canvasFontSize"
 import type { Thought, Tile as TileType } from "../types"
+
+const GRID = 24
 
 const tileAnimationStyles = `
 @keyframes tileHighlight {
@@ -22,7 +25,7 @@ const tileAnimationStyles = `
 `
 
 export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: Thought[]; scale?: number }) {
-  const { highlightedId, remoteChangedTileIds } = useStore()
+  const { canvasFontSize, canvasHeight, highlightedId, remoteChangedTileIds, updateTile } = useStore()
   const [editing, setEditing] = useState(false)
   const isHighlighted = highlightedId?.type === "tile" && Number(highlightedId.id) === Number(tile.id)
   const isRemoteChanged = remoteChangedTileIds.has(tile.id)
@@ -30,16 +33,35 @@ export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: 
     const session = getCrossCanvasDrag()
     return session?.kind === "tile" && session.tile.id === tile.id
   })
+  const [previewTagCount, setPreviewTagCount] = useState(() => {
+    const session = getCrossCanvasDrag()
+    return session?.kind === "thought" && session.targetTileId === tile.id ? session.thought.tags.length : 0
+  })
 
   useEffect(() => subscribeCrossCanvasDrag((session) => {
     setIsDragging(session?.kind === "tile" && session.tile.id === tile.id)
+    setPreviewTagCount(session?.kind === "thought" && session.targetTileId === tile.id ? session.thought.tags.length : 0)
   }), [tile.id])
 
   const tileThoughts = thoughts
     .filter((t) => t.tile_id === tile.id)
     .sort((a, b) => a.sort_order - b.sort_order)
+  const storedMaxTagCount = tileThoughts.reduce((maximum, thought) => Math.max(maximum, thought.tags.length), 0)
+  const maxTagCount = Math.max(storedMaxTagCount, previewTagCount)
+  const minimumWidth = getMinimumTileWidth(maxTagCount)
+  const storedMinimumWidth = getMinimumTileWidth(storedMaxTagCount)
+  const canvasWidth = Math.floor(Math.round(canvasHeight * (16 / 9)) / GRID) * GRID
+  const { x: layoutX, width: layoutWidth } = getEnforcedTileBounds(tile.x, tile.width, minimumWidth, canvasWidth)
+  const persistedBounds = getEnforcedTileBounds(tile.x, tile.width, storedMinimumWidth, canvasWidth)
+  const effectiveFontSize = getEffectiveCanvasFontSize(canvasFontSize, layoutWidth, maxTagCount)
+  const layoutTile = layoutWidth === tile.width && layoutX === tile.x ? tile : { ...tile, x: layoutX, width: layoutWidth }
 
-  const { onDragDown, onResizeDown } = useTileDrag(tile, tileThoughts, scale)
+  useEffect(() => {
+    if (persistedBounds.width === tile.width && persistedBounds.x === tile.x) return
+    void updateTile(tile.id, persistedBounds).catch(console.error)
+  }, [persistedBounds.width, persistedBounds.x, tile.id, tile.width, tile.x, updateTile])
+
+  const { onDragDown, onResizeDown } = useTileDrag(layoutTile, tileThoughts, scale, minimumWidth)
 
   return (
     <>
@@ -49,12 +71,13 @@ export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: 
         onMouseDown={(e) => e.stopPropagation()}
         style={{
           position: "absolute",
-          left: tile.x, top: tile.y, width: tile.width, height: tile.height,
+          left: layoutX, top: tile.y, width: layoutWidth, height: tile.height,
           background: "rgba(255,255,255,0.95)",
           border: "1px solid #e0e0e0",
           borderRadius: 8,
           display: "flex",
           flexDirection: "column",
+          overflow: "hidden",
           backdropFilter: "blur(8px)",
           userSelect: "none",
           opacity: isDragging ? 0.72 : 1,
@@ -71,8 +94,8 @@ export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: 
           zIndex: isDragging ? 20 : undefined,
         }}
       >
-        <TileHeader tile={tile} onDragDown={onDragDown} editing={editing} setEditing={setEditing} />
-        <TileContent tileId={tile.id} tileThoughts={tileThoughts} />
+        <TileHeader tile={tile} fontSize={effectiveFontSize} onDragDown={onDragDown} editing={editing} setEditing={setEditing} />
+        <TileContent tileId={tile.id} fontSize={effectiveFontSize} tileThoughts={tileThoughts} />
         <div
           onMouseDown={onResizeDown}
           style={{ position: "absolute", bottom: 0, right: 0, width: 16, height: 16, cursor: "nwse-resize", display: "flex", alignItems: "center", justifyContent: "center" }}
