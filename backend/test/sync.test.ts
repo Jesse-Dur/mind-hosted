@@ -88,8 +88,16 @@ if (!process.env.DATABASE_URL) {
         WHERE user_id = ANY(${TEST_USERS}) AND client_id = ${clientId}
         ORDER BY user_id
       `
-      const historyRows = await sql<{ count: number }[]>`
-        SELECT COUNT(*)::int AS count FROM history WHERE user_id = ${USER_A} AND action = 'canvas.create'
+      const historyRows = await sql<{ count: number; op_ids: string[]; client_ids: string[] }[]>`
+        SELECT COUNT(*)::int AS count,
+          ARRAY_AGG(op_id ORDER BY id) AS op_ids,
+          ARRAY_AGG(client_id ORDER BY id) AS client_ids
+        FROM history WHERE user_id = ${USER_A} AND action = 'canvas.create'
+      `
+      const canvasHistory = await sql<{ op_id: string; action: string }[]>`
+        SELECT op_id, action FROM history
+        WHERE user_id = ${USER_A} AND op_id IN ('canvas-op-1', 'canvas-op-2')
+        ORDER BY id
       `
 
       expect(second.server_id).toBe(first.server_id)
@@ -97,6 +105,12 @@ if (!process.env.DATABASE_URL) {
       expect(rows).toHaveLength(2)
       expect(rows.find((row) => row.user_id === USER_A)?.name).toBe("Renamed")
       expect(historyRows[0]?.count).toBe(1)
+      expect(historyRows[0]?.op_ids).toEqual(["canvas-op-1"])
+      expect(historyRows[0]?.client_ids).toEqual([clientId])
+      expect(canvasHistory.map(({ op_id, action }) => ({ op_id, action }))).toEqual([
+        { op_id: "canvas-op-1", action: "canvas.create" },
+        { op_id: "canvas-op-2", action: "canvas.update" },
+      ])
     })
 
     test("upserts preserve child relationships and thought ordering", async () => {
@@ -129,6 +143,72 @@ if (!process.env.DATABASE_URL) {
       expect(thoughtRows[1]?.tags).toEqual(["work"])
     })
 
+    test("successful synced moves, tag edits, and deletes are written to history", async () => {
+      const sourceCanvasId = await createCanvas(syncDb, USER_A, "history-source-canvas")
+      const targetCanvasId = await createCanvas(syncDb, USER_A, "history-target-canvas")
+      const sourceTileId = await createTile(syncDb, USER_A, sourceCanvasId, "history-source-tile")
+      const targetTileId = await createTile(syncDb, USER_A, targetCanvasId, "history-target-tile")
+      const thought = await syncDb.apply(USER_A, "history-thought-create", "thought", "upsert", "history-thought", null, {
+        tile_id: sourceTileId,
+        content: "Move me",
+        tags: [],
+        sort_order: 0,
+      })
+      const tag = await syncDb.apply(USER_A, "history-tag-create", "tag", "upsert", "history-tag", null, {
+        name: "Before",
+        color: "#7c3aed",
+      })
+
+      await syncDb.apply(USER_A, "history-tile-move", "tile", "upsert", "history-source-tile", sourceTileId, {
+        canvas_id: targetCanvasId,
+        title: "Tasks",
+        x: 48,
+        y: 72,
+        width: 280,
+        height: 200,
+        importance: 1,
+        visible: true,
+      }, { occurredAt: "2026-08-25T10:30:00.000Z" })
+      await syncDb.apply(USER_A, "history-thought-move", "thought", "upsert", "history-thought", Number(thought.server_id), {
+        tile_id: targetTileId,
+        content: "Move me",
+        tags: [],
+        sort_order: 1,
+      })
+      await syncDb.apply(USER_A, "history-tag-rename", "tag", "upsert", "history-tag", Number(tag.server_id), {
+        name: "After",
+        color: "#7c3aed",
+      })
+      await syncDb.apply(USER_A, "history-thought-delete", "thought", "delete", "history-thought", Number(thought.server_id), {})
+
+      const rows = await sql<{ op_id: string; action: string; occurred_at: string }[]>`
+        SELECT op_id, action, occurred_at FROM history
+        WHERE user_id = ${USER_A}
+          AND op_id IN ('history-tile-move', 'history-thought-move', 'history-tag-rename', 'history-thought-delete')
+        ORDER BY id
+      `
+      expect(rows.map(({ op_id, action }) => ({ op_id, action }))).toEqual([
+        { op_id: "history-tile-move", action: "tile.move" },
+        { op_id: "history-thought-move", action: "thought.move" },
+        { op_id: "history-tag-rename", action: "tag.rename" },
+        { op_id: "history-thought-delete", action: "thought.delete" },
+      ])
+      expect(new Date(rows[0]!.occurred_at).toISOString()).toBe("2026-08-25T10:30:00.000Z")
+    })
+
+    test("internal grouped sync writes can suppress duplicate History rows", async () => {
+      await syncDb.apply(USER_A, "internal-canvas-op", "canvas", "upsert", "internal-canvas", null, {
+        name: "Internal",
+        sort_order: 0,
+        is_favourite: false,
+      }, { writeHistory: false })
+
+      const rows = await sql<{ count: number }[]>`
+        SELECT COUNT(*)::int AS count FROM history WHERE user_id = ${USER_A} AND op_id = 'internal-canvas-op'
+      `
+      expect(rows[0]?.count).toBe(0)
+    })
+
     test("deleting a tag removes it from thoughts and publishes its name", async () => {
       const canvasId = await createCanvas(syncDb, USER_A, "tag-delete-canvas")
       const tileId = await createTile(syncDb, USER_A, canvasId, "tag-delete-tile")
@@ -153,8 +233,12 @@ if (!process.env.DATABASE_URL) {
       const events = await sql<{ data: Record<string, unknown> }[]>`
         SELECT data FROM sync_events WHERE user_id = ${USER_A} AND op_id = 'tag-delete-op'
       `
+      const tagDeleteHistory = await sql<{ action: string; summary: string }[]>`
+        SELECT action, summary FROM history WHERE user_id = ${USER_A} AND op_id = 'tag-delete-op'
+      `
       expect(thoughts[0]?.tags).toEqual(["keep"])
       expect(events[0]?.data).toMatchObject({ name: "cleanup" })
+      expect(tagDeleteHistory[0]).toMatchObject({ action: "tag.delete", summary: 'Deleted tag "cleanup"' })
     })
 
     test("invalid child references are rejected before writing", async () => {

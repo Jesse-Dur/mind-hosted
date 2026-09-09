@@ -71,7 +71,7 @@ export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: 
           zIndex: isDragging ? 20 : undefined,
         }}
       >
-        <TileHeader tile={tile} onDragDown={onDragDown} editing={editing} setEditing={setEditing} />
+        <TileHeader tile={tile} thoughtIdentities={tileThoughts.map((thought) => ({ id: thought.id, clientId: thought.client_id }))} onDragDown={onDragDown} editing={editing} setEditing={setEditing} />
         <TileContent tileId={tile.id} tileThoughts={tileThoughts} />
         <div
           onMouseDown={onResizeDown}

@@ -12,6 +12,7 @@ import {
   tile,
   useStore,
 } from "../test/syncTestHarness"
+import { readPastEntitiesCache } from "./pastCache"
 
 const { pullSync } = await import("./pull")
 
@@ -226,6 +227,57 @@ describe("frontend sync pull", () => {
     expect(useStore.getState().remoteChangedTileIds.has(20)).toBe(false)
   })
 
+  test("pulling this device's earlier acknowledged revision cannot roll final geometry back", async () => {
+    const finalTile = tile({ id: 20, client_id: "tile-client", title: "Final", x: 240, y: 168, width: 432, height: 312 })
+    await syncDb.entities.put(entityRecord({
+      entityType: "tile",
+      clientId: "tile-client",
+      serverId: 20,
+      tempId: null,
+      canvasId: 10,
+      status: "clean",
+      data: finalTile,
+    }))
+    await syncDb.syncActivity.put({
+      opId: "own-earlier-op",
+      entityType: "tile",
+      clientId: "tile-client",
+      action: "upsert",
+      state: "synced",
+      summary: "Move tile",
+      error: null,
+      createdAt: 1,
+      updatedAt: 2,
+      hidden: true,
+    })
+    useStore.setState({
+      activeCanvasId: 10,
+      tiles: [finalTile],
+      tileCache: new Map([[10, [finalTile]]]),
+    })
+    pullResponse = {
+      latest_revision: 6,
+      events: [{
+        revision: 6,
+        canvas_id: 10,
+        entity_type: "tile",
+        entity_id: 20,
+        client_id: "tile-client",
+        op_id: "own-earlier-op",
+        action: "upsert",
+        data: tileEventData({ title: "Earlier", x: 48, y: 48, width: 280, height: 200 }),
+        created_at: "2026-01-01T00:00:00.000Z",
+      }],
+    }
+
+    await pullSync(10)
+
+    expect((await syncDb.entities.get(entityKey("tile", "tile-client")))?.data).toMatchObject({ title: "Final", x: 240, y: 168, width: 432, height: 312 })
+    expect(useStore.getState().tiles[0]).toMatchObject({ title: "Final", x: 240, y: 168, width: 432, height: 312 })
+    expect(useStore.getState().remoteChangedTileIds.has(20)).toBe(false)
+    expect((await syncDb.metadata.get("canvasRevision:10"))?.value).toBe(6)
+  })
+
   test("remote deletes do not remove locally dirty entities", async () => {
     const dirtyTile = tile({ id: 20, client_id: "tile-client", title: "Dirty" })
     await syncDb.entities.put(entityRecord({
@@ -265,6 +317,39 @@ describe("frontend sync pull", () => {
 
     expect(await syncDb.entities.get(entityKey("tile", "tile-client"))).toBeDefined()
     expect(useStore.getState().tiles).toHaveLength(1)
+  })
+
+  test("remote deletes preserve the removed content in the local Past cache", async () => {
+    const deletedThought = thought({ id: 30, client_id: "thought-client", content: "Remember locally" })
+    await syncDb.entities.put(entityRecord({
+      entityType: "thought",
+      clientId: "thought-client",
+      serverId: 30,
+      tempId: null,
+      canvasId: 10,
+      status: "clean",
+      data: deletedThought,
+    }))
+    useStore.setState({ activeCanvasId: 10, thoughts: [deletedThought], thoughtCache: new Map([[10, [deletedThought]]]) })
+    pullResponse = {
+      latest_revision: 7,
+      events: [{
+        revision: 7,
+        canvas_id: 10,
+        entity_type: "thought",
+        entity_id: 30,
+        client_id: "thought-client",
+        op_id: "remote-thought-delete",
+        action: "delete",
+        data: { id: 30 },
+        created_at: "2026-01-01T00:00:00.000Z",
+      }],
+    }
+
+    await pullSync(10)
+
+    expect((await readPastEntitiesCache()).pastThoughts).toContainEqual(deletedThought)
+    expect(await syncDb.entities.get(entityKey("thought", "thought-client"))).toBeUndefined()
   })
 
   test("remote canvas delete with moveContents moves cached child tiles", async () => {

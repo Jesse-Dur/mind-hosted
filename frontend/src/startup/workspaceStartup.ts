@@ -1,5 +1,9 @@
 // This file coordinates workspace startup phases so App.tsx stays focused on rendering the shell.
 import { useStore } from "../store"
+import { configureAccountDatabase } from "../sync/localDb"
+import { hydrateDevicePreferences } from "../preferences/devicePreferences"
+import { refreshPastEntitiesCache } from "../sync/pastCache"
+import { assertSyncAccountScopeCurrent, runSyncAccountTask } from "../sync/accountScope"
 
 export type WorkspaceBootstrapResult = {
   activeCanvasId: number | null
@@ -7,23 +11,32 @@ export type WorkspaceBootstrapResult = {
 }
 
 async function hydrateBackgroundWorkspace(activeCanvasId: number | null, refreshActiveCanvas: boolean) {
-  const store = useStore.getState()
+  return runSyncAccountTask(async (scope) => {
+    const store = useStore.getState()
 
   // Background hydration should never block the shell. It only fills in warmer caches after the first paint.
-  if (refreshActiveCanvas && activeCanvasId !== null) {
-    await Promise.all([
-      store.loadCanvases(),
-      store.loadTags(),
-      store.loadTiles(activeCanvasId),
-      store.loadThoughts(activeCanvasId),
-    ])
-  }
+    if (refreshActiveCanvas && activeCanvasId !== null) {
+      await Promise.all([
+        store.loadCanvases(),
+        store.loadTags(),
+        store.loadTiles(activeCanvasId),
+        store.loadThoughts(activeCanvasId),
+      ])
+      assertSyncAccountScopeCurrent(scope)
+    }
 
-  await Promise.all([
-    store.hydrateHistoryCache(),
-    store.hydrateBillingCache(),
-  ])
-  await store.hydrateRemainingCanvases()
+    await Promise.all([
+      store.hydrateHistoryCache(),
+      store.hydrateBillingCache(),
+    ])
+    assertSyncAccountScopeCurrent(scope)
+    // Spotlight always reads Past from IndexedDB. Reconcile that cache only as
+    // background work so tapping the control never waits on the network.
+    await refreshPastEntitiesCache()
+    assertSyncAccountScopeCurrent(scope)
+    await store.hydrateRemainingCanvases()
+    assertSyncAccountScopeCurrent(scope)
+  })
 }
 
 async function warmSidebarOnOpen() {
@@ -55,9 +68,20 @@ async function warmBillingOnPlans() {
   ])
 }
 
-export async function bootstrapCriticalWorkspace(): Promise<WorkspaceBootstrapResult> {
+export async function bootstrapCriticalWorkspace(userId?: string | null): Promise<WorkspaceBootstrapResult> {
+  if (userId) await configureAccountDatabase(userId)
   const store = useStore.getState()
-  await store.startSyncRuntime()
+  // Account transitions wait for old scoped tasks before the database swap.
+  // Reset once more after that boundary so no old-account completion can remain
+  // in the shared in-memory store.
+  if (userId) store.resetStore()
+  // Local preferences apply synchronously; same-class/server reconciliation is
+  // background work and must never delay an offline cached workspace.
+  void hydrateDevicePreferences(store.applyDevicePreferences, Boolean(userId)).catch(console.error)
+  // Status/history hydration is useful but not required to draw the workspace.
+  // Start it alongside the entity-cache read so large local activity logs never
+  // hold the loading screen open.
+  void store.startSyncRuntime().catch(console.error)
 
   const cached = await store.restoreCachedWorkspace()
   if (cached.hasUsableCache) return cached

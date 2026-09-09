@@ -2,6 +2,7 @@ import type { HistoryEvent, HistoryPage } from "../types"
 import { getApi } from "./apiAuth"
 import type { HistorySlice, StoreSlice } from "./types"
 import { readHistoryCache, writeHistoryCache } from "../sync/queryCache"
+import { isStaleSyncAccountError, runSyncAccountTask } from "../sync/accountScope"
 
 const HISTORY_PAGE_SIZE = 50
 const HISTORY_NEW_ITEM_ANIMATION_MS = 1200
@@ -58,16 +59,18 @@ export const createHistorySlice: StoreSlice<HistorySlice> = (set, get) => ({
   newHistoryIds: new Set<number>(),
 
   hydrateHistoryCache: async () => {
-    const cached = await readHistoryCache()
-    if (!cached) return
-    const state = get()
-    if (state.historyLoaded && state.historyEvents.length > 0) return
-    set({
-      historyEvents: cached.historyEvents,
-      historyNextCursor: cached.historyNextCursor,
-      historyHasMore: cached.historyHasMore,
-      historyLoaded: true,
-      newHistoryIds: new Set(),
+    return runSyncAccountTask(async () => {
+      const cached = await readHistoryCache()
+      if (!cached) return
+      const state = get()
+      if (state.historyLoaded && state.historyEvents.length > 0) return
+      set({
+        historyEvents: cached.historyEvents,
+        historyNextCursor: cached.historyNextCursor,
+        historyHasMore: cached.historyHasMore,
+        historyLoaded: true,
+        newHistoryIds: new Set(),
+      })
     })
   },
 
@@ -77,7 +80,8 @@ export const createHistorySlice: StoreSlice<HistorySlice> = (set, get) => ({
 
     let insertedIds = new Set<number>()
     try {
-      const page = await getApi().history.list(null, HISTORY_PAGE_SIZE)
+      await runSyncAccountTask(async (scope) => {
+      const page = await getApi(scope).history.list(null, HISTORY_PAGE_SIZE)
       set((state) => {
         const merged = mergePage(page, state)
         insertedIds = merged.insertedIds
@@ -100,8 +104,9 @@ export const createHistorySlice: StoreSlice<HistorySlice> = (set, get) => ({
           newHistoryIds: merged.newHistoryIds,
         }
       })
+      })
     } catch (error) {
-      console.error(error)
+      if (!isStaleSyncAccountError(error)) console.error(error)
     } finally {
       set({ historyRefreshing: false })
     }
@@ -123,7 +128,8 @@ export const createHistorySlice: StoreSlice<HistorySlice> = (set, get) => ({
 
     set({ historyLoadingMore: true })
     try {
-      const page = await getApi().history.list(state.historyNextCursor, HISTORY_PAGE_SIZE)
+      await runSyncAccountTask(async (scope) => {
+      const page = await getApi(scope).history.list(state.historyNextCursor, HISTORY_PAGE_SIZE)
       set((current) => {
         const merged = mergePage(page, current)
         const nextState: HistorySlice = {
@@ -145,8 +151,9 @@ export const createHistorySlice: StoreSlice<HistorySlice> = (set, get) => ({
           newHistoryIds: merged.newHistoryIds,
         }
       })
+      })
     } catch (error) {
-      console.error(error)
+      if (!isStaleSyncAccountError(error)) console.error(error)
     } finally {
       set({ historyLoadingMore: false })
     }

@@ -7,7 +7,16 @@ const BASE = "/api"
 
 type GetTokenOptions = { skipCache?: boolean }
 type GetToken = (options?: GetTokenOptions) => Promise<string | null>
+type ApiRequestContext = { signal: AbortSignal; assertCurrent: () => void }
 type AiStatusResponse = { status: string; latest_revision: number }
+export type DeviceClass = "phone" | "tablet" | "desktop"
+export type DevicePreferencesResponse = {
+  source: "device" | "device_class" | "defaults"
+  device_id: string
+  device_class: DeviceClass
+  preferences: Record<string, unknown>
+  updated_at: string | null
+}
 
 function normalizeCanvas(canvas: Canvas): Canvas {
   return { ...canvas, id: Number(canvas.id), sort_order: Number(canvas.sort_order) }
@@ -84,22 +93,33 @@ async function readToken(path: string, getToken: GetToken, options?: GetTokenOpt
   }
 }
 
-async function authorizedFetch(path: string, getToken: GetToken, options?: RequestInit, tokenOptions?: GetTokenOptions) {
+async function authorizedFetch(path: string, getToken: GetToken, options?: RequestInit, tokenOptions?: GetTokenOptions, context?: ApiRequestContext) {
   const token = await tokenForRequest(path, getToken, tokenOptions)
+  context?.assertCurrent()
   const headers = new Headers(options?.headers)
   if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json")
   headers.set("Authorization", `Bearer ${token}`)
   return fetch(`${BASE}${path}`, {
     ...options,
     headers,
+    signal: options?.signal ?? context?.signal,
   })
 }
 
-async function req<T>(path: string, getToken: GetToken, options?: RequestInit): Promise<T> {
-  let res = await authorizedFetch(path, getToken, options)
+async function req<T>(path: string, getToken: GetToken, options?: RequestInit, context?: ApiRequestContext): Promise<T> {
+  let res: Response
+  try {
+    context?.assertCurrent()
+    res = await authorizedFetch(path, getToken, options, undefined, context)
+    context?.assertCurrent()
+  } catch (error) {
+    context?.assertCurrent()
+    throw error
+  }
   // Clerk can hand back a cached token near expiry; one uncached retry lets the
   // session refresh before sync treats the user as signed out.
-  if (res.status === 401) res = await authorizedFetch(path, getToken, options, { skipCache: true })
+  if (res.status === 401) res = await authorizedFetch(path, getToken, options, { skipCache: true }, context)
+  context?.assertCurrent()
   if (res.status === 401) throwUnauthorized(path)
   if (!res.ok) {
     const detail = await res.text().catch(() => "")
@@ -120,41 +140,47 @@ async function req<T>(path: string, getToken: GetToken, options?: RequestInit): 
     throw new Error(`API error ${res.status}: ${path}${message ? ` - ${message}` : ""}`)
   }
   if (res.status === 204) return undefined as T
-  return res.json() as Promise<T>
+  const data = await res.json() as T
+  context?.assertCurrent()
+  return data
 }
 
-export function createApi(getToken: GetToken) {
+export function createApi(getToken: GetToken, context?: ApiRequestContext) {
   return {
     tiles: {
-      listPast: () => req<Tile[]>("/tiles/past", getToken).then((tiles) => tiles.map(normalizeTile)),
+      listPast: () => req<Tile[]>("/tiles/past", getToken, undefined, context).then((tiles) => tiles.map(normalizeTile)),
     },
 
     thoughts: {
-      listPast: () => req<Thought[]>("/thoughts/past", getToken).then((thoughts) => thoughts.map(normalizeThought)),
+      listPast: () => req<Thought[]>("/thoughts/past", getToken, undefined, context).then((thoughts) => thoughts.map(normalizeThought)),
     },
 
     ai: {
       process: (input: string, priority: "low" | "medium" | "high") =>
-        req<{ job_id: string }>("/ai/process", getToken, { method: "POST", body: JSON.stringify({ input, priority }) }),
-      status: () => req<AiStatusResponse>("/ai/status", getToken),
+        req<{ job_id: string }>("/ai/process", getToken, { method: "POST", body: JSON.stringify({ input, priority }) }, context),
+      status: () => req<AiStatusResponse>("/ai/status", getToken, undefined, context),
     },
 
     whisper: {
       transcribe: async (blob: Blob): Promise<{ text: string }> => {
         const requestTranscription = (token: string) => {
+          context?.assertCurrent()
           const form = new FormData()
           form.append("audio", blob, "audio.webm")
           return fetch(`${BASE}/whisper/transcribe`, {
             method: "POST",
             headers: { "Authorization": `Bearer ${token}` },
             body: form,
+            signal: context?.signal,
           })
         }
 
         let res = await requestTranscription(await tokenForRequest("/whisper/transcribe", getToken))
+        context?.assertCurrent()
         if (res.status === 401) {
           const refreshedToken = await tokenForRequest("/whisper/transcribe", getToken, { skipCache: true })
           res = await requestTranscription(refreshedToken)
+          context?.assertCurrent()
         }
         if (res.status === 401) throwUnauthorized("/whisper/transcribe")
         if (!res.ok) {
@@ -173,7 +199,9 @@ export function createApi(getToken: GetToken) {
           }
           throw new Error(`API error ${res.status}: /whisper/transcribe`)
         }
-        return res.json()
+        const data = await res.json()
+        context?.assertCurrent()
+        return data
       },
     },
 
@@ -181,33 +209,45 @@ export function createApi(getToken: GetToken) {
       list: (cursor?: string | null, limit = 50) => {
         const params = new URLSearchParams({ limit: String(limit) })
         if (cursor) params.set("cursor", cursor)
-        return req<HistoryPage>(`/history?${params.toString()}`, getToken).then(normalizeHistoryPage)
+        return req<HistoryPage>(`/history?${params.toString()}`, getToken, undefined, context).then(normalizeHistoryPage)
       },
     },
 
     billing: {
-      usage: () => req<BillingUsage>("/billing/usage", getToken),
-      plans: () => req<BillingPlans>("/billing/plans", getToken),
+      usage: () => req<BillingUsage>("/billing/usage", getToken, undefined, context),
+      plans: () => req<BillingPlans>("/billing/plans", getToken, undefined, context),
       planImpact: (planId: string) => {
         const params = new URLSearchParams({ plan_id: planId })
-        return req<BillingPlanImpact>(`/billing/plan-impact?${params.toString()}`, getToken)
+        return req<BillingPlanImpact>(`/billing/plan-impact?${params.toString()}`, getToken, undefined, context)
       },
-      switchPlan: (planId: string, confirmedOverLimit = false) => req<BillingPlanSwitchResult>("/billing/switch-plan", getToken, { method: "POST", body: JSON.stringify({ plan_id: planId, confirmed_over_limit: confirmedOverLimit }) }),
+      switchPlan: (planId: string, confirmedOverLimit = false) => req<BillingPlanSwitchResult>("/billing/switch-plan", getToken, { method: "POST", body: JSON.stringify({ plan_id: planId, confirmed_over_limit: confirmedOverLimit }) }, context),
+    },
+
+    preferences: {
+      device: (deviceId: string, deviceClass: DeviceClass) => {
+        const params = new URLSearchParams({ device_id: deviceId, device_class: deviceClass })
+        return req<DevicePreferencesResponse>(`/preferences/device?${params}`, getToken, undefined, context)
+      },
+      saveDevice: (deviceId: string, deviceClass: DeviceClass, preferences: Record<string, unknown>) =>
+        req<{ device_id: string; device_class: DeviceClass; preferences: Record<string, unknown>; updated_at: string }>("/preferences/device", getToken, {
+          method: "PUT",
+          body: JSON.stringify({ device_id: deviceId, device_class: deviceClass, preferences }),
+        }, context),
     },
 
     sync: {
       push: (operations: SyncPushOperation[]) =>
-        req<SyncPushResponse>("/sync/push", getToken, { method: "POST", body: JSON.stringify({ operations }) }),
+        req<SyncPushResponse>("/sync/push", getToken, { method: "POST", body: JSON.stringify({ operations }) }, context),
       pull: (since: number, canvasId?: number) => {
         const params = new URLSearchParams({ since: String(since) })
         if (canvasId !== undefined) params.set("canvas_id", String(canvasId))
-        return req<SyncPullResponse>(`/sync/pull?${params}`, getToken)
+        return req<SyncPullResponse>(`/sync/pull?${params}`, getToken, undefined, context)
       },
       snapshot: (canvasId?: number) => {
         const params = new URLSearchParams()
         if (canvasId !== undefined) params.set("canvas_id", String(canvasId))
         const query = params.toString()
-        return req<SyncSnapshotResponse>(`/sync/snapshot${query ? `?${query}` : ""}`, getToken).then(normalizeSnapshot)
+        return req<SyncSnapshotResponse>(`/sync/snapshot${query ? `?${query}` : ""}`, getToken, undefined, context).then(normalizeSnapshot)
       },
     },
   }

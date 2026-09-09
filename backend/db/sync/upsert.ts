@@ -4,10 +4,18 @@ import { createSerializedBillableResource, type ResourceQueryClient } from "../.
 import { addStorageDelta } from "../../billing/storageUsage"
 import { estimateCanvasStorage, estimateTagStorage, estimateThoughtStorage, estimateTileStorage } from "../../billing/storageEstimate"
 import type { Canvas, Tag, Thought, Tile } from "../../types"
+import { buildUpsertHistory } from "./historyEntry"
 import { booleanValue, nullablePositiveId, numberValue, positiveId, stringArrayValue, stringValue } from "./values"
-import type { SyncPayload } from "./types"
+import type { SyncEntity, SyncEntityType, SyncPayload } from "./types"
 
-export async function upsertCanvas(userId: string, clientId: string | null, serverId: number | null, payload: SyncPayload, writeHistory: boolean) {
+async function logUpsertHistory(userId: string, entityType: SyncEntityType, before: SyncEntity | null, entity: SyncEntity, writeHistory: boolean, clientId: string | null, opId?: string, occurredAt?: string, query: ResourceQueryClient = sql) {
+  if (!writeHistory) return
+  const entry = buildUpsertHistory(entityType, before, entity)
+  if (!entry) return
+  await historyDb.log(userId, entry.action, entry.summary, entry.detail, { clientId: clientId ?? entity.client_id, opId, occurredAt, query })
+}
+
+export async function upsertCanvas(userId: string, clientId: string | null, serverId: number | null, payload: SyncPayload, writeHistory: boolean, opId?: string, occurredAt?: string) {
   const name = stringValue(payload.name, "New Canvas").trim() || "New Canvas"
   const sortOrder = numberValue(payload.sort_order, 0)
   const isFavourite = booleanValue(payload.is_favourite, false)
@@ -18,12 +26,17 @@ export async function upsertCanvas(userId: string, clientId: string | null, serv
       : undefined
 
   if (existing) {
-    const [canvas] = await sql<Canvas[]>`
-      UPDATE canvases
-      SET client_id = COALESCE(client_id, ${clientId}), name = ${name}, sort_order = ${sortOrder}, is_favourite = ${isFavourite}, updated_at = NOW()
-      WHERE id = ${existing.id} AND user_id = ${userId}
-      RETURNING *
-    ` as unknown as [Canvas]
+    const canvas = await sql.begin(async (transaction) => {
+      const [updated] = await transaction<Canvas[]>`
+        UPDATE canvases
+        SET client_id = COALESCE(client_id, ${clientId}), name = ${name}, sort_order = ${sortOrder}, is_favourite = ${isFavourite}, updated_at = NOW()
+        WHERE id = ${existing.id} AND user_id = ${userId}
+        RETURNING *
+      `
+      if (!updated) throw new Error("Canvas update did not return a row")
+      await logUpsertHistory(userId, "canvas", existing, updated, writeHistory, clientId, opId, occurredAt, transaction)
+      return updated
+    })
     await addStorageDelta(userId, estimateCanvasStorage(canvas) - estimateCanvasStorage(existing))
     return canvas
   }
@@ -35,14 +48,14 @@ export async function upsertCanvas(userId: string, clientId: string | null, serv
       RETURNING *
     `
     if (!created) throw new Error("Canvas create did not return a row")
+    await logUpsertHistory(userId, "canvas", null, created, writeHistory, clientId, opId, occurredAt, transaction)
     return created
   })
   await addStorageDelta(userId, estimateCanvasStorage(canvas))
-  if (writeHistory) await historyDb.log(userId, "canvas.create", `Created canvas "${canvas.name}"`, { canvas_id: canvas.id, name: canvas.name })
   return canvas
 }
 
-export async function upsertTile(userId: string, clientId: string | null, serverId: number | null, payload: SyncPayload, writeHistory: boolean) {
+export async function upsertTile(userId: string, clientId: string | null, serverId: number | null, payload: SyncPayload, writeHistory: boolean, opId?: string, occurredAt?: string) {
   const canvasId = nullablePositiveId(payload.canvas_id)
   if (canvasId === undefined) throw new Error("Invalid canvas id")
   if (canvasId !== null) {
@@ -74,11 +87,12 @@ export async function upsertTile(userId: string, clientId: string | null, server
         RETURNING *
       `
       if (!updated) throw new Error("Tile update did not return a row")
+      await logUpsertHistory(userId, "tile", existing, updated, writeHistory, clientId, opId, occurredAt, query)
       return updated
     }
     const tile = wasDeleted
       ? await createSerializedBillableResource(userId, "tiles", update)
-      : await update(sql)
+      : await sql.begin(update)
     await addStorageDelta(userId, estimateTileStorage(tile) - (wasDeleted ? 0 : estimateTileStorage(existing)))
     return tile
   }
@@ -90,14 +104,14 @@ export async function upsertTile(userId: string, clientId: string | null, server
       RETURNING *
     `
     if (!created) throw new Error("Tile create did not return a row")
+    await logUpsertHistory(userId, "tile", null, created, writeHistory, clientId, opId, occurredAt, transaction)
     return created
   })
   await addStorageDelta(userId, estimateTileStorage(tile))
-  if (writeHistory) await historyDb.log(userId, "tile.create", `Created tile "${tile.title}"`, { tile_id: tile.id, title: tile.title })
   return tile
 }
 
-export async function upsertThought(userId: string, clientId: string | null, serverId: number | null, payload: SyncPayload, writeHistory: boolean) {
+export async function upsertThought(userId: string, clientId: string | null, serverId: number | null, payload: SyncPayload, writeHistory: boolean, opId?: string, occurredAt?: string) {
   const tileId = positiveId(payload.tile_id)
   if (tileId === null) throw new Error("Invalid tile id")
   const [tile] = await sql<{ id: number }[]>`SELECT id FROM tiles WHERE id = ${tileId} AND user_id = ${userId} AND deleted_at IS NULL`
@@ -126,11 +140,12 @@ export async function upsertThought(userId: string, clientId: string | null, ser
         RETURNING *
       `
       if (!updated) throw new Error("Thought update did not return a row")
+      await logUpsertHistory(userId, "thought", existing, updated, writeHistory, clientId, opId, occurredAt, query)
       return updated
     }
     const thought = wasDeleted
       ? await createSerializedBillableResource(userId, "thoughts", update)
-      : await update(sql)
+      : await sql.begin(update)
     await addStorageDelta(userId, estimateThoughtStorage(thought) - (wasDeleted ? 0 : estimateThoughtStorage(existing)))
     return thought
   }
@@ -142,14 +157,14 @@ export async function upsertThought(userId: string, clientId: string | null, ser
       RETURNING *
     `
     if (!created) throw new Error("Thought create did not return a row")
+    await logUpsertHistory(userId, "thought", null, created, writeHistory, clientId, opId, occurredAt, transaction)
     return created
   })
   await addStorageDelta(userId, estimateThoughtStorage(thought))
-  if (writeHistory) await historyDb.log(userId, "thought.create", "Added thought", { thought_id: thought.id, tile_id: tileId, content, tags })
   return thought
 }
 
-export async function upsertTag(userId: string, clientId: string | null, serverId: number | null, payload: SyncPayload) {
+export async function upsertTag(userId: string, clientId: string | null, serverId: number | null, payload: SyncPayload, writeHistory: boolean, opId?: string, occurredAt?: string) {
   const name = stringValue(payload.name).trim().slice(0, 16)
   if (!name) throw new Error("Invalid tag name")
   const color = stringValue(payload.color, "#888")
@@ -161,7 +176,7 @@ export async function upsertTag(userId: string, clientId: string | null, serverI
 
   if (existing) {
     let thoughtTagDelta = 0
-    await sql.begin(async (tx) => {
+    const updated = await sql.begin(async (tx) => {
       await tx`UPDATE tags SET client_id = COALESCE(client_id, ${clientId}), name = ${name}, color = ${color}, updated_at = NOW() WHERE id = ${existing.id} AND user_id = ${userId}`
       if (existing.name !== name) {
         const thoughts = await tx<{ id: number; content: string; tags: string[] }[]>`
@@ -173,20 +188,28 @@ export async function upsertTag(userId: string, clientId: string | null, serverI
           await tx`UPDATE thoughts SET tags = ${updatedTags}, updated_at = NOW() WHERE id = ${thought.id} AND user_id = ${userId}`
         }
       }
+      const current = (await tx<Tag[]>`SELECT * FROM tags WHERE id = ${existing.id} AND user_id = ${userId}`)[0]
+      if (!current) throw new Error("Tag update did not return a row")
+      await logUpsertHistory(userId, "tag", existing, current, writeHistory, clientId, opId, occurredAt, tx)
+      return current
     })
-    const updated = (await sql<Tag[]>`SELECT * FROM tags WHERE id = ${existing.id} AND user_id = ${userId}`)[0]!
     await addStorageDelta(userId, estimateTagStorage(updated) - estimateTagStorage(existing) + thoughtTagDelta)
     return updated
   }
 
-  const beforeConflict = await sql<Tag[]>`SELECT * FROM tags WHERE user_id = ${userId} AND name = ${name}`
-  const [tag] = await sql<Tag[]>`
-    INSERT INTO tags (user_id, client_id, name, color)
-    VALUES (${userId}, ${clientId}, ${name}, ${color})
-    ON CONFLICT(user_id, name) DO UPDATE SET client_id = COALESCE(tags.client_id, excluded.client_id), color = excluded.color, updated_at = NOW()
-    RETURNING *
-  ` as unknown as [Tag]
-  const oldStorage = beforeConflict[0] ? estimateTagStorage(beforeConflict[0]) : 0
+  const { tag, beforeConflict } = await sql.begin(async (transaction) => {
+    const before = (await transaction<Tag[]>`SELECT * FROM tags WHERE user_id = ${userId} AND name = ${name}`)[0] ?? null
+    const [created] = await transaction<Tag[]>`
+      INSERT INTO tags (user_id, client_id, name, color)
+      VALUES (${userId}, ${clientId}, ${name}, ${color})
+      ON CONFLICT(user_id, name) DO UPDATE SET client_id = COALESCE(tags.client_id, excluded.client_id), color = excluded.color, updated_at = NOW()
+      RETURNING *
+    `
+    if (!created) throw new Error("Tag create did not return a row")
+    await logUpsertHistory(userId, "tag", before, created, writeHistory, clientId, opId, occurredAt, transaction)
+    return { tag: created, beforeConflict: before }
+  })
+  const oldStorage = beforeConflict ? estimateTagStorage(beforeConflict) : 0
   await addStorageDelta(userId, estimateTagStorage(tag) - oldStorage)
   return tag
 }

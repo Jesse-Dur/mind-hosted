@@ -77,8 +77,23 @@ await sql.unsafe(`
     action TEXT NOT NULL,
     summary TEXT NOT NULL,
     detail JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    client_id TEXT NOT NULL,
+    op_id TEXT,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+
+  ALTER TABLE history ADD COLUMN IF NOT EXISTS client_id TEXT;
+  ALTER TABLE history ADD COLUMN IF NOT EXISTS op_id TEXT;
+  ALTER TABLE history ADD COLUMN IF NOT EXISTS occurred_at TIMESTAMPTZ;
+  UPDATE history SET client_id = 'legacy-history-' || id WHERE client_id IS NULL;
+  UPDATE history SET occurred_at = created_at WHERE occurred_at IS NULL;
+  ALTER TABLE history ALTER COLUMN client_id SET NOT NULL;
+  ALTER TABLE history ALTER COLUMN occurred_at SET DEFAULT NOW();
+  ALTER TABLE history ALTER COLUMN occurred_at SET NOT NULL;
+  DROP INDEX IF EXISTS history_user_client_id_unique;
+  CREATE UNIQUE INDEX IF NOT EXISTS history_user_op_id_unique
+    ON history(user_id, op_id) WHERE op_id IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS sync_events (
     revision BIGSERIAL PRIMARY KEY,
@@ -108,4 +123,16 @@ await sql.unsafe(`
     storage_synced_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+
+  CREATE TABLE IF NOT EXISTS device_preferences (
+    user_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    device_class TEXT NOT NULL,
+    preferences JSONB NOT NULL DEFAULT '{}',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, device_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS device_preferences_user_class_updated
+    ON device_preferences(user_id, device_class, updated_at DESC);
 `)

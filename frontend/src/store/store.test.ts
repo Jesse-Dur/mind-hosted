@@ -828,7 +828,7 @@ describe("frontend store optimistic updates", () => {
     expect(thoughtRecord?.payload).toMatchObject({ tile_id: tempTileId, content: "Write tests" })
   })
 
-  test("rapid tile create then move coalesces to the final canvas position", async () => {
+  test("rapid tile create then move preserves both actions and the final canvas position", async () => {
     useStore.setState({
       canvases: [canvas({ id: 10 }), canvas({ id: 11, name: "Later" })],
       activeCanvasId: 10,
@@ -855,8 +855,10 @@ describe("frontend store optimistic updates", () => {
     const records = await syncDb.outbox.where("clientId").equals(optimisticTile.client_id ?? "").toArray()
     const state = useStore.getState()
 
-    expect(records).toHaveLength(1)
-    expect(records[0]?.payload).toMatchObject({ canvas_id: 11, x: 300, y: 400 })
+    const orderedRecords = [...records].sort((left, right) => left.createdAt - right.createdAt)
+    expect(orderedRecords).toHaveLength(2)
+    expect(orderedRecords[0]?.payload).toMatchObject({ canvas_id: 10, x: 0, y: 0 })
+    expect(orderedRecords[1]?.payload).toMatchObject({ canvas_id: 11, x: 300, y: 400 })
     expect(state.tiles).toHaveLength(0)
     expect(state.tileCache.get(11)?.[0]).toMatchObject({ id: optimisticTile.id, canvas_id: 11 })
   })
@@ -1119,7 +1121,9 @@ describe("frontend store optimistic updates", () => {
     await useStore.getState().moveThoughtToTile(31, 20, { targetCanvasId: 10, orderedIds: [31, 30, 32] })
 
     const records = await syncDb.outbox.toArray()
-    const orderByClientId = new Map(records.map((record) => [record.clientId, record.payload.sort_order]))
+    const orderByClientId = new Map([...records]
+      .sort((left, right) => left.createdAt - right.createdAt)
+      .map((record) => [record.clientId, record.payload.sort_order]))
     const finalOrder = [...useStore.getState().thoughts]
       .sort((left, right) => left.sort_order - right.sort_order)
       .map((item) => [item.id, item.sort_order])
@@ -1128,6 +1132,7 @@ describe("frontend store optimistic updates", () => {
     expect(orderByClientId.get("thought-31")).toBe(0)
     expect(orderByClientId.get("thought-30")).toBe(1)
     expect(orderByClientId.get("thought-32")).toBe(2)
+    expect((await syncDb.syncActivity.toArray()).filter((activity) => !activity.hidden)).toHaveLength(2)
   })
 
   test("temporary tile with temporary thoughts can be deleted before flush", async () => {
@@ -1156,8 +1161,12 @@ describe("frontend store optimistic updates", () => {
 
     expect(useStore.getState().tiles).toHaveLength(0)
     expect(useStore.getState().thoughts).toHaveLength(0)
-    expect(await syncDb.outbox.toArray()).toHaveLength(0)
-    expect(await syncDb.entities.toArray()).toHaveLength(0)
+    const operations = await syncDb.outbox.toArray()
+    expect(operations).toHaveLength(4)
+    expect(operations.filter((operation) => operation.action === "upsert")).toHaveLength(2)
+    expect(operations.filter((operation) => operation.action === "delete")).toHaveLength(2)
+    expect(operations.find((operation) => operation.entityType === "thought" && operation.action === "delete")?.recordHistory).toBe(false)
+    expect((await syncDb.entities.toArray()).every((record) => record.status === "deleted")).toBe(true)
   })
 
   test("deleting a canvas with moveContents moves known children and queues server work", async () => {

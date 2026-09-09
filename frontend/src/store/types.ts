@@ -1,6 +1,7 @@
 // This file defines the app store contract and the slice interfaces that compose it.
 import type { StateCreator } from "zustand"
 import type { BillingCreationLimitFeature, BillingLimitFeature, BillingLimitNotice, BillingOverage, BillingPlanImpact, BillingPlanSwitchResult, BillingPlans, BillingUsage, Canvas, HistoryEvent, Tag, Thought, Tile } from "../types"
+import type { SyncActivityRecord, SyncEntityStatus } from "../sync/types"
 
 export type AiStatus = "idle" | "processing" | "queued" | "limited"
 export type CanvasOrderUpdate = Pick<Canvas, "id" | "sort_order" | "is_favourite">
@@ -25,6 +26,9 @@ export interface UiSlice {
   spotlightOpen: boolean
   sidebarOpen: boolean
   canvasHeight: number
+  mobilePortraitSplit: number
+  mobileLandscapeSplit: number
+  focusedTileByCanvas: Record<string, string>
   highlightedId: { type: "tile" | "thought"; id: number } | null
   recentLocalTileChangeIds: Map<number, number>
   remoteChangedTileIds: Set<number>
@@ -36,6 +40,9 @@ export interface UiSlice {
   setSidebarOpen: (open: boolean) => void
   setCanvasHeight: (height: number) => void
   setTabsVisible: (visible: boolean) => void
+  applyDevicePreferences: (preferences: import("../preferences/devicePreferences").DevicePreferences) => void
+  setMobileSplit: (orientation: "portrait" | "landscape", ratio: number) => void
+  setFocusedTile: (canvasKey: string, tileKey: string) => void
 }
 
 export interface CanvasSlice {
@@ -110,8 +117,14 @@ export interface AiSlice {
 
 export interface SyncSlice {
   syncPendingCount: number
+  syncEntityStatuses: Map<string, SyncEntityStatus>
+  syncActivity: SyncActivityRecord[]
   startSyncRuntime: () => Promise<void>
   syncNow: () => Promise<void>
+  refreshSyncStatuses: () => Promise<void>
+  retrySyncOperation: (opId: string) => Promise<void>
+  keepSyncOperationLocal: (opId: string) => Promise<void>
+  discardSyncOperation: (opId: string) => Promise<void>
 }
 
 export interface BillingSlice {

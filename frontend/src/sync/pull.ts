@@ -7,6 +7,8 @@ import { syncDb } from "./localDb"
 import { GLOBAL_REVISION_KEY, canvasRevisionKey } from "./revisions"
 import { applyRemoteEntity, removeRemoteEntity } from "./storeBridge"
 import type { SyncEntity, SyncEntityType, SyncPullEvent } from "./types"
+import { cachePastEntity } from "./pastCache"
+import { assertSyncAccountScopeCurrent, runSyncAccountTask } from "./accountScope"
 
 async function localClientIdForEvent(entityType: SyncEntityType, clientId: string | null, serverId: number | null) {
   if (clientId) return clientId
@@ -45,10 +47,18 @@ async function shouldAnimateRemoteEntity(entityType: SyncEntityType, entity: Syn
   return JSON.stringify(payloadForEntity(entityType, existing.data)) !== JSON.stringify(payloadForEntity(entityType, entity))
 }
 
+async function wasAcknowledgedByThisDevice(event: SyncPullEvent) {
+  if (!event.op_id) return false
+  return (await syncDb.syncActivity.get(event.op_id))?.state === "synced"
+}
+
 async function deleteLocalEntity(entityType: SyncEntityType, clientId: string | null, serverId: number | null) {
   const localClientId = await localClientIdForEvent(entityType, clientId, serverId)
   if (!localClientId) return
-  await syncDb.entities.delete(entityKey(entityType, localClientId))
+  const key = entityKey(entityType, localClientId)
+  const record = await syncDb.entities.get(key)
+  if (record) await cachePastEntity(entityType, record.data)
+  await syncDb.entities.delete(key)
 }
 
 async function moveLocalCanvasContents(sourceCanvasId: number | null, targetCanvasId: number | null) {
@@ -90,9 +100,21 @@ async function applyPullEvent(event: SyncPullEvent) {
 }
 
 export async function pullSync(canvasId?: number) {
-  const key = canvasId === undefined ? GLOBAL_REVISION_KEY : canvasRevisionKey(canvasId)
-  const since = await metadataNumber(key)
-  const response = await getApi().sync.pull(since, canvasId)
-  for (const event of response.events) await applyPullEvent(event)
-  await setMetadataNumber(key, response.latest_revision)
+  return runSyncAccountTask(async (scope) => {
+    const key = canvasId === undefined ? GLOBAL_REVISION_KEY : canvasRevisionKey(canvasId)
+    const since = await metadataNumber(key)
+    assertSyncAccountScopeCurrent(scope)
+    const response = await getApi(scope).sync.pull(since, canvasId)
+    assertSyncAccountScopeCurrent(scope)
+    for (const event of response.events) {
+      // The optimistic state already includes our final local result. Replaying
+      // this device's older accepted revisions causes the delayed rollback-and-
+      // settle animation users perceive as a bubble or flicker.
+      if (await wasAcknowledgedByThisDevice(event)) continue
+      await applyPullEvent(event)
+      assertSyncAccountScopeCurrent(scope)
+    }
+    await setMetadataNumber(key, response.latest_revision)
+    assertSyncAccountScopeCurrent(scope)
+  })
 }

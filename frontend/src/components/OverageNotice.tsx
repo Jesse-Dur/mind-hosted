@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef } from "react"
 import { useStore } from "../store"
 import { BillingOverageModal } from "./BillingOverageModal"
 import { startBillingWarmupOnPlans } from "../startup/workspaceStartup"

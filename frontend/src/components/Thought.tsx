@@ -5,6 +5,7 @@ import { TagMenu } from "./TagMenu"
 import { CloseButton } from "./CloseButton"
 import { ThoughtTags } from "./ThoughtTags"
 import { useThoughtEdit } from "../hooks/useThoughtEdit"
+import { SyncStatusDot } from "./SyncStatusDot"
 import type { Thought as ThoughtType } from "../types"
 
 interface Props {
@@ -115,6 +116,7 @@ export function Thought({ thought, onDragStart, onDragMove, onDragOver, onDrop, 
           >{content}</span>
         </div>
         <ThoughtTags tags={localTags} />
+        <SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} />
         <CloseButton onClick={remove} size={18} />
       </div>
 

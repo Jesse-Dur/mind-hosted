@@ -1,13 +1,11 @@
 import { useEffect, useState } from "react"
 import { useStore } from "../store"
 import { CloseButton } from "./CloseButton"
-import { SavingSpinner } from "./SavingSpinner"
-import { isTemporaryId } from "../utils/optimisticIdentity"
+import { SyncStatusDot } from "./SyncStatusDot"
 import type { Tile } from "../types"
 
-export function TileHeader({ tile, onDragDown, editing, setEditing }: { tile: Tile; onDragDown: (e: React.MouseEvent) => void; editing: boolean; setEditing: (v: boolean) => void }) {
+export function TileHeader({ tile, thoughtIdentities, onDragDown, editing, setEditing }: { tile: Tile; thoughtIdentities?: Array<{ id: number; clientId?: string | null }>; onDragDown: (e: React.MouseEvent) => void; editing: boolean; setEditing: (v: boolean) => void }) {
   const { updateTile, removeTile } = useStore()
-  const [saving, setSaving] = useState(false)
   const [title, setTitle] = useState(tile.title)
 
   useEffect(() => {
@@ -19,15 +17,7 @@ export function TileHeader({ tile, onDragDown, editing, setEditing }: { tile: Ti
     setTitle(nextTitle)
     if (nextTitle === tile.title) return
 
-    const save = updateTile(tile.id, { title: nextTitle })
-    if (isTemporaryId(tile.id)) return
-
-    setSaving(true)
-    const start = Date.now()
-    save.finally(() => {
-      const elapsed = Date.now() - start
-      setTimeout(() => setSaving(false), Math.max(0, 500 - elapsed))
-    })
+    void updateTile(tile.id, { title: nextTitle })
   }
 
   return (
@@ -66,7 +56,10 @@ export function TileHeader({ tile, onDragDown, editing, setEditing }: { tile: Ti
         />
       </div>
       <div style={{ marginRight: 6, display: "flex", alignItems: "center", gap: 4 }}>
-        {saving && <SavingSpinner />}
+        <SyncStatusDot entities={[
+          { entityType: "tile", id: tile.id, clientId: tile.client_id },
+          ...(thoughtIdentities ?? []).map((thought) => ({ entityType: "thought" as const, id: thought.id, clientId: thought.clientId })),
+        ]} />
         <CloseButton onClick={() => removeTile(tile.id)} size={22} />
       </div>
     </div>

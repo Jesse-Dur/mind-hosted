@@ -1,5 +1,6 @@
 import type { StoreSlice, UiSlice } from "./types"
 import { readStoredCanvasHeight, readStoredTabsVisible, writeStoredCanvasHeight, writeStoredTabsVisible } from "./storage"
+import { readLocalDevicePreferences, saveDevicePreferences, type DevicePreferences } from "../preferences/devicePreferences"
 
 const REMOTE_CHANGE_ANIMATION_MS = 900
 const LOCAL_TILE_CHANGE_SUPPRESSION_MS = 12000
@@ -10,11 +11,25 @@ function serverIds(ids: number[]) {
   return ids.filter((id) => Number.isInteger(id) && id > 0)
 }
 
-export const createUiSlice: StoreSlice<UiSlice> = (set) => ({
+export const createUiSlice: StoreSlice<UiSlice> = (set, get) => {
+  const devicePreferences = readLocalDevicePreferences()
+  const persist = (overrides: Partial<DevicePreferences>) => saveDevicePreferences({
+    tabsVisible: get().tabsVisible,
+    canvasHeight: get().canvasHeight,
+    mobilePortraitSplit: get().mobilePortraitSplit,
+    mobileLandscapeSplit: get().mobileLandscapeSplit,
+    focusedTileByCanvas: get().focusedTileByCanvas,
+    ...overrides,
+  })
+
+  return ({
   tabsVisible: readStoredTabsVisible(),
   spotlightOpen: false,
   sidebarOpen: false,
   canvasHeight: readStoredCanvasHeight(),
+  mobilePortraitSplit: devicePreferences.mobilePortraitSplit,
+  mobileLandscapeSplit: devicePreferences.mobileLandscapeSplit,
+  focusedTileByCanvas: devicePreferences.focusedTileByCanvas,
   highlightedId: null,
   recentLocalTileChangeIds: new Map(),
   remoteChangedTileIds: new Set(),
@@ -64,9 +79,24 @@ export const createUiSlice: StoreSlice<UiSlice> = (set) => ({
   setCanvasHeight: (height) => {
     writeStoredCanvasHeight(height)
     set({ canvasHeight: height })
+    persist({ canvasHeight: height })
   },
   setTabsVisible: (visible) => {
     writeStoredTabsVisible(visible)
     set({ tabsVisible: visible })
+    persist({ tabsVisible: visible })
   },
-})
+  applyDevicePreferences: (preferences) => set(preferences),
+  setMobileSplit: (orientation, ratio) => {
+    const value = Math.min(0.72, Math.max(0, ratio))
+    if (orientation === "portrait") set({ mobilePortraitSplit: value })
+    else set({ mobileLandscapeSplit: value })
+    persist(orientation === "portrait" ? { mobilePortraitSplit: value } : { mobileLandscapeSplit: value })
+  },
+  setFocusedTile: (canvasKey, tileKey) => {
+    const focusedTileByCanvas = { ...get().focusedTileByCanvas, [canvasKey]: tileKey }
+    set({ focusedTileByCanvas })
+    persist({ focusedTileByCanvas })
+  },
+  })
+}
