@@ -45,6 +45,8 @@ export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: 
     .filter((t) => t.tile_id === tile.id)
     .sort((a, b) => a.sort_order - b.sort_order)
 
+  // Intentionally count the temporarily hidden source thought so the source tile's
+  // text stays the same size during a drag; recalculate after the move completes.
   const maxTagCount = tileThoughts.reduce((maximum, thought) => Math.max(maximum, thought.tags.length), previewTagCount)
   const effectiveFontSize = getEffectiveCanvasFontSize(canvasFontSize, tile.width, maxTagCount)
 
