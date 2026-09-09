@@ -2,13 +2,11 @@ interface Props {
   onClick: (e: React.MouseEvent) => void
   size?: number
   iconSize?: number
-  ariaLabel?: string
 }
 
-export function CloseButton({ onClick, size = 18, iconSize = 8, ariaLabel }: Props) {
+export function CloseButton({ onClick, size = 18, iconSize = 8 }: Props) {
   return (
     <button
-      aria-label={ariaLabel}
       onClick={onClick}
       onMouseDown={(e) => e.stopPropagation()}
       onMouseEnter={(e) => (e.currentTarget.style.background = "#ebebeb")}

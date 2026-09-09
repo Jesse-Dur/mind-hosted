@@ -24,8 +24,6 @@ export default defineConfig({
     },
   },
   server: {
-    host: "0.0.0.0",
-    allowedHosts: ["l13-yoga.tail24a713.ts.net"],
     port: 5173,
     proxy: {
       "/api": "http://localhost:3000",

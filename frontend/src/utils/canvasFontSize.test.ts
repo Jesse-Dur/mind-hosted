@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
   getEffectiveCanvasFontSize,
-  getEnforcedTileBounds,
-  getMinimumTileWidth,
   getThoughtControlMetrics,
   getThoughtRequiredTileWidth,
 } from "./canvasFontSize"
@@ -34,26 +32,4 @@ describe("thought control sizing", () => {
     expect(getThoughtRequiredTileWidth(8, 3)).toBe(120)
   })
 
-  test("raises the minimum tile width once the 8px font cannot fit", () => {
-    expect(getMinimumTileWidth(0)).toBe(96)
-    expect(getMinimumTileWidth(1)).toBe(96)
-    expect(getMinimumTileWidth(2)).toBe(120)
-    expect(getMinimumTileWidth(3)).toBe(120)
-    expect(getMinimumTileWidth(4)).toBe(144)
-  })
-
-  test("always leaves every tag and control inside the enforced width", () => {
-    for (let tagCount = 0; tagCount <= 12; tagCount += 1) {
-      const minimumWidth = getMinimumTileWidth(tagCount)
-      const fontSize = getEffectiveCanvasFontSize(36, minimumWidth, tagCount)
-
-      expect(minimumWidth % 24).toBe(0)
-      expect(getThoughtRequiredTileWidth(fontSize, tagCount)).toBeLessThanOrEqual(minimumWidth)
-    }
-  })
-
-  test("moves a widened tile back inside the canvas", () => {
-    expect(getEnforcedTileBounds(1824, 96, 144, 1920)).toEqual({ x: 1776, width: 144 })
-    expect(getEnforcedTileBounds(240, 280, 96, 1920)).toEqual({ x: 240, width: 280 })
-  })
 })

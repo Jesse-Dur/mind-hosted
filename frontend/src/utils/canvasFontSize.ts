@@ -2,8 +2,6 @@ export const DEFAULT_CANVAS_FONT_SIZE = 13
 export const MIN_CANVAS_FONT_SIZE = 8
 export const MAX_CANVAS_FONT_SIZE = 36
 
-const TILE_GRID_SIZE = 24
-const BASE_MIN_TILE_WIDTH = TILE_GRID_SIZE * 4
 const THOUGHT_HORIZONTAL_CHROME = 40
 const THOUGHT_GAP = 6
 const THOUGHT_TAG_WIDTH = 12
@@ -51,15 +49,4 @@ export function getEffectiveCanvasFontSize(preferredFontSize: number, tileWidth:
     if (getThoughtRequiredTileWidth(fontSize, maxTagCount) <= tileWidth) return fontSize
   }
   return MIN_CANVAS_FONT_SIZE
-}
-
-export function getMinimumTileWidth(maxTagCount: number) {
-  const requiredWidth = getThoughtRequiredTileWidth(MIN_CANVAS_FONT_SIZE, maxTagCount)
-  return Math.max(BASE_MIN_TILE_WIDTH, Math.ceil(requiredWidth / TILE_GRID_SIZE) * TILE_GRID_SIZE)
-}
-
-export function getEnforcedTileBounds(tileX: number, tileWidth: number, minimumWidth: number, canvasWidth: number) {
-  const width = Math.max(tileWidth, minimumWidth)
-  const x = Math.max(0, Math.min(tileX, canvasWidth - width))
-  return { x, width }
 }

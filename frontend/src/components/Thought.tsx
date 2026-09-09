@@ -55,10 +55,6 @@ export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver
     await updateThoughtTags(thought.id, tags)
   }
 
-  function removeTag(tag: string) {
-    void onTagUpdate(localTags.filter((item) => item !== tag)).catch(console.error)
-  }
-
   return (
     <>
       {(isHighlighted || isRemoteChanged) && <style>{thoughtAnimationStyles}</style>}
@@ -122,7 +118,7 @@ export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver
             style={{ color: "#1a1a1a", outline: "none", cursor: "text", userSelect: "text", fontSize: "inherit", lineHeight: "inherit" }}
           >{content}</span>
         </div>
-        <ThoughtTags tags={localTags} onRemove={removeTag} />
+        <ThoughtTags tags={localTags} />
         <CloseButton onClick={remove} size={controlSize} iconSize={closeIconSize} />
       </div>
 
