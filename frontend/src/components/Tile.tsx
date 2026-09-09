@@ -31,16 +31,21 @@ export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: 
     const session = getCrossCanvasDrag()
     return session?.kind === "tile" && session.tile.id === tile.id
   })
+  const [previewTagCount, setPreviewTagCount] = useState(() => {
+    const session = getCrossCanvasDrag()
+    return session?.kind === "thought" && session.targetTileId === tile.id ? session.thought.tags.length : 0
+  })
 
   useEffect(() => subscribeCrossCanvasDrag((session) => {
     setIsDragging(session?.kind === "tile" && session.tile.id === tile.id)
+    setPreviewTagCount(session?.kind === "thought" && session.targetTileId === tile.id ? session.thought.tags.length : 0)
   }), [tile.id])
 
   const tileThoughts = thoughts
     .filter((t) => t.tile_id === tile.id)
     .sort((a, b) => a.sort_order - b.sort_order)
 
-  const maxTagCount = tileThoughts.reduce((maximum, thought) => Math.max(maximum, thought.tags.length), 0)
+  const maxTagCount = tileThoughts.reduce((maximum, thought) => Math.max(maximum, thought.tags.length), previewTagCount)
   const effectiveFontSize = getEffectiveCanvasFontSize(canvasFontSize, tile.width, maxTagCount)
 
   const { onDragDown, onResizeDown } = useTileDrag(tile, tileThoughts, scale)
