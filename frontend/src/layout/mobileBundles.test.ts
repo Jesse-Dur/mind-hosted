@@ -131,9 +131,14 @@ describe("responsive bundle boundaries", () => {
     expect(manifest[desktopKey!]?.imports ?? []).not.toContain(mobileKey!)
 
     const serviceWorker = await Bun.file(new URL("../../dist/sw.js", import.meta.url)).text()
-    expect(serviceWorker).not.toContain(manifest[mobileKey!]!.file)
-    expect(serviceWorker).not.toContain(manifest[desktopKey!]!.file)
-    expect(serviceWorker).toContain('caches.match("/index.html").then(cached => cached || network)')
-    expect(serviceWorker).toContain("Promise.allSettled")
+    const config = JSON.parse(serviceWorker.split("\n")[0]!.slice("const CONFIG = ".length, -1)) as { precache: string[]; workspaces: Record<string, string[]>; shell: string }
+    expect(config.precache).not.toContain(`/${manifest[mobileKey!]!.file}`)
+    expect(config.precache).not.toContain(`/${manifest[desktopKey!]!.file}`)
+    expect(config.workspaces.mobile).toContain(`/${manifest[mobileKey!]!.file}`)
+    expect(config.workspaces.desktop).toContain(`/${manifest[desktopKey!]!.file}`)
+    expect(config.workspaces.desktop).not.toContain(`/${manifest[mobileKey!]!.file}`)
+    expect(config.workspaces.mobile).not.toContain(`/${manifest[desktopKey!]!.file}`)
+    expect(config.precache).toContain(config.shell)
+    expect(serviceWorker).toContain("cache.match(SHELL)")
   })
 })

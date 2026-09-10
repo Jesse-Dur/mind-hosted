@@ -6,10 +6,11 @@ import { entityFromPayload } from "./entityPayload"
 import { getEntityRecord } from "./entities"
 import { entityKey } from "./ids"
 import { syncDb } from "./localDb"
-import { adoptServerEntity } from "./storeBridge"
+import { adoptServerEntity, applyRemoteEntity, removeRemoteEntity } from "./storeBridge"
 import type { LocalEntityRecord, OutboxRecord, SyncEntity, SyncPayload, SyncPushOperation } from "./types"
 import { markSyncAcknowledged, notifySyncStatusChanged } from "./status"
 import { markEntityWrite } from "./entityWriteFence"
+import { readEntityRevision, writeEntityRevision } from "./entityRevision"
 import { assertSyncAccountScopeCurrent, currentSyncAccountScope, isStaleSyncAccountError, isSyncAccountScopeCurrent, runSyncAccountTask, type SyncAccountScope } from "./accountScope"
 
 const MAX_RETRY_MS = 60000
@@ -105,23 +106,44 @@ async function pauseForAuth(record: OutboxRecord) {
   notifySyncStatusChanged()
 }
 
-async function applyPushResult(record: OutboxRecord, resultEntity: SyncEntity | undefined, serverId: number | null) {
+async function applyPushResult(record: OutboxRecord, resultEntity: SyncEntity | undefined, serverId: number | null, revision: number | null) {
   // A push acknowledgement is newer than any snapshot that was already in
   // flight, even after this operation's outbox row has been removed.
   markEntityWrite(record.entityType, record.clientId)
   const localRecord = await getEntityRecord(record.entityType, record.clientId)
   const pending = await newerPendingOperation(record)
-  if (resultEntity) {
-    const acknowledgedEntity = { ...resultEntity, client_id: resultEntity.client_id ?? record.clientId }
-    if (localRecord?.tempId !== null && localRecord?.tempId !== undefined) {
-      await adoptLocalReferences(record.entityType, localRecord.tempId, acknowledgedEntity.id)
+  if (serverId !== null && localRecord?.tempId !== null && localRecord?.tempId !== undefined) {
+    await adoptLocalReferences(record.entityType, localRecord.tempId, serverId)
+    await updatePendingServerIds(record, serverId)
+  }
+  const newerRemote = revision !== null && await readEntityRevision(record.entityType, serverId) > revision
+  if (newerRemote) {
+    // A pull can complete while the push response is in flight. Its confirmed
+    // state wins once the last optimistic operation is acknowledged.
+    if (localRecord && !pending) {
+      if (localRecord.confirmedData) {
+        const cached = await cacheServerEntity(record.entityType, localRecord.confirmedData, false)
+        adoptServerEntity(record.entityType, localRecord, cached.data)
+        applyRemoteEntity(record.entityType, cached.data)
+      } else {
+        await syncDb.entities.delete(localRecord.key)
+        removeRemoteEntity(record.entityType, localRecord.data.id)
+      }
+    } else if (localRecord && serverId !== null) {
+      const localEntity = { ...localRecord.data, id: serverId }
+      await syncDb.entities.put({ ...localRecord, serverId, data: localEntity })
+      if (localRecord.status !== "deleted") adoptServerEntity(record.entityType, localRecord, localEntity)
     }
+  } else if (resultEntity) {
+    const acknowledgedEntity = { ...resultEntity, client_id: resultEntity.client_id ?? record.clientId }
     if (pending && localRecord) {
       const localEntity = { ...localRecord.data, id: acknowledgedEntity.id, client_id: record.clientId }
       await syncDb.entities.put({
         ...localRecord,
         serverId: acknowledgedEntity.id,
         data: localEntity,
+        confirmedData: acknowledgedEntity,
+        lastSyncedAt: Date.now(),
         updatedAt: Date.now(),
       })
       await updatePendingServerIds(record, acknowledgedEntity.id)
@@ -132,20 +154,25 @@ async function applyPushResult(record: OutboxRecord, resultEntity: SyncEntity | 
       adoptServerEntity(record.entityType, localRecord, cached.data)
     }
   } else if (record.action === "delete") {
-    await syncDb.entities.delete(entityKey(record.entityType, record.clientId))
+    if (pending && localRecord) {
+      await syncDb.entities.put({ ...localRecord, confirmedData: null, lastSyncedAt: Date.now() })
+    } else {
+      await syncDb.entities.delete(entityKey(record.entityType, record.clientId))
+    }
   } else if (serverId !== null && localRecord) {
     await syncDb.entities.put({
       ...localRecord,
       serverId,
       tempId: null,
-      status: "clean",
-      confirmedData: localRecord.data,
-      syncDisposition: "normal",
+      status: pending ? localRecord.status : "clean",
+      confirmedData: entityFromPayload(record.entityType, { ...localRecord.data, ...record.payload, id: serverId }),
+      syncDisposition: pending ? localRecord.syncDisposition : "normal",
       lastSyncedAt: Date.now(),
       updatedAt: Date.now(),
     })
     await updatePendingServerIds(record, serverId)
   }
+  await writeEntityRevision(record.entityType, serverId, revision)
   await syncDb.outbox.delete(record.opId)
   const activity = await syncDb.syncActivity.get(record.opId)
   if (activity) await syncDb.syncActivity.put({ ...activity, state: "synced", error: null, updatedAt: Date.now() })
@@ -184,7 +211,11 @@ async function flushRecord(record: OutboxRecord, scope: SyncAccountScope | null)
     return
   }
   const entity = result.entity ? entityFromPayload(record.entityType, result.entity as unknown as SyncPayload) : undefined
-  await applyPushResult(record, entity ?? undefined, result.server_id)
+  await syncDb.transaction("rw", syncDb.tables, async () => {
+    assertSyncAccountScopeCurrent(scope)
+    await applyPushResult(record, entity ?? undefined, result.server_id, result.revision)
+    assertSyncAccountScopeCurrent(scope)
+  })
   scheduleFlush()
 }
 

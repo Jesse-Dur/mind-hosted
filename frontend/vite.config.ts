@@ -1,10 +1,16 @@
 import { defineConfig, type Plugin } from "vite"
 import react from "@vitejs/plugin-react"
 import { version } from "./package.json"
+import { resolve } from "node:path"
+import { writeServiceWorker } from "./pwa/build"
 
 function pwaServiceWorker(): Plugin {
+  let outputDirectory = ""
   return {
     name: "mind-pwa-service-worker",
+    configResolved(config) {
+      if (config.command === "build") outputDirectory = resolve(config.root, config.build.outDir)
+    },
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
         if (request.url?.split("?")[0] !== "/sw.js") return next()
@@ -40,44 +46,8 @@ self.addEventListener("fetch", event => {
 });`)
       })
     },
-    generateBundle(_options, bundle) {
-      const staticShell = new Set<string>()
-      const visit = (file: string) => {
-        if (staticShell.has(file)) return
-        staticShell.add(file)
-        const output = bundle[file]
-        if (output?.type === "chunk") for (const imported of output.imports) visit(imported)
-      }
-      for (const [file, output] of Object.entries(bundle)) if (output.type === "chunk" && output.isEntry) visit(file)
-      const files = [...staticShell].filter((file) => !file.endsWith(".map")).map((file) => `/${file}`)
-      const precache = ["/", "/index.html", "/manifest.webmanifest", "/favicon.svg", "/favicon.png", "/pwa-192.png", "/pwa-512.png", "/pwa-maskable-192.png", "/pwa-maskable-512.png", ...files]
-      const source = `
-const CACHE = ${JSON.stringify(`mind-shell-${version}`)};
-const PRECACHE = ${JSON.stringify(precache)};
-const isClerkAsset = url => url.protocol === "https:" && url.pathname.startsWith("/npm/@clerk/clerk-js@") && url.pathname.endsWith(".js");
-self.addEventListener("install", event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(PRECACHE))));
-self.addEventListener("activate", event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith("mind-shell-") && key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));
-self.addEventListener("message", event => { if (event.data?.type === "SKIP_WAITING") self.skipWaiting(); });
-self.addEventListener("message", event => {
-  if (event.data?.type !== "CACHE_URLS" || !Array.isArray(event.data.urls)) return;
-  const urls = event.data.urls.filter(value => { if (typeof value !== "string") return false; const url = new URL(value, self.location.origin); return url.origin === self.location.origin && !url.pathname.startsWith("/api/") || isClerkAsset(url); });
-  event.waitUntil(caches.open(CACHE).then(cache => Promise.allSettled(urls.map(url => cache.add(url)))));
-});
-self.addEventListener("fetch", event => {
-  const request = event.request;
-  if (request.method !== "GET") return;
-  const url = new URL(request.url);
-  const clerkAsset = request.destination === "script" && isClerkAsset(url);
-  if (url.origin !== self.location.origin && !clerkAsset || url.origin === self.location.origin && url.pathname.startsWith("/api/")) return;
-  if (request.mode === "navigate") {
-    const network = fetch(request).then(async response => { if (response.ok) await caches.open(CACHE).then(cache => cache.put("/index.html", response.clone())); return response; });
-    event.waitUntil(network.then(() => undefined).catch(() => undefined));
-    event.respondWith(caches.match("/index.html").then(cached => cached || network));
-    return;
-  }
-  event.respondWith(caches.match(request).then(cached => cached || fetch(request).then(response => { if (response.ok || response.type === "opaque") { const copy = response.clone(); caches.open(CACHE).then(cache => cache.put(request, copy)); } return response; })));
-});`
-      this.emitFile({ type: "asset", fileName: "sw.js", source })
+    async closeBundle() {
+      if (outputDirectory) await writeServiceWorker(outputDirectory)
     },
   }
 }
