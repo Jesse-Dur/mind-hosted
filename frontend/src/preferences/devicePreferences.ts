@@ -2,15 +2,18 @@ import type { DeviceClass } from "../api/client"
 import { getApi } from "../store/apiAuth"
 import { getActiveSyncUserId } from "../sync/localDb"
 import { assertSyncAccountScopeCurrent, currentSyncAccountScope, runSyncAccountTask } from "../sync/accountScope"
+import { DEFAULT_CANVAS_FONT_SIZE, normalizeCanvasFontSize } from "../utils/canvasFontSize"
 
 const DEVICE_ID_KEY = "mind.device-id"
 const LEGACY_TABS_KEY = "tabsVisible"
 const LEGACY_CANVAS_HEIGHT_KEY = "canvasHeight"
+const LEGACY_CANVAS_FONT_SIZE_KEY = "canvasFontSize"
 const PROFILE_PREFIX = "mind.device-preferences."
 
 export type DevicePreferences = {
   tabsVisible: boolean
   canvasHeight: number
+  canvasFontSize: number
   mobilePortraitSplit: number
   mobileLandscapeSplit: number
   focusedTileByCanvas: Record<string, string>
@@ -19,6 +22,7 @@ export type DevicePreferences = {
 const DEFAULTS: DevicePreferences = {
   tabsVisible: true,
   canvasHeight: 1440,
+  canvasFontSize: DEFAULT_CANVAS_FONT_SIZE,
   mobilePortraitSplit: 0.36,
   mobileLandscapeSplit: 0.38,
   focusedTileByCanvas: {},
@@ -82,6 +86,7 @@ export function normalizeDevicePreferences(value: unknown): DevicePreferences {
   return {
     tabsVisible: typeof raw.tabsVisible === "boolean" ? raw.tabsVisible : DEFAULTS.tabsVisible,
     canvasHeight: canvasHeightPreference(raw.canvasHeight),
+    canvasFontSize: normalizeCanvasFontSize(typeof raw.canvasFontSize === "number" ? raw.canvasFontSize : DEFAULT_CANVAS_FONT_SIZE),
     mobilePortraitSplit: numberInRange(raw.mobilePortraitSplit, DEFAULTS.mobilePortraitSplit, 0, 0.72),
     mobileLandscapeSplit: numberInRange(raw.mobileLandscapeSplit, DEFAULTS.mobileLandscapeSplit, 0, 0.72),
     focusedTileByCanvas: focused,
@@ -117,6 +122,7 @@ function readLocalProfile(): StoredProfile {
     preferences: normalizeDevicePreferences({
       tabsVisible: localStorage.getItem(LEGACY_TABS_KEY) !== "false",
       canvasHeight: Number(localStorage.getItem(LEGACY_CANVAS_HEIGHT_KEY) ?? DEFAULTS.canvasHeight),
+      canvasFontSize: Number(localStorage.getItem(LEGACY_CANVAS_FONT_SIZE_KEY) || DEFAULTS.canvasFontSize),
     }),
     pending: false,
     updatedAt: 0,

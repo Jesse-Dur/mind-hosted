@@ -4,6 +4,7 @@ import { TileHeader } from "./TileHeader"
 import { TileContent } from "./TileContent"
 import { useTileDrag } from "../hooks/useTileDrag"
 import { getCrossCanvasDrag, subscribeCrossCanvasDrag } from "../utils/crossCanvasDrag"
+import { getEffectiveCanvasFontSize } from "../utils/canvasFontSize"
 import type { Thought, Tile as TileType } from "../types"
 
 const tileAnimationStyles = `
@@ -22,7 +23,7 @@ const tileAnimationStyles = `
 `
 
 export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: Thought[]; scale?: number }) {
-  const { highlightedId, remoteChangedTileIds } = useStore()
+  const { canvasFontSize, highlightedId, remoteChangedTileIds } = useStore()
   const [editing, setEditing] = useState(false)
   const isHighlighted = highlightedId?.type === "tile" && Number(highlightedId.id) === Number(tile.id)
   const isRemoteChanged = remoteChangedTileIds.has(tile.id)
@@ -30,14 +31,24 @@ export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: 
     const session = getCrossCanvasDrag()
     return session?.kind === "tile" && session.tile.id === tile.id
   })
+  const [previewTagCount, setPreviewTagCount] = useState(() => {
+    const session = getCrossCanvasDrag()
+    return session?.kind === "thought" && session.targetTileId === tile.id ? session.thought.tags.length : 0
+  })
 
   useEffect(() => subscribeCrossCanvasDrag((session) => {
     setIsDragging(session?.kind === "tile" && session.tile.id === tile.id)
+    setPreviewTagCount(session?.kind === "thought" && session.targetTileId === tile.id ? session.thought.tags.length : 0)
   }), [tile.id])
 
   const tileThoughts = thoughts
     .filter((t) => t.tile_id === tile.id)
     .sort((a, b) => a.sort_order - b.sort_order)
+
+  // Intentionally count the temporarily hidden source thought so the source tile's
+  // text stays the same size during a drag; recalculate after the move completes.
+  const maxTagCount = tileThoughts.reduce((maximum, thought) => Math.max(maximum, thought.tags.length), previewTagCount)
+  const effectiveFontSize = getEffectiveCanvasFontSize(canvasFontSize, tile.width, maxTagCount)
 
   const { onDragDown, onResizeDown } = useTileDrag(tile, tileThoughts, scale)
 
@@ -71,8 +82,8 @@ export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: 
           zIndex: isDragging ? 20 : undefined,
         }}
       >
-        <TileHeader tile={tile} thoughtIdentities={tileThoughts.map((thought) => ({ id: thought.id, clientId: thought.client_id }))} onDragDown={onDragDown} editing={editing} setEditing={setEditing} />
-        <TileContent tileId={tile.id} tileThoughts={tileThoughts} />
+        <TileHeader tile={tile} fontSize={effectiveFontSize} thoughtIdentities={tileThoughts.map((thought) => ({ id: thought.id, clientId: thought.client_id }))} onDragDown={onDragDown} editing={editing} setEditing={setEditing} />
+        <TileContent tileId={tile.id} fontSize={effectiveFontSize} tileThoughts={tileThoughts} />
         <div
           onMouseDown={onResizeDown}
           style={{ position: "absolute", bottom: 0, right: 0, width: 16, height: 16, cursor: "nwse-resize", display: "flex", alignItems: "center", justifyContent: "center" }}

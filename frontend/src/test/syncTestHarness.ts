@@ -220,6 +220,7 @@ export async function resetFrontendState() {
     spotlightOpen: false,
     tabsVisible: true,
     canvasHeight: 1440,
+    canvasFontSize: 13,
     highlightedId: null,
   })
 }

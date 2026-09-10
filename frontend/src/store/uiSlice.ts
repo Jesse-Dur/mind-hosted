@@ -1,6 +1,7 @@
 import type { StoreSlice, UiSlice } from "./types"
-import { readStoredCanvasHeight, readStoredTabsVisible, writeStoredCanvasHeight, writeStoredTabsVisible } from "./storage"
 import { readLocalDevicePreferences, saveDevicePreferences, type DevicePreferences } from "../preferences/devicePreferences"
+import { normalizeCanvasFontSize } from "../utils/canvasFontSize"
+import { readStoredCanvasFontSize, readStoredCanvasHeight, readStoredTabsVisible, writeStoredCanvasFontSize, writeStoredCanvasHeight, writeStoredTabsVisible } from "./storage"
 
 const REMOTE_CHANGE_ANIMATION_MS = 900
 const LOCAL_TILE_CHANGE_SUPPRESSION_MS = 12000
@@ -16,6 +17,7 @@ export const createUiSlice: StoreSlice<UiSlice> = (set, get) => {
   const persist = (overrides: Partial<DevicePreferences>) => saveDevicePreferences({
     tabsVisible: get().tabsVisible,
     canvasHeight: get().canvasHeight,
+    canvasFontSize: get().canvasFontSize,
     mobilePortraitSplit: get().mobilePortraitSplit,
     mobileLandscapeSplit: get().mobileLandscapeSplit,
     focusedTileByCanvas: get().focusedTileByCanvas,
@@ -30,6 +32,7 @@ export const createUiSlice: StoreSlice<UiSlice> = (set, get) => {
   mobilePortraitSplit: devicePreferences.mobilePortraitSplit,
   mobileLandscapeSplit: devicePreferences.mobileLandscapeSplit,
   focusedTileByCanvas: devicePreferences.focusedTileByCanvas,
+  canvasFontSize: readStoredCanvasFontSize(),
   highlightedId: null,
   recentLocalTileChangeIds: new Map(),
   remoteChangedTileIds: new Set(),
@@ -80,6 +83,12 @@ export const createUiSlice: StoreSlice<UiSlice> = (set, get) => {
     writeStoredCanvasHeight(height)
     set({ canvasHeight: height })
     persist({ canvasHeight: height })
+  },
+  setCanvasFontSize: (fontSize) => {
+    const normalized = normalizeCanvasFontSize(fontSize)
+    writeStoredCanvasFontSize(normalized)
+    set({ canvasFontSize: normalized })
+    persist({ canvasFontSize: normalized })
   },
   setTabsVisible: (visible) => {
     writeStoredTabsVisible(visible)

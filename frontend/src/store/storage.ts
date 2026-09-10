@@ -1,10 +1,13 @@
 import type { Canvas } from "../types"
 import { readLocalDevicePreferences } from "../preferences/devicePreferences"
 import { getActiveSyncUserId } from "../sync/localDb"
+import { normalizeCanvasFontSize } from "../utils/canvasFontSize"
 
 const ACTIVE_CANVAS_STORAGE_KEY = "activeCanvasId"
 const TABS_VISIBLE_STORAGE_KEY = "tabsVisible"
 const CANVAS_HEIGHT_STORAGE_KEY = "canvasHeight"
+const CANVAS_FONT_SIZE_STORAGE_KEY = "canvasFontSize"
+
 function activeCanvasStorageKey() {
   const userId = getActiveSyncUserId()
   return userId ? `${ACTIVE_CANVAS_STORAGE_KEY}:${encodeURIComponent(userId)}` : ACTIVE_CANVAS_STORAGE_KEY
@@ -45,4 +48,12 @@ export function readStoredCanvasHeight() {
 
 export function writeStoredCanvasHeight(height: number) {
   localStorage.setItem(CANVAS_HEIGHT_STORAGE_KEY, String(height))
+}
+
+export function readStoredCanvasFontSize() {
+  return readLocalDevicePreferences().canvasFontSize
+}
+
+export function writeStoredCanvasFontSize(fontSize: number) {
+  localStorage.setItem(CANVAS_FONT_SIZE_STORAGE_KEY, String(normalizeCanvasFontSize(fontSize)))
 }

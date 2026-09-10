@@ -29,6 +29,7 @@ export interface UiSlice {
   mobilePortraitSplit: number
   mobileLandscapeSplit: number
   focusedTileByCanvas: Record<string, string>
+  canvasFontSize: number
   highlightedId: { type: "tile" | "thought"; id: number } | null
   recentLocalTileChangeIds: Map<number, number>
   remoteChangedTileIds: Set<number>
@@ -39,6 +40,7 @@ export interface UiSlice {
   setSpotlightOpen: (open: boolean) => void
   setSidebarOpen: (open: boolean) => void
   setCanvasHeight: (height: number) => void
+  setCanvasFontSize: (fontSize: number) => void
   setTabsVisible: (visible: boolean) => void
   applyDevicePreferences: (preferences: import("../preferences/devicePreferences").DevicePreferences) => void
   setMobileSplit: (orientation: "portrait" | "landscape", ratio: number) => void

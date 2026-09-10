@@ -6,12 +6,14 @@ describe("device preferences", () => {
     expect(normalizeDevicePreferences({
       tabsVisible: false,
       canvasHeight: 2160,
+      canvasFontSize: 24,
       mobilePortraitSplit: 0.42,
       mobileLandscapeSplit: 0.51,
       focusedTileByCanvas: { "canvas-1": "tile-device-key", invalid: 4 },
     })).toEqual({
       tabsVisible: false,
       canvasHeight: 2160,
+      canvasFontSize: 24,
       mobilePortraitSplit: 0.42,
       mobileLandscapeSplit: 0.51,
       focusedTileByCanvas: { "canvas-1": "tile-device-key" },

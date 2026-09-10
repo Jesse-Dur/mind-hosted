@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test"
-import { entityKey, resetFrontendState, syncDb, thought, tile, useStore } from "../test/syncTestHarness"
+import { entityKey, resetFrontendState, syncDb, tag, thought, tile, useStore } from "../test/syncTestHarness"
 import { cacheServerEntity } from "./cache"
 import { enqueueDelete, enqueueUpsert } from "./outbox"
 import { flushSyncQueue } from "./flush"
@@ -16,6 +16,59 @@ const event = (revision: number, x: number, opId = `remote-${revision}`, action:
 })
 
 beforeEach(resetFrontendState)
+
+test.each(["untag", "delete tag"] as const)("adding tags then %s does not flash as a remote edit", async (removal) => {
+  const initial = thought({ tags: [] })
+  const definition = tag({ name: "recent" })
+  await cacheServerEntity("tile", tile(), false)
+  await cacheServerEntity("thought", initial, false)
+  await cacheServerEntity("tag", definition, false)
+  useStore.setState({ activeCanvasId: 10, tiles: [tile()], thoughts: [initial], tags: [definition] })
+
+  const events: SyncPullEvent[] = []
+  globalThis.fetch = async (_path, init) => {
+    if (!init?.body) return json({ events, latest_revision: events.length })
+    const operations = JSON.parse(init.body as string).operations as SyncPushOperation[]
+    return json({ results: operations.map((op) => {
+      const revision = events.length + 1
+      const entity = op.entity_type === "thought" ? thought({ ...op.payload }) : definition
+      events.push({
+        revision, canvas_id: op.entity_type === "thought" ? 10 : null,
+        entity_type: op.entity_type, entity_id: entity.id, client_id: entity.client_id!, op_id: op.op_id,
+        action: op.action, data: entity, created_at: "2026-01-01T00:00:00Z",
+      })
+      return { ok: true, op_id: op.op_id, entity_type: op.entity_type, action: op.action, client_id: op.client_id, server_id: entity.id, revision, ...(op.action === "upsert" ? { entity } : {}) }
+    }) })
+  }
+
+  await useStore.getState().updateThoughtTags(initial.id, ["recent"])
+  await flushSyncQueue()
+  if (removal === "untag") await useStore.getState().updateThoughtTags(initial.id, [])
+  else await useStore.getState().removeTag(definition.id)
+
+  // The server can echo the earlier tagged payload while the removal is pending.
+  await pullSync(10)
+  expect(useStore.getState().thoughts[0]?.tags).toEqual([])
+  expect(useStore.getState().remoteChangedThoughtIds.size).toBe(0)
+  expect(useStore.getState().remoteChangedTileIds.size).toBe(0)
+
+  await flushSyncQueue()
+  await pullSync(10)
+  expect(useStore.getState().thoughts[0]?.tags).toEqual([])
+  expect((await syncDb.entities.get(entityKey("thought", "thought-client")))?.data).toMatchObject({ tags: [] })
+  expect(useStore.getState().remoteChangedThoughtIds.size).toBe(0)
+  expect(useStore.getState().remoteChangedTileIds.size).toBe(0)
+
+  // A subsequent edit from another device still deserves the purple indicator.
+  events.push({
+    revision: events.length + 1, canvas_id: 10, entity_type: "thought", entity_id: initial.id,
+    client_id: initial.client_id!, op_id: "another-device-tag-edit", action: "upsert",
+    data: thought({ tags: ["remote-tag"] }), created_at: "2026-01-01T00:00:05Z",
+  })
+  await pullSync(10)
+  expect(useStore.getState().thoughts[0]?.tags).toEqual(["remote-tag"])
+  expect(useStore.getState().remoteChangedThoughtIds.has(initial.id)).toBe(true)
+})
 
 function mockPush(revision: number, rejectAfterFirst = false) {
   let calls = 0
