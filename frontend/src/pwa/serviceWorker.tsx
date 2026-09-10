@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { respondToBuildQuery } from "./buildIdentity"
 
 let waitingWorker: ServiceWorker | null = null
 
@@ -34,6 +35,13 @@ function isCacheableClerkAsset(value: string) {
 
 export function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return
+  const buildCache = document.querySelector<HTMLMetaElement>('meta[name="mind-build-cache"]')?.content ?? null
+  navigator.serviceWorker.addEventListener("message", (event) => respondToBuildQuery(event, buildCache))
+  const cleanup = () => navigator.serviceWorker.controller?.postMessage({ type: "CLEANUP_CACHES" })
+  window.addEventListener("pageshow", cleanup)
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") cleanup()
+  })
   window.addEventListener("load", () => {
     void navigator.serviceWorker.register("/sw.js").then(async (registration) => {
       async function prepareUpdate() {

@@ -131,6 +131,7 @@ async function applyPushResult(record: OutboxRecord, resultEntity: SyncEntity | 
       }
     } else if (localRecord && serverId !== null) {
       const localEntity = { ...localRecord.data, id: serverId }
+      // Keep tempId intentionally so later-queued children can link to this entity's server ID.
       await syncDb.entities.put({ ...localRecord, serverId, data: localEntity })
       if (localRecord.status !== "deleted") adoptServerEntity(record.entityType, localRecord, localEntity)
     }
