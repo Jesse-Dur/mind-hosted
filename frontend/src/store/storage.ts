@@ -1,8 +1,10 @@
 import type { Canvas } from "../types"
+import { DEFAULT_CANVAS_FONT_SIZE, normalizeCanvasFontSize } from "../utils/canvasFontSize"
 
 const ACTIVE_CANVAS_STORAGE_KEY = "activeCanvasId"
 const TABS_VISIBLE_STORAGE_KEY = "tabsVisible"
 const CANVAS_HEIGHT_STORAGE_KEY = "canvasHeight"
+const CANVAS_FONT_SIZE_STORAGE_KEY = "canvasFontSize"
 const DEFAULT_CANVAS_HEIGHT = 1440
 
 export function readStoredActiveCanvasId() {
@@ -39,4 +41,13 @@ export function readStoredCanvasHeight() {
 
 export function writeStoredCanvasHeight(height: number) {
   localStorage.setItem(CANVAS_HEIGHT_STORAGE_KEY, String(height))
+}
+
+export function readStoredCanvasFontSize() {
+  const raw = localStorage.getItem(CANVAS_FONT_SIZE_STORAGE_KEY)
+  return raw === null || raw.trim() === "" ? DEFAULT_CANVAS_FONT_SIZE : normalizeCanvasFontSize(Number(raw))
+}
+
+export function writeStoredCanvasFontSize(fontSize: number) {
+  localStorage.setItem(CANVAS_FONT_SIZE_STORAGE_KEY, String(normalizeCanvasFontSize(fontSize)))
 }

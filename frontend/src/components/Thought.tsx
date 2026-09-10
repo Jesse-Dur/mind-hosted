@@ -5,10 +5,12 @@ import { TagMenu } from "./TagMenu"
 import { CloseButton } from "./CloseButton"
 import { ThoughtTags } from "./ThoughtTags"
 import { useThoughtEdit } from "../hooks/useThoughtEdit"
+import { getThoughtControlMetrics } from "../utils/canvasFontSize"
 import type { Thought as ThoughtType } from "../types"
 
 interface Props {
   thought: ThoughtType
+  fontSize: number
   onDragStart: (id: number, point: { clientX: number; clientY: number }) => void
   onDragMove: (clientX: number, clientY: number) => void
   onDragOver: (id: number, placement: "before" | "after") => void
@@ -31,7 +33,7 @@ const thoughtAnimationStyles = `
 }
 `
 
-export function Thought({ thought, onDragStart, onDragMove, onDragOver, onDrop, dragging }: Props) {
+export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver, onDrop, dragging }: Props) {
   const { highlightedId, remoteChangedThoughtIds, removeThought, updateThoughtTags } = useStore()
   const isHighlighted = highlightedId?.type === "thought" && Number(highlightedId.id) === Number(thought.id)
   const isRemoteChanged = remoteChangedThoughtIds.has(thought.id)
@@ -41,6 +43,7 @@ export function Thought({ thought, onDragStart, onDragMove, onDragOver, onDrop, 
   useEffect(() => { setLocalTags(thought.tags) }, [thought.tags])
   const { editing, content, saveEditing, startEditing, setIntent, cancelEditing } = useThoughtEdit(thought)
   const spanRef = useRef<HTMLSpanElement>(null)
+  const { controlSize, handleSize, closeIconSize } = getThoughtControlMetrics(fontSize)
 
   function remove(e: React.MouseEvent) {
     e.stopPropagation()
@@ -82,11 +85,12 @@ export function Thought({ thought, onDragStart, onDragMove, onDragOver, onDrop, 
         onClick={(e) => e.stopPropagation()}
         style={{
           display: "flex", alignItems: "center", gap: 6,
-          padding: "5px 8px", fontSize: 13,
+          padding: "5px 8px", fontSize, lineHeight: 1.3,
           background: dragging ? "#f5f5f5" : "#fafafa",
           border: "1px solid #ebebeb", borderRadius: 6, cursor: "grab",
           boxSizing: "border-box",
           minHeight: 28,
+          flexShrink: 0,
           opacity: dragging ? 0.4 : 1,
           transition: "opacity 0.15s ease, transform 0.12s ease",
           transform: dragging ? "scale(0.98)" : "scale(1)",
@@ -99,8 +103,8 @@ export function Thought({ thought, onDragStart, onDragMove, onDragOver, onDrop, 
             : undefined,
         }}
       >
-        <span style={{ color: "#ccc", flexShrink: 0, fontSize: 11 }}>⠿</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ color: "#ccc", flexShrink: 0, width: controlSize, height: controlSize, fontSize: handleSize, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>⠿</span>
+        <div style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere", wordBreak: "break-word" }}>
           <span
             ref={spanRef}
             contentEditable={editing || undefined}
@@ -111,11 +115,11 @@ export function Thought({ thought, onDragStart, onDragMove, onDragOver, onDrop, 
               if (e.key === "Escape") { e.currentTarget.blur(); cancelEditing() }
             }}
             onMouseDown={(e) => { e.stopPropagation(); setIntent(); startEditing(); requestAnimationFrame(() => spanRef.current?.focus()) }}
-            style={{ color: "#1a1a1a", outline: "none", cursor: "text", userSelect: "text", fontSize: 13 }}
+            style={{ color: "#1a1a1a", outline: "none", cursor: "text", userSelect: "text", fontSize: "inherit", lineHeight: "inherit" }}
           >{content}</span>
         </div>
         <ThoughtTags tags={localTags} />
-        <CloseButton onClick={remove} size={18} />
+        <CloseButton onClick={remove} size={controlSize} iconSize={closeIconSize} />
       </div>
 
       {menu && createPortal(

@@ -1,9 +1,10 @@
 interface Props {
   onClick: (e: React.MouseEvent) => void
   size?: number
+  iconSize?: number
 }
 
-export function CloseButton({ onClick, size = 18 }: Props) {
+export function CloseButton({ onClick, size = 18, iconSize = 8 }: Props) {
   return (
     <button
       onClick={onClick}
@@ -25,7 +26,7 @@ export function CloseButton({ onClick, size = 18 }: Props) {
         transition: "background 0.15s ease",
       }}
     >
-      <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+      <svg width={iconSize} height={iconSize} viewBox="0 0 8 8" fill="none">
         <path d="M1 1l6 6M7 1L1 7" stroke="#bbb" strokeWidth="1.5" strokeLinecap="round"/>
       </svg>
     </button>

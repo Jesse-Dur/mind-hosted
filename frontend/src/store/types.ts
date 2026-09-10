@@ -25,6 +25,7 @@ export interface UiSlice {
   spotlightOpen: boolean
   sidebarOpen: boolean
   canvasHeight: number
+  canvasFontSize: number
   highlightedId: { type: "tile" | "thought"; id: number } | null
   recentLocalTileChangeIds: Map<number, number>
   remoteChangedTileIds: Set<number>
@@ -35,6 +36,7 @@ export interface UiSlice {
   setSpotlightOpen: (open: boolean) => void
   setSidebarOpen: (open: boolean) => void
   setCanvasHeight: (height: number) => void
+  setCanvasFontSize: (fontSize: number) => void
   setTabsVisible: (visible: boolean) => void
 }
 

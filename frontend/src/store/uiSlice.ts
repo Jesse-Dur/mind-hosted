@@ -1,5 +1,6 @@
 import type { StoreSlice, UiSlice } from "./types"
-import { readStoredCanvasHeight, readStoredTabsVisible, writeStoredCanvasHeight, writeStoredTabsVisible } from "./storage"
+import { normalizeCanvasFontSize } from "../utils/canvasFontSize"
+import { readStoredCanvasFontSize, readStoredCanvasHeight, readStoredTabsVisible, writeStoredCanvasFontSize, writeStoredCanvasHeight, writeStoredTabsVisible } from "./storage"
 
 const REMOTE_CHANGE_ANIMATION_MS = 900
 const LOCAL_TILE_CHANGE_SUPPRESSION_MS = 12000
@@ -15,6 +16,7 @@ export const createUiSlice: StoreSlice<UiSlice> = (set) => ({
   spotlightOpen: false,
   sidebarOpen: false,
   canvasHeight: readStoredCanvasHeight(),
+  canvasFontSize: readStoredCanvasFontSize(),
   highlightedId: null,
   recentLocalTileChangeIds: new Map(),
   remoteChangedTileIds: new Set(),
@@ -64,6 +66,11 @@ export const createUiSlice: StoreSlice<UiSlice> = (set) => ({
   setCanvasHeight: (height) => {
     writeStoredCanvasHeight(height)
     set({ canvasHeight: height })
+  },
+  setCanvasFontSize: (fontSize) => {
+    const normalized = normalizeCanvasFontSize(fontSize)
+    writeStoredCanvasFontSize(normalized)
+    set({ canvasFontSize: normalized })
   },
   setTabsVisible: (visible) => {
     writeStoredTabsVisible(visible)
