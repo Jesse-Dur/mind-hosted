@@ -1,15 +1,14 @@
 import { createPortal } from "react-dom"
-import type { Tile } from "../types"
 
-export function TileDeleteDialog({ tile, thoughtCount, onClose, onDelete }: { tile: Tile; thoughtCount: number; onClose: () => void; onDelete: () => void }) {
+export function DeleteDialog({ title, message, deleteLabel, onClose, onDelete }: { title: string; message: string; deleteLabel: string; onClose: () => void; onDelete: () => void }) {
   return createPortal(
-    <div role="dialog" aria-modal="true" aria-labelledby="delete-tile-title" style={backdropStyle} onPointerDown={(event) => { event.stopPropagation(); if (event.target === event.currentTarget) onClose() }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation() }}>
+    <div role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title" style={backdropStyle} onPointerDown={(event) => { event.stopPropagation(); if (event.target === event.currentTarget) onClose() }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation() }}>
       <div style={dialogStyle}>
-        <h2 id="delete-tile-title" style={{ fontSize: 17, margin: 0 }}>Delete “{tile.title}”?</h2>
-        <p style={{ fontSize: 13, lineHeight: 1.45, color: "#666", margin: 0 }}>The tile and all {thoughtCount} thought{thoughtCount === 1 ? "" : "s"} inside it will be deleted locally now and from your other devices after sync. A failed server deletion remains recoverable from History.</p>
+        <h2 id="delete-dialog-title" style={{ fontSize: 17, margin: 0 }}>{title}</h2>
+        <p style={{ fontSize: 13, lineHeight: 1.45, color: "#666", margin: 0 }}>{message}</p>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <button onClick={onClose} style={secondaryButton}>Cancel</button>
-          <button onClick={onDelete} style={dangerButton}>Delete tile</button>
+          <button onClick={onDelete} style={dangerButton}>{deleteLabel}</button>
         </div>
       </div>
     </div>,

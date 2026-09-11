@@ -5,7 +5,7 @@ import { SyncStatusDot } from "../../components/SyncStatusDot"
 import { ThoughtInput } from "../../components/ThoughtInput"
 import { ThoughtTags } from "../../components/ThoughtTags"
 import { TagMenu } from "../../components/TagMenu"
-import { TileDeleteDialog } from "../../components/TileDeleteDialog"
+import { DeleteDialog } from "../../components/DeleteDialog"
 import { useThoughtEdit } from "../../hooks/useThoughtEdit"
 import { beginCrossCanvasDrag, endCrossCanvasDrag, getCrossCanvasDrag, moveCrossCanvasDrag, setThoughtDragTarget, subscribeCrossCanvasDrag, type CrossCanvasDragSession } from "../../utils/crossCanvasDrag"
 import { mobileThoughtInsertionIndex, mobileThoughtOrderIds, sameThoughtOrder } from "../../utils/mobileThoughtOrder"
@@ -47,7 +47,13 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
         {displayedThoughts.map((thought) => <MobileThought key={thought.stableKey ?? thought.id} thought={thought} onFocusTarget={onFocusTarget} />)}
         <ThoughtInput tileId={tile.id} fontSize={canvasFontSize + 1} />
       </div>
-      {confirmDelete && <TileDeleteDialog tile={tile} thoughtCount={tileThoughts.length} onClose={() => setConfirmDelete(false)} onDelete={() => { setConfirmDelete(false); void removeTile(tile.id) }} />}
+      {confirmDelete && <DeleteDialog
+        title={`Delete “${tile.title}”?`}
+        message={`The tile and all ${tileThoughts.length} thought${tileThoughts.length === 1 ? "" : "s"} inside it will be deleted locally now and from your other devices after sync. A failed server deletion remains recoverable from History.`}
+        deleteLabel="Delete tile"
+        onClose={() => setConfirmDelete(false)}
+        onDelete={() => { setConfirmDelete(false); void removeTile(tile.id) }}
+      />}
     </section>
   )
 }
@@ -56,6 +62,7 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
   const { activeCanvasId, canvases, canvasFontSize, removeThought, updateThoughtTags, moveThoughtToTile, setActiveCanvas } = useStore()
   const { editing, content, saveEditing, startEditing, setIntent, cancelEditing } = useThoughtEdit(thought)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [localTags, setLocalTags] = useState(thought.tags)
   const [dragging, setDragging] = useState(false)
   const dragEndedAt = useRef(0)
@@ -189,8 +196,15 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
       <div style={{ height: 28, display: "flex", alignItems: "center", flexShrink: 0, alignSelf: "center" }}>
         <ThoughtTags tags={localTags} expandOnHover={false} />
         <span onPointerDown={(event) => event.stopPropagation()} style={{ width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} /></span>
-        <button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); if (window.confirm("Delete this thought? It will be removed locally now and from other devices after sync. A failed server deletion remains recoverable in History.")) removeThought(thought.id) }} aria-label="Delete thought" style={{ ...smallButton, fontSize: 18 }}>×</button>
+        <button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setConfirmDelete(true) }} aria-label="Delete thought" style={{ ...smallButton, fontSize: 18 }}>×</button>
       </div>
+      {confirmDelete && <DeleteDialog
+        title="Delete this thought?"
+        message="It will be removed locally now and from other devices after sync. A failed server deletion remains recoverable in History."
+        deleteLabel="Delete thought"
+        onClose={() => setConfirmDelete(false)}
+        onDelete={() => { setConfirmDelete(false); removeThought(thought.id) }}
+      />}
       {menu && createPortal(<TagMenu thought={{ ...thought, tags: localTags }} x={menu.x} y={menu.y} onClose={() => setMenu(null)} onUpdate={async (tags) => { setLocalTags(tags); await updateThoughtTags(thought.id, tags) }} />, document.body)}
     </div>
   )
