@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import { useStore } from "../../store"
 import { beginCrossCanvasDrag, endCrossCanvasDrag, getCrossCanvasDrag, moveCrossCanvasDrag, subscribeCrossCanvasDrag } from "../../utils/crossCanvasDrag"
 import { suppressNativeSelection } from "../../utils/mobileGestureSelection"
@@ -57,6 +57,7 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
   const [dragFeedback, setDragFeedback] = useState<OverviewDragFeedback>(() => overviewDragFeedback())
   const [interaction, setInteraction] = useState<Interaction | null>(null)
   const [draft, setDraft] = useState<(TileFrame & { tile: Tile }) | null>(null)
+  const [droppedTile, setDroppedTile] = useState<{ id: number; x: number; y: number } | null>(null)
   const [undo, setUndo] = useState<Undo | null>(null)
   const thoughtCountByTile = useMemo(() => {
     const counts = new Map<number, number>()
@@ -75,6 +76,14 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
     const next = overviewDragFeedback(session)
     setDragFeedback((current) => current.thoughtDragging === next.thoughtDragging && current.targetTileId === next.targetTileId && current.tileDraggingId === next.tileDraggingId ? current : next)
   }), [])
+
+  useLayoutEffect(() => {
+    if (!droppedTile) return
+    // Commit the drop position and full opacity before restoring transitions.
+    // Flushing layout here avoids a timer that could also suppress a quick Undo or sync update.
+    canvasRef.current?.querySelector<HTMLElement>(`[data-mobile-tile-id="${droppedTile.id}"]`)?.getBoundingClientRect()
+    setDroppedTile(null)
+  }, [droppedTile])
 
   useEffect(() => () => {
     const gesture = gestureRef.current
@@ -215,6 +224,7 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
         return
       }
       const targetCanvasId = session?.kind === "tile" ? session.enteredCanvasId ?? gesture.sourceCanvasId : gesture.sourceCanvasId
+      setDroppedTile({ id: gesture.tile.id, x: finalDraft.x, y: finalDraft.y })
       setUndo({ tileId: gesture.tile.id, beforeCanvasId: gesture.sourceCanvasId, before: { x: gesture.tile.x, y: gesture.tile.y, width: gesture.tile.width, height: gesture.tile.height } })
       if (targetCanvasId !== null && targetCanvasId !== gesture.sourceCanvasId) {
         void moveTileToCanvas(gesture.tile.id, targetCanvasId, finalDraft.x, finalDraft.y)
@@ -364,7 +374,8 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
           const isDropTarget = dragFeedback.targetTileId === tile.id
           const isFocused = focusedTileId === tile.id
           const isDragging = dragFeedback.tileDraggingId === tile.id
-          return <div key={optimisticIdentityKey(tile, "tile")} data-mobile-tile-id={tile.id} onPointerDown={(event) => beginTileGesture(event, tile)} onContextMenu={(event) => event.preventDefault()} style={{ position: "absolute", left: frame.x, top: frame.y, width: frame.width, height: frame.height, boxSizing: "border-box", background: isDropTarget || isFocused ? "#f5f3ff" : "rgba(255,255,255,.94)", border: `2px solid ${isDropTarget || isFocused ? "#7c3aed" : "#d4d4d4"}`, borderRadius: 9, overflow: "hidden", boxShadow: isDropTarget ? "0 0 0 8px rgba(124,58,237,.2)" : isFocused ? "0 0 0 5px rgba(124,58,237,.12)" : "0 3px 12px rgba(0,0,0,.05)", pointerEvents: "auto", touchAction: "none", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", opacity: isDragging ? 0 : 1, transition: resizing ? "none" : "left 160ms ease, top 160ms ease, width 160ms ease, height 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, opacity 140ms ease" }}>
+          const isDropped = droppedTile?.id === tile.id && droppedTile.x === frame.x && droppedTile.y === frame.y
+          return <div key={optimisticIdentityKey(tile, "tile")} data-mobile-tile-id={tile.id} onPointerDown={(event) => beginTileGesture(event, tile)} onContextMenu={(event) => event.preventDefault()} style={{ position: "absolute", left: frame.x, top: frame.y, width: frame.width, height: frame.height, boxSizing: "border-box", background: isDropTarget || isFocused ? "#f5f3ff" : "rgba(255,255,255,.94)", border: `2px solid ${isDropTarget || isFocused ? "#7c3aed" : "#d4d4d4"}`, borderRadius: 9, overflow: "hidden", boxShadow: isDropTarget ? "0 0 0 8px rgba(124,58,237,.2)" : isFocused ? "0 0 0 5px rgba(124,58,237,.12)" : "0 3px 12px rgba(0,0,0,.05)", pointerEvents: "auto", touchAction: "none", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", opacity: isDragging ? 0 : 1, transition: resizing ? "none" : `${isDropped ? "" : "left 160ms ease, top 160ms ease, opacity 140ms ease, "}width 160ms ease, height 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease` }}>
             <div style={{ height: Math.max(44, Math.min(68, frame.height * .24)), borderBottom: "1px solid #ddd", padding: "9px 12px", fontWeight: 700, fontSize: 44, lineHeight: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "#222", userSelect: "none", WebkitUserSelect: "none" }}>{tile.title}</div>
             <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
               {Array.from({ length: count }).map((_, index) => <div key={index} style={{ height: 15, width: `${78 - index % 3 * 9}%`, borderRadius: 5, background: "linear-gradient(90deg,#e8e8e8,#f2f2f2,#e8e8e8)" }} />)}
