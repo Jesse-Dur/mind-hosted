@@ -1,5 +1,5 @@
 import { getApi } from "../store/apiAuth"
-import { cacheServerEntity, metadataNumber, removeLocalThoughtTag, setMetadataNumber } from "./cache"
+import { cacheServerEntity, metadataNumber, removeLocalThoughtTag } from "./cache"
 import { entityFromPayload, isTile, positiveIntegerField } from "./entityPayload"
 import { getEntityRecord, payloadForEntity } from "./entities"
 import { entityKey } from "./ids"
@@ -7,6 +7,9 @@ import { syncDb } from "./localDb"
 import { GLOBAL_REVISION_KEY, canvasRevisionKey } from "./revisions"
 import { applyRemoteEntity, removeRemoteEntity } from "./storeBridge"
 import type { SyncEntity, SyncEntityType, SyncPullEvent } from "./types"
+import { cachePastEntity } from "./pastCache"
+import { assertSyncAccountScopeCurrent, runSyncAccountTask } from "./accountScope"
+import { advanceRevision, readEntityRevision, writeEntityRevision } from "./entityRevision"
 
 async function localClientIdForEvent(entityType: SyncEntityType, clientId: string | null, serverId: number | null) {
   if (clientId) return clientId
@@ -45,10 +48,18 @@ async function shouldAnimateRemoteEntity(entityType: SyncEntityType, entity: Syn
   return JSON.stringify(payloadForEntity(entityType, existing.data)) !== JSON.stringify(payloadForEntity(entityType, entity))
 }
 
+async function wasAcknowledgedByThisDevice(event: SyncPullEvent) {
+  if (!event.op_id) return false
+  return (await syncDb.syncActivity.get(event.op_id))?.state === "synced"
+}
+
 async function deleteLocalEntity(entityType: SyncEntityType, clientId: string | null, serverId: number | null) {
   const localClientId = await localClientIdForEvent(entityType, clientId, serverId)
   if (!localClientId) return
-  await syncDb.entities.delete(entityKey(entityType, localClientId))
+  const key = entityKey(entityType, localClientId)
+  const record = await syncDb.entities.get(key)
+  if (record) await cachePastEntity(entityType, record.data)
+  await syncDb.entities.delete(key)
 }
 
 async function moveLocalCanvasContents(sourceCanvasId: number | null, targetCanvasId: number | null) {
@@ -69,8 +80,19 @@ async function moveLocalCanvasContents(sourceCanvasId: number | null, targetCanv
 }
 
 async function applyPullEvent(event: SyncPullEvent) {
+  if (event.revision <= await readEntityRevision(event.entity_type, event.entity_id)) return
+  const pending = await hasPendingLocal(event.entity_type, event.client_id, event.entity_id)
+  if (pending) {
+    const clientId = await localClientIdForEvent(event.entity_type, event.client_id, event.entity_id)
+    const record = clientId ? await getEntityRecord(event.entity_type, clientId) : undefined
+    if (record) {
+      const confirmedData = event.action === "delete" ? null : entityFromPayload(event.entity_type, event.data)
+      await syncDb.entities.put({ ...record, confirmedData, lastSyncedAt: Date.now() })
+    }
+    await writeEntityRevision(event.entity_type, event.entity_id, event.revision)
+    return
+  }
   if (event.action === "delete") {
-    if (await hasPendingLocal(event.entity_type, event.client_id, event.entity_id)) return
     if (event.entity_type === "canvas") {
       await moveLocalCanvasContents(event.entity_id, positiveIntegerField(event.data.targetCanvasId))
     }
@@ -79,20 +101,39 @@ async function applyPullEvent(event: SyncPullEvent) {
     }
     await deleteLocalEntity(event.entity_type, event.client_id, event.entity_id)
     removeRemoteEntity(event.entity_type, event.entity_id, event.data)
+    await writeEntityRevision(event.entity_type, event.entity_id, event.revision)
     return
   }
   const entity = entityFromPayload(event.entity_type, event.data)
   if (!entity) return
-  if (await hasPendingLocal(event.entity_type, entity.client_id ?? null, entity.id)) return
-  const animate = await shouldAnimateRemoteEntity(event.entity_type, entity)
+  const animate = !await wasAcknowledgedByThisDevice(event) && await shouldAnimateRemoteEntity(event.entity_type, entity)
   await cacheServerEntity(event.entity_type, entity)
   applyRemoteEntity(event.entity_type, entity, { animate })
+  await writeEntityRevision(event.entity_type, event.entity_id, event.revision)
 }
 
 export async function pullSync(canvasId?: number) {
-  const key = canvasId === undefined ? GLOBAL_REVISION_KEY : canvasRevisionKey(canvasId)
-  const since = await metadataNumber(key)
-  const response = await getApi().sync.pull(since, canvasId)
-  for (const event of response.events) await applyPullEvent(event)
-  await setMetadataNumber(key, response.latest_revision)
+  return runSyncAccountTask(async (scope) => {
+    const key = canvasId === undefined ? GLOBAL_REVISION_KEY : canvasRevisionKey(canvasId)
+    const since = await metadataNumber(key)
+    assertSyncAccountScopeCurrent(scope)
+    const response = await getApi(scope).sync.pull(since, canvasId)
+    assertSyncAccountScopeCurrent(scope)
+    await syncDb.transaction("rw", syncDb.tables, async () => {
+      assertSyncAccountScopeCurrent(scope)
+      // Upgrade acknowledgement markers written before revision tracking. Seed
+      // the whole batch first so an older remote event cannot undo a local ack.
+      const legacy = new Map<string, SyncPullEvent>()
+      for (const event of response.events) {
+        if (await readEntityRevision(event.entity_type, event.entity_id) || !await wasAcknowledgedByThisDevice(event)) continue
+        const identity = `${event.entity_type}:${event.entity_id}`
+        if ((legacy.get(identity)?.revision ?? 0) < event.revision) legacy.set(identity, event)
+      }
+      for (const event of legacy.values()) await writeEntityRevision(event.entity_type, event.entity_id, event.revision)
+      for (const event of response.events) await applyPullEvent(event)
+      await advanceRevision(key, response.latest_revision)
+      assertSyncAccountScopeCurrent(scope)
+    })
+    assertSyncAccountScopeCurrent(scope)
+  })
 }

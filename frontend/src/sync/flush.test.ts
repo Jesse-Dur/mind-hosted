@@ -28,6 +28,7 @@ type FetchCall = {
 
 const fetchCalls: FetchCall[] = []
 let fetchResponse: SyncPushResponse = { results: [] }
+let fetchResponder: ((operation: SyncPushOperation) => SyncPushResponse) | null = null
 let fetchError: Error | null = null
 let fetchStatus = 200
 
@@ -43,12 +44,13 @@ function installFetchMock() {
     const operation = body.operations[0]
     if (!operation) throw new Error("Expected one sync operation")
     fetchCalls.push({ path, operation })
+    const response = fetchResponder?.(operation) ?? fetchResponse
     const ok = fetchStatus >= 200 && fetchStatus < 300
     return {
       ok,
       status: fetchStatus,
-      json: async () => fetchResponse,
-      text: async () => JSON.stringify(ok ? fetchResponse : { error: "Unauthorized" }),
+      json: async () => response,
+      text: async () => JSON.stringify(ok ? response : { error: "Unauthorized" }),
     }
   }
 }
@@ -59,6 +61,7 @@ beforeEach(async () => {
   fetchError = null
   fetchStatus = 200
   fetchResponse = { results: [] }
+  fetchResponder = null
   installFetchMock()
 })
 
@@ -274,5 +277,81 @@ describe("frontend sync flush", () => {
     } else {
       expect(fetchCalls.some((call) => call.operation.client_id === "child-tile" && call.operation.payload.canvas_id === 10)).toBe(true)
     }
+  })
+
+  test("completed actions for one entity flush sequentially without losing history", async () => {
+    const { enqueueUpsert } = await import("./outbox")
+    await syncDb.entities.put(entityRecord({
+      entityType: "tile",
+      clientId: "tile-client",
+      serverId: 20,
+      tempId: null,
+      canvasId: 10,
+      status: "clean",
+      data: tile({ title: "Before" }),
+      confirmedData: tile({ title: "Before" }),
+    }))
+    await enqueueUpsert("tile", tile({ title: "Draft" }))
+    await enqueueUpsert("tile", tile({ title: "Final" }))
+    fetchResponder = (operation) => ({
+      results: [{
+        ok: true,
+        op_id: operation.op_id,
+        entity_type: "tile",
+        action: "upsert",
+        client_id: "tile-client",
+        server_id: 20,
+        revision: fetchCalls.length,
+        entity: tile({ title: String(operation.payload.title) }),
+      }],
+    })
+
+    await flushSyncQueue()
+
+    expect(fetchCalls.map((call) => call.operation.payload.title)).toEqual(["Draft", "Final"])
+    expect(await syncDb.outbox.count()).toBe(0)
+    expect((await syncDb.entities.get(entityKey("tile", "tile-client")))?.data).toMatchObject({ title: "Final" })
+    const activities = await syncDb.syncActivity.orderBy("createdAt").toArray()
+    expect(activities.map((activity) => activity.state)).toEqual(["synced", "synced"])
+    expect(fetchCalls.map((call) => Date.parse(call.operation.occurred_at!))).toEqual(activities.map((activity) => activity.createdAt))
+  })
+
+  test("internal grouped updates tell the server not to duplicate History", async () => {
+    await syncDb.entities.put(entityRecord({
+      entityType: "tile",
+      clientId: "internal-tile",
+      serverId: 20,
+      tempId: null,
+      canvasId: 10,
+      status: "dirty",
+      data: tile({ client_id: "internal-tile" }),
+    }))
+    await syncDb.outbox.put({
+      ...outboxRecord({
+        opId: "internal-tile-op",
+        entityType: "tile",
+        action: "upsert",
+        clientId: "internal-tile",
+        serverId: 20,
+        payload: { canvas_id: 10, title: "Internal" },
+      }),
+      recordHistory: false,
+    })
+    fetchResponse = {
+      results: [{
+        ok: true,
+        op_id: "internal-tile-op",
+        entity_type: "tile",
+        action: "upsert",
+        client_id: "internal-tile",
+        server_id: 20,
+        revision: 9,
+        entity: tile({ client_id: "internal-tile", title: "Internal" }),
+      }],
+    }
+
+    await flushSyncQueue()
+
+    expect(fetchCalls[0]?.operation.write_history).toBe(false)
   })
 })

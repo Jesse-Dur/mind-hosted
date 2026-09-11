@@ -1,11 +1,22 @@
 import { sql } from "./client"
+import type postgres from "postgres"
 
 export interface HistoryEvent {
   id: number
   action: string
   summary: string
-  detail: string
+  detail: string | Record<string, unknown>
+  client_id: string
+  op_id: string | null
+  occurred_at: string
   created_at: string
+}
+
+type HistorySource = {
+  clientId?: string | null
+  opId?: string | null
+  occurredAt?: string | Date
+  query?: typeof sql | postgres.TransactionSql
 }
 
 export interface HistoryPage {
@@ -57,6 +68,14 @@ export const historyDb = {
     }
   },
 
-  log: (userId: string, action: string, summary: string, detail: Record<string, unknown>) =>
-    sql`INSERT INTO history (user_id, action, summary, detail) VALUES (${userId}, ${action}, ${summary}, ${sql.json(detail as never)})`,
+  log: (userId: string, action: string, summary: string, detail: Record<string, unknown>, source: HistorySource = {}) => {
+    const clientId = source.clientId ?? crypto.randomUUID()
+    const occurredAt = source.occurredAt ? new Date(source.occurredAt) : new Date()
+    const query = source.query ?? sql
+    return query`
+      INSERT INTO history (user_id, action, summary, detail, client_id, op_id, occurred_at)
+      VALUES (${userId}, ${action}, ${summary}, ${sql.json(detail as never)}, ${clientId}, ${source.opId ?? null}, ${occurredAt})
+      ON CONFLICT (user_id, op_id) WHERE op_id IS NOT NULL DO NOTHING
+    `
+  },
 }

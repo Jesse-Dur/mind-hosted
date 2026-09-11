@@ -18,6 +18,7 @@ export type CrossCanvasDragSession =
       sourceTileId: number
       sourceCanvasId: number | null
       targetTileId: number | null
+      targetIndex: number | null
       clientX: number
       clientY: number
       enteredCanvasId: number | null
@@ -54,15 +55,19 @@ export function moveCrossCanvasDrag(clientX: number, clientY: number) {
 export function setCrossCanvasDragEnteredCanvas(canvasId: number) {
   if (!session) return
   session = session.kind === "thought"
-    ? { ...session, enteredCanvasId: canvasId, targetTileId: null }
+    ? { ...session, enteredCanvasId: canvasId, targetTileId: null, targetIndex: null }
     : { ...session, enteredCanvasId: canvasId }
   emitSnapshot()
   emitPointer()
 }
 
 export function setThoughtDragTargetTile(tileId: number | null) {
-  if (!session || session.kind !== "thought" || session.targetTileId === tileId) return
-  session = { ...session, targetTileId: tileId }
+  setThoughtDragTarget(tileId, null)
+}
+
+export function setThoughtDragTarget(tileId: number | null, targetIndex: number | null) {
+  if (!session || session.kind !== "thought" || (session.targetTileId === tileId && session.targetIndex === targetIndex)) return
+  session = { ...session, targetTileId: tileId, targetIndex }
   emitSnapshot()
   emitPointer()
 }

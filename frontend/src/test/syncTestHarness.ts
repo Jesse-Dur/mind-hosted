@@ -177,6 +177,7 @@ export async function resetFrontendState() {
     syncDb.outbox.clear(),
     syncDb.metadata.clear(),
     syncDb.queryCache.clear(),
+    syncDb.syncActivity.clear(),
   ])
   globals.localStorage.clear()
   clearReauthRequired()
@@ -212,6 +213,8 @@ export async function resetFrontendState() {
     remoteChangedTileIds: new Set(),
     remoteChangedThoughtIds: new Set(),
     syncPendingCount: 0,
+    syncEntityStatuses: new Map(),
+    syncActivity: [],
     aiStatus: "idle",
     sidebarOpen: false,
     spotlightOpen: false,

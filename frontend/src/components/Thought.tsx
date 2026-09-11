@@ -5,6 +5,7 @@ import { TagMenu } from "./TagMenu"
 import { CloseButton } from "./CloseButton"
 import { ThoughtTags } from "./ThoughtTags"
 import { useThoughtEdit } from "../hooks/useThoughtEdit"
+import { SyncStatusDot } from "./SyncStatusDot"
 import { getThoughtControlMetrics } from "../utils/canvasFontSize"
 import type { Thought as ThoughtType } from "../types"
 
@@ -119,6 +120,7 @@ export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver
           >{content}</span>
         </div>
         <ThoughtTags tags={localTags} />
+        <SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} />
         <CloseButton onClick={remove} size={controlSize} iconSize={closeIconSize} />
       </div>
 

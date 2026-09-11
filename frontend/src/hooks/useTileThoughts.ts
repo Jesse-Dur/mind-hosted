@@ -109,6 +109,7 @@ export function useTileThoughts(tileId: number, tileThoughts: Thought[]) {
         sourceTileId: tileId,
         sourceCanvasId,
         targetTileId: tileId,
+        targetIndex: null,
         clientX: point.clientX,
         clientY: point.clientY,
         enteredCanvasId: null,

@@ -2,17 +2,34 @@ import { Command } from "cmdk"
 import { useState, useEffect, useRef } from "react"
 import { useAuth } from "@clerk/clerk-react"
 import { useStore } from "../store"
-import { createApi } from "../api/client"
 import { useMicRecording } from "../hooks/useMicRecording"
 import { MicButton } from "./MicButton"
+import { AiSparkleIcon } from "./AiSparkleIcon"
 import type { Tile, Thought } from "../types"
 import { findEmptySpot } from "../utils/findEmptySpot"
+import { useOnline } from "../utils/connectivity"
+import { usePhysicalKeyboard } from "../utils/physicalKeyboard"
+import { cachedWorkspaceForSearch } from "../sync/cache"
+import { readPastEntitiesCache } from "../sync/pastCache"
+
+function uniqueEntities<Entity extends Tile | Thought>(entities: Entity[]) {
+  const byIdentity = new Map<string, Entity>()
+  for (const entity of entities) {
+    const identity = entity.client_id ? `client:${entity.client_id}` : `server:${entity.id}`
+    byIdentity.set(identity, entity)
+  }
+  return [...byIdentity.values()]
+}
 
 export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onClose: () => void }) {
+  const online = useOnline()
+  const physicalKeyboard = usePhysicalKeyboard()
   const { tiles, thoughts, tileCache, thoughtCache, addTile, processAiInput, setHighlight, setActiveCanvas, activeCanvasId } = useStore()
   const { getToken } = useAuth()
   const [showPast, setShowPast] = useState(false)
-  const [allTabs, setAllTabs] = useState(false)
+  const [allCanvases, setAllCanvases] = useState(false)
+  const [localWorkspaceTiles, setLocalWorkspaceTiles] = useState<Tile[]>([])
+  const [localWorkspaceThoughts, setLocalWorkspaceThoughts] = useState<Thought[]>([])
   const [pastTiles, setPastTiles] = useState<Tile[]>([])
   const [pastThoughts, setPastThoughts] = useState<Thought[]>([])
   const [query, setQuery] = useState("")
@@ -24,8 +41,8 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
   })
   const openedByMicRef = useRef(openedByMic)
   const startedMicFromOpenRef = useRef(false)
-  const showRecordingHints = micState === "recording" || micState === "loading" || (openedByMicRef.current && !query.trim())
-  const showShortcutHint = micState === "idle" && !openedByMicRef.current && !query.trim()
+  const showRecordingHints = physicalKeyboard && (micState === "recording" || micState === "loading" || (openedByMicRef.current && !query.trim()))
+  const showShortcutHint = physicalKeyboard && micState === "idle" && !openedByMicRef.current && !query.trim()
   const isAIMode = query.startsWith(">")
   const AI_LIMIT = 500
   const aiInput = isAIMode ? query.slice(1).trim() : query.trim()
@@ -34,11 +51,17 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
   const isOverLimit = aiCharsLeft < 0
   const isTagMode = query.startsWith("#")
   const tagSearch = isTagMode ? query.slice(1).toLowerCase() : ""
-  const cachedTiles = [...new Map([...tileCache.values()].flat().map((t) => [t.id, t])).values()]
-  const cachedThoughts = [...new Map([...thoughtCache.values()].flat().map((t) => [t.id, t])).values()]
-  // All Tabs uses warmed caches; active mode stays limited to the visible canvas.
-  const visibleTiles = allTabs ? cachedTiles : tiles.filter((t) => t.canvas_id === activeCanvasId)
-  const visibleThoughts = allTabs ? cachedThoughts : thoughts.filter((t) => visibleTiles.some((ti) => ti.id === t.tile_id))
+  const cachedTiles = uniqueEntities([...localWorkspaceTiles, ...tileCache.values()].flat())
+  const cachedThoughts = uniqueEntities([...localWorkspaceThoughts, ...thoughtCache.values()].flat())
+  const allCanvasTiles = uniqueEntities([...cachedTiles, ...tiles])
+  const allCanvasThoughts = uniqueEntities([...cachedThoughts, ...thoughts])
+  // All Canvases is sourced from durable local entities as well as warm in-memory
+  // caches, so it does not silently omit a canvas that has not been opened lately.
+  const visibleTiles = allCanvases ? allCanvasTiles : tiles.filter((t) => t.canvas_id === activeCanvasId)
+  const visibleTileIds = new Set(visibleTiles.map((tile) => tile.id))
+  const visibleThoughts = allCanvases
+    ? allCanvasThoughts.filter((thought) => visibleTileIds.has(thought.tile_id))
+    : thoughts.filter((thought) => visibleTileIds.has(thought.tile_id))
   const tagFilteredThoughts = isTagMode
     ? visibleThoughts.filter((t) => t.tags.some((tag) => tag.toLowerCase().includes(tagSearch)))
     : visibleThoughts
@@ -62,6 +85,7 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
       }
     }
     function onMicShortcut() {
+      if (!online) return
       if (micState === "idle") {
         handleMic()
       } else if (micState === "recording") {
@@ -78,15 +102,21 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
       window.removeEventListener("keydown", onKey)
       window.removeEventListener("mic-shortcut", onMicShortcut)
     }
-  }, [micState, cancelRecording, stopForEditing, stopAndTranscribe, handleMic, onClose, processAiInput])
+  }, [micState, cancelRecording, stopForEditing, stopAndTranscribe, handleMic, onClose, processAiInput, online])
 
-  async function togglePast() {
-    if (!showPast) {
-      const api = createApi(getToken)
-      const [t, th] = await Promise.all([api.tiles.listPast(), api.thoughts.listPast()])
-      setPastTiles(t)
-      setPastThoughts(th)
-    }
+  useEffect(() => {
+    let cancelled = false
+    void Promise.all([cachedWorkspaceForSearch(), readPastEntitiesCache()]).then(([workspace, past]) => {
+      if (cancelled) return
+      setLocalWorkspaceTiles(workspace.tiles)
+      setLocalWorkspaceThoughts(workspace.thoughts)
+      setPastTiles(past.pastTiles)
+      setPastThoughts(past.pastThoughts)
+    }).catch(console.error)
+    return () => { cancelled = true }
+  }, [])
+
+  function togglePast() {
     setShowPast((v) => !v)
     focusInput()
   }
@@ -137,10 +167,10 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
       : "Send to AI"
 
   useEffect(() => {
-    if (!openedByMic || startedMicFromOpenRef.current || micState !== "idle") return
+    if (!online || !openedByMic || startedMicFromOpenRef.current || micState !== "idle") return
     startedMicFromOpenRef.current = true
     handleMic()
-  }, [handleMic, micState, openedByMic])
+  }, [handleMic, micState, openedByMic, online])
 
   return (
     <>
@@ -154,7 +184,7 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
       `}</style>
       <div
         onMouseDown={() => onClose()}
-        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.2)", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 120, zIndex: 100 }}
+        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.2)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "min(120px,18dvh) 10px 10px", zIndex: 100 }}
       >
         <div
           onClick={(e) => e.stopPropagation()}
@@ -165,7 +195,7 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
               focusInput()
             }
           }}
-          style={{ width: 560, background: "#fff", border: "1px solid #e0e0e0", borderRadius: 12, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.12)" }}
+          style={{ width: 560, maxWidth: "100%", maxHeight: "calc(100dvh - min(120px,18dvh) - 20px)", background: "#fff", border: "1px solid #e0e0e0", borderRadius: 12, overflow: "auto", boxShadow: "0 8px 32px rgba(0,0,0,0.12)" }}
         >
 
           {/* Input row with mic button */}
@@ -214,7 +244,7 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
           )}
 
           {/* Recording hints */}
-          <div style={{
+          {physicalKeyboard && <div style={{
             maxHeight: showRecordingHints ? 32 : 0,
             overflow: "hidden",
             transition: "max-height 0.25s cubic-bezier(0.4,0,0.2,1)",
@@ -224,10 +254,10 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
               <span style={{ fontSize: 10, color: "#bbb" }}><kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px" }}>any key</kbd> edit</span>
               <span style={{ fontSize: 10, color: "#bbb" }}><kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px" }}>esc</kbd> cancel</span>
             </div>
-          </div>
+          </div>}
 
           {/* Mic shortcut hint */}
-          <div style={{
+          {physicalKeyboard && <div style={{
             maxHeight: showShortcutHint ? 40 : 0,
             overflow: "hidden",
             transition: "max-height 0.25s cubic-bezier(0.4,0,0.2,1)",
@@ -235,10 +265,10 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
             <div style={{ padding: "5px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fafafa", borderBottom: "1px solid #f5f5f5" }}>
               <span style={{ fontSize: 11, color: "#aaa" }}><kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px", fontSize: 10 }}>Ctrl+Shift+M</kbd> or <kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px", fontSize: 10 }}>⌘⇧M</kbd> to record</span>
             </div>
-          </div>
+          </div>}
 
           {/* Nav hints — idle with content */}
-          <div style={{
+          {physicalKeyboard && <div style={{
             maxHeight: micState === "idle" && !!query.trim() ? 32 : 0,
             overflow: "hidden",
             transition: "max-height 0.25s cubic-bezier(0.4,0,0.2,1)",
@@ -247,18 +277,18 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
               <span style={{ fontSize: 10, color: "#bbb" }}><kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px" }}>↑↓</kbd> navigate</span>
               <span style={{ fontSize: 10, color: "#bbb" }}><kbd style={{ fontFamily: "inherit", background: "#f0f0f0", borderRadius: 3, padding: "1px 4px" }}>enter</kbd> select</span>
             </div>
-          </div>
+          </div>}
 
-          {/* Past + All Tabs toggles */}
+          {/* Past + All Canvases toggles */}
           <div style={{ padding: "6px 12px", borderBottom: "1px solid #f5f5f5", display: "flex", alignItems: "center", gap: 8 }}>
             <button
               onClick={togglePast}
               style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 99, border: "1px solid", borderColor: showPast ? "#1a1a1a" : "#e0e0e0", background: showPast ? "#1a1a1a" : "transparent", color: showPast ? "#fff" : "#999", cursor: "pointer", transition: "background 0.15s ease, color 0.15s ease, border-color 0.15s ease" }}
             >Past</button>
             <button
-              onClick={() => setAllTabs((v) => !v)}
-              style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 99, border: "1px solid", borderColor: allTabs ? "#1a1a1a" : "#e0e0e0", background: allTabs ? "#1a1a1a" : "transparent", color: allTabs ? "#fff" : "#999", cursor: "pointer", transition: "background 0.15s ease, color 0.15s ease, border-color 0.15s ease" }}
-            >All Tabs</button>
+              onClick={() => setAllCanvases((v) => !v)}
+              style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 99, border: "1px solid", borderColor: allCanvases ? "#1a1a1a" : "#e0e0e0", background: allCanvases ? "#1a1a1a" : "transparent", color: allCanvases ? "#fff" : "#999", cursor: "pointer", transition: "background 0.15s ease, color 0.15s ease, border-color 0.15s ease" }}
+            >All Canvases</button>
             {showPast && <span style={{ fontSize: 11, color: "#bbb" }}>Showing past thoughts</span>}
           </div>
 
@@ -271,7 +301,8 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
               {/* Actions — always visible */}
               <Command.Group forceMount heading="Actions">
                 <Command.Item value="__action__send_ai" onSelect={handleAI} style={{ color: "#7c3aed" }}>
-                  <span>✦</span>{aiLabel}
+                  <span aria-hidden style={{ width: 18, height: 18, display: "grid", placeItems: "center", flexShrink: 0 }}><AiSparkleIcon size={14} /></span>
+                  <span style={{ minHeight: 18, display: "flex", alignItems: "center", minWidth: 0 }}>{aiLabel}</span>
                 </Command.Item>
                 <Command.Item value="__action__new_tile" onSelect={() => handleNewTile(query.trim() || undefined)}>
                   <span>＋</span>

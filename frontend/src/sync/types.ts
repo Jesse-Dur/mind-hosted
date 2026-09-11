@@ -3,6 +3,7 @@ import type { Canvas, Tag, Thought, Tile } from "../types"
 export type SyncEntityType = "canvas" | "tile" | "thought" | "tag"
 export type SyncAction = "upsert" | "delete"
 export type SyncStatus = "clean" | "dirty" | "deleted" | "error"
+export type SyncDisposition = "normal" | "local_only"
 export type SyncEntity = Canvas | Tile | Thought | Tag
 export type SyncPayload = Record<string, unknown>
 
@@ -15,6 +16,9 @@ export type LocalEntityRecord = {
   canvasId: number | null
   status: SyncStatus
   data: SyncEntity
+  confirmedData?: SyncEntity | null
+  syncDisposition?: SyncDisposition
+  lastSyncedAt?: number | null
   updatedAt: number
 }
 
@@ -25,12 +29,41 @@ export type OutboxRecord = {
   clientId: string
   serverId: number | null
   payload: SyncPayload
-  status: "pending" | "flushing" | "error"
+  beforeData?: SyncEntity | null
+  recordHistory?: boolean
+  status: "pending" | "flushing" | "error" | "local_only"
   attemptCount: number
   nextAttemptAt: number
   createdAt: number
   updatedAt: number
   error?: string
+}
+
+export type SyncVisualState = "pending" | "synced" | "error" | "local_only"
+export type SyncActivityState = SyncVisualState | "discarded"
+
+export type SyncEntityStatus = {
+  key: string
+  entityType: SyncEntityType
+  clientId: string
+  state: SyncVisualState
+  opId: string | null
+  action: SyncAction | null
+  error: string | null
+  updatedAt: number
+}
+
+export type SyncActivityRecord = {
+  opId: string
+  entityType: SyncEntityType
+  clientId: string
+  action: SyncAction
+  state: SyncActivityState
+  summary: string
+  error: string | null
+  createdAt: number
+  updatedAt: number
+  hidden?: boolean
 }
 
 export type MetadataRecord = {
@@ -45,6 +78,8 @@ export type SyncPushOperation = {
   client_id: string | null
   server_id: number | null
   payload: SyncPayload
+  write_history?: boolean
+  occurred_at?: string
 }
 
 export type SyncPushResult = {

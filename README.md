@@ -29,6 +29,7 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 - **Sidebar** — Tags, History, and Settings panels
 - **Auth** — secure accounts via Clerk, your data is scoped to you
 - **Offline sync** — canvases, tiles, thoughts, and tags are cached locally and local edits are queued when the connection is unreliable
+- **Installable mobile workspace** — the PWA has a phone/tablet split view, canvas overview, direct touch gestures, and cross-canvas thought and tile dragging without an app store
 
 ---
 
@@ -60,6 +61,8 @@ The sync engine prioritises the active canvas:
 - The active canvas is pulled and reconciled before inactive canvases.
 - Background canvas hydration is sequential and stops when the active canvas changes, so the newly selected tab gets priority.
 - Local creates, edits, moves, resizes, reorders, and deletes are written to the outbox and flushed later if the connection drops.
+- IndexedDB is partitioned by Clerk user. Existing unpartitioned data is claimed once by the signed-in account, and signed-out account caches cannot be opened by another account.
+- Small entity spinners show queued local saves and fade after acknowledgement; soft red attention markers flag failures, while an outlined orange dot identifies intentionally device-only changes. The durable status history and resolution actions are available in History.
 - Remote tile and thought upserts animate only when a pull or snapshot changes this device's cached payload; local optimistic writes stay immediate.
 - Creates use `client_id` idempotency keys so a retried request cannot create duplicates after packet loss.
 - Normal writes use `POST /api/sync/push`; incremental multi-device updates use `GET /api/sync/pull`.
@@ -73,7 +76,8 @@ The public app data API is intentionally narrow:
 - `POST /api/sync/push` for browser outbox writes.
 - `GET /api/sync/pull` for revisioned incremental updates.
 - `GET /api/sync/snapshot` for boot, tab switches, background canvas hydration, and cache repair.
-- Feature-specific routes remain for AI, voice transcription, history, and Spotlight's past-item views.
+- Feature-specific routes remain for AI, voice transcription, history, and background refresh of Spotlight's local Past cache.
+- `GET/PUT /api/preferences/device` stores per-installation layout preferences and supplies the newest same-class phone, tablet, or desktop profile to a new device.
 
 ---
 

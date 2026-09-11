@@ -1,4 +1,5 @@
 import type { StoreSlice, UiSlice } from "./types"
+import { readLocalDevicePreferences, saveDevicePreferences, type DevicePreferences } from "../preferences/devicePreferences"
 import { normalizeCanvasFontSize } from "../utils/canvasFontSize"
 import { readStoredCanvasFontSize, readStoredCanvasHeight, readStoredTabsVisible, writeStoredCanvasFontSize, writeStoredCanvasHeight, writeStoredTabsVisible } from "./storage"
 
@@ -11,11 +12,26 @@ function serverIds(ids: number[]) {
   return ids.filter((id) => Number.isInteger(id) && id > 0)
 }
 
-export const createUiSlice: StoreSlice<UiSlice> = (set) => ({
+export const createUiSlice: StoreSlice<UiSlice> = (set, get) => {
+  const devicePreferences = readLocalDevicePreferences()
+  const persist = (overrides: Partial<DevicePreferences>) => saveDevicePreferences({
+    tabsVisible: get().tabsVisible,
+    canvasHeight: get().canvasHeight,
+    canvasFontSize: get().canvasFontSize,
+    mobilePortraitSplit: get().mobilePortraitSplit,
+    mobileLandscapeSplit: get().mobileLandscapeSplit,
+    focusedTileByCanvas: get().focusedTileByCanvas,
+    ...overrides,
+  })
+
+  return ({
   tabsVisible: readStoredTabsVisible(),
   spotlightOpen: false,
   sidebarOpen: false,
   canvasHeight: readStoredCanvasHeight(),
+  mobilePortraitSplit: devicePreferences.mobilePortraitSplit,
+  mobileLandscapeSplit: devicePreferences.mobileLandscapeSplit,
+  focusedTileByCanvas: devicePreferences.focusedTileByCanvas,
   canvasFontSize: readStoredCanvasFontSize(),
   highlightedId: null,
   recentLocalTileChangeIds: new Map(),
@@ -66,14 +82,30 @@ export const createUiSlice: StoreSlice<UiSlice> = (set) => ({
   setCanvasHeight: (height) => {
     writeStoredCanvasHeight(height)
     set({ canvasHeight: height })
+    persist({ canvasHeight: height })
   },
   setCanvasFontSize: (fontSize) => {
     const normalized = normalizeCanvasFontSize(fontSize)
     writeStoredCanvasFontSize(normalized)
     set({ canvasFontSize: normalized })
+    persist({ canvasFontSize: normalized })
   },
   setTabsVisible: (visible) => {
     writeStoredTabsVisible(visible)
     set({ tabsVisible: visible })
+    persist({ tabsVisible: visible })
   },
-})
+  applyDevicePreferences: (preferences) => set(preferences),
+  setMobileSplit: (orientation, ratio) => {
+    const value = Math.min(0.72, Math.max(0, ratio))
+    if (orientation === "portrait") set({ mobilePortraitSplit: value })
+    else set({ mobileLandscapeSplit: value })
+    persist(orientation === "portrait" ? { mobilePortraitSplit: value } : { mobileLandscapeSplit: value })
+  },
+  setFocusedTile: (canvasKey, tileKey) => {
+    const focusedTileByCanvas = { ...get().focusedTileByCanvas, [canvasKey]: tileKey }
+    set({ focusedTileByCanvas })
+    persist({ focusedTileByCanvas })
+  },
+  })
+}
