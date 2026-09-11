@@ -87,23 +87,26 @@ export default function App() {
       setWorkspaceUserId(null)
       return
     }
+    // Reauthentication of the same account should reveal the existing workspace.
+    // Resume sync immediately without resetting its content or render readiness.
+    if (bootUserRef.current === effectiveUserId) {
+      if (isSignedIn) {
+        void syncNow().catch(console.error)
+        startDeferredWorkspaceWarmup(useStore.getState().activeCanvasId, true)
+      }
+      return
+    }
     let cancelled = false
     setLoaded(false)
     setWorkspaceRendered(false)
-    if (bootUserRef.current !== effectiveUserId) {
-      setWorkspaceUserId(null)
-      stopSyncRuntime()
-      resetStore()
-    }
+    bootUserRef.current = null
+    setWorkspaceUserId(null)
+    stopSyncRuntime()
+    resetStore()
 
     async function boot() {
       if (cancelled || requestedBootUserRef.current !== effectiveUserId) return
-      if (bootUserRef.current && bootUserRef.current !== effectiveUserId) {
-        stopSyncRuntime()
-        resetStore()
-      }
-      bootUserRef.current = effectiveUserId
-      const result = await bootstrapCriticalWorkspace(effectiveUserId)
+      const result = await bootstrapCriticalWorkspace(effectiveUserId, Boolean(isSignedIn))
       if (cancelled || requestedBootUserRef.current !== effectiveUserId) {
         if (requestedBootUserRef.current === null) {
           stopSyncRuntime()
@@ -112,16 +115,18 @@ export default function App() {
         }
         return
       }
+      if (!result) return
+      bootUserRef.current = effectiveUserId
       setLoaded(true)
       setWorkspaceUserId(effectiveUserId)
-      startDeferredWorkspaceWarmup(result.activeCanvasId, result.hasUsableCache)
+      if (isSignedIn) startDeferredWorkspaceWarmup(result.activeCanvasId, result.hasUsableCache)
     }
 
     bootQueueRef.current = bootQueueRef.current.catch(console.error).then(boot).catch(console.error)
     return () => {
       cancelled = true
     }
-  }, [effectiveUserId, resetStore])
+  }, [effectiveUserId, isSignedIn, resetStore, syncNow])
 
   useEffect(() => {
     if (!effectiveUserId && (isLoaded || !online)) setLoaded(true)
@@ -177,7 +182,7 @@ export default function App() {
         </div>
       )}
 
-      <LoadingScreen loaded={loaded && (!canOpenWorkspace || workspaceRendered)} />
+      <LoadingScreen loaded={reauthenticationRequired || (loaded && (!canOpenWorkspace || workspaceRendered))} />
       {canOpenWorkspace && workspaceUserId === effectiveUserId && (
         <>
         <OverageNotice tabsVisible={tabsVisible} />
@@ -192,7 +197,7 @@ export default function App() {
           <img src="/favicon.svg" width={64} height={64} alt="" style={{ opacity: .48 }} />
         </div>
       )}
-      {reauthenticationRequired && <ReauthenticationOverlay />}
+      {reauthenticationRequired && <ReauthenticationOverlay hasLocalData={workspaceUserId === effectiveUserId} />}
     </>
   )
 }

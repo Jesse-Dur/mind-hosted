@@ -2,9 +2,11 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import {
   canvas,
+  clearReauthRequired,
   entityKey,
   entityRecord,
   resetFrontendState,
+  setGetToken,
   syncDb,
   tag,
   thought,
@@ -184,6 +186,73 @@ describe("frontend store optimistic updates", () => {
     expect(state.tags[0]?.name).toBe("cached-tag")
     expect(state.tiles[0]?.title).toBe("Cached tile")
     expect(state.thoughts[0]?.content).toBe("Cached thought")
+  })
+
+  test("an expired session can restore a cached workspace", async () => {
+    setGetToken(async () => null)
+    await syncDb.entities.put(entityRecord({
+      entityType: "canvas",
+      clientId: "canvas-client",
+      serverId: 10,
+      tempId: null,
+      canvasId: 10,
+      status: "clean",
+      data: canvas({ id: 10, name: "Cached" }),
+    }))
+
+    expect(await bootstrapCriticalWorkspace(undefined, false)).toEqual({ activeCanvasId: 10, hasUsableCache: true })
+    expect(useStore.getState().canvases[0]?.name).toBe("Cached")
+  })
+
+  test("a remembered account without local data waits for sign-in before fetching", async () => {
+    const requests: string[] = []
+    globalThis.fetch = (async (path: string | Request) => {
+      requests.push(requestUrl(path))
+      if (!requestUrl(path).includes("/sync/snapshot")) return Response.json({ events: [], latest_revision: 1 })
+      return Response.json({ revision: 1, active_canvas_id: 10, canvases: [canvas()], tags: [], tiles: [tile()], thoughts: [thought()] })
+    }) as typeof fetch
+
+    expect(await bootstrapCriticalWorkspace(undefined, false)).toBeNull()
+    expect(requests).toEqual([])
+    expect(useStore.getState().canvases).toEqual([])
+
+    const result = await bootstrapCriticalWorkspace(undefined, true)
+    expect(result).toEqual({ activeCanvasId: 10, hasUsableCache: false })
+    expect(requests.some((path) => path.includes("/sync/snapshot"))).toBe(true)
+    expect(useStore.getState().thoughts[0]?.content).toBe(thought().content)
+  })
+
+  test("an uncached startup stays pending until its server snapshot finishes", async () => {
+    let releaseSnapshot!: (response: Response) => void
+    globalThis.fetch = (async (path: string | Request) => {
+      if (!requestUrl(path).includes("/sync/snapshot")) return Response.json({ events: [], latest_revision: 1 })
+      return new Promise<Response>((resolve) => { releaseSnapshot = resolve })
+    }) as typeof fetch
+    let finished = false
+    const boot = bootstrapCriticalWorkspace().then((result) => { finished = true; return result })
+    while (!releaseSnapshot) await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(finished).toBe(false)
+    expect(useStore.getState().canvases).toEqual([])
+    releaseSnapshot(Response.json({ revision: 1, active_canvas_id: 10, canvases: [canvas()], tags: [], tiles: [], thoughts: [] }))
+    expect(await boot).toEqual({ activeCanvasId: 10, hasUsableCache: false })
+  })
+
+  test("an unauthorized uncached startup is not ready and can retry after sign-in", async () => {
+    setGetToken(async () => null)
+    expect(await bootstrapCriticalWorkspace()).toBeNull()
+    expect(useStore.getState().canvases).toEqual([])
+
+    setGetToken(async () => "renewed-token")
+    clearReauthRequired()
+    globalThis.fetch = (async (path: string | Request) => {
+      if (!requestUrl(path).includes("/sync/snapshot")) return Response.json({ events: [], latest_revision: 1 })
+      return Response.json({ revision: 1, active_canvas_id: 10, canvases: [canvas()], tags: [], tiles: [tile()], thoughts: [thought()] })
+    }) as typeof fetch
+
+    expect(await bootstrapCriticalWorkspace()).toEqual({ activeCanvasId: 10, hasUsableCache: false })
+    expect(useStore.getState().tiles[0]?.title).toBe(tile().title)
+    expect(useStore.getState().thoughts[0]?.content).toBe(thought().content)
   })
 
   test("sync runtime starts without waiting for network", async () => {

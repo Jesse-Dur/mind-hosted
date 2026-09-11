@@ -109,7 +109,7 @@ describe("responsive bundle boundaries", () => {
     expect(app).toContain("void syncNow().catch(console.error)")
     expect(app).toContain("!isSignedIn && cachedUserId")
     expect(app).toContain("isLoaded && !isSignedIn && cachedUserId")
-    expect(app).toContain("<ReauthenticationOverlay />")
+    expect(app).toContain("<ReauthenticationOverlay hasLocalData={workspaceUserId === effectiveUserId} />")
     expect(reauthentication).toContain("Sign in again to continue")
     expect(reauthentication).toContain('aria-modal="true"')
     expect(workspace).not.toContain("identity not revalidated")

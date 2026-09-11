@@ -1,6 +1,6 @@
 import { SignInButton } from "@clerk/clerk-react"
 
-export function ReauthenticationOverlay() {
+export function ReauthenticationOverlay({ hasLocalData }: { hasLocalData: boolean }) {
   return (
     <div
       role="presentation"
@@ -33,9 +33,9 @@ export function ReauthenticationOverlay() {
             <h2 id="reauthentication-title" style={{ margin: 0, color: "#242424", fontSize: "clamp(17px, 2.5vw, 21px)", lineHeight: 1.25 }}>
               Sign in again to continue
             </h2>
-            <p style={{ margin: "5px 0 0", color: "#707070", fontSize: 12.5, lineHeight: 1.45 }}>
+            {hasLocalData && <p style={{ margin: "5px 0 0", color: "#707070", fontSize: 12.5, lineHeight: 1.45 }}>
               Your local data is still safe on this device.
-            </p>
+            </p>}
           </div>
           <SignInButton mode="modal">
             <button

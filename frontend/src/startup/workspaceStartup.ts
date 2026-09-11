@@ -68,7 +68,7 @@ async function warmBillingOnPlans() {
   ])
 }
 
-export async function bootstrapCriticalWorkspace(userId?: string | null): Promise<WorkspaceBootstrapResult> {
+export async function bootstrapCriticalWorkspace(userId?: string | null, canUseServer = true): Promise<WorkspaceBootstrapResult | null> {
   if (userId) await configureAccountDatabase(userId)
   const store = useStore.getState()
   // Account transitions wait for old scoped tasks before the database swap.
@@ -77,7 +77,7 @@ export async function bootstrapCriticalWorkspace(userId?: string | null): Promis
   if (userId) store.resetStore()
   // Local preferences apply synchronously; same-class/server reconciliation is
   // background work and must never delay an offline cached workspace.
-  void hydrateDevicePreferences(store.applyDevicePreferences, Boolean(userId)).catch(console.error)
+  void hydrateDevicePreferences(store.applyDevicePreferences, Boolean(userId) && canUseServer).catch(console.error)
   // Status/history hydration is useful but not required to draw the workspace.
   // Start it alongside the entity-cache read so large local activity logs never
   // hold the loading screen open.
@@ -85,9 +85,15 @@ export async function bootstrapCriticalWorkspace(userId?: string | null): Promis
 
   const cached = await store.restoreCachedWorkspace()
   if (cached.hasUsableCache) return cached
+  // A remembered account does not guarantee either a cache or a valid session.
+  // Leave startup pending until sign-in can fetch the missing workspace.
+  if (!canUseServer) return null
 
   // No local workspace means we must fetch enough server state to draw the initial shell.
   const initialCanvasId = await store.loadCanvases()
+  // loadCanvases tolerates auth/network failures. Those are not a ready workspace;
+  // a successful server snapshot always includes at least the default canvas.
+  if (useStore.getState().canvases.length === 0) return null
   return { activeCanvasId: initialCanvasId, hasUsableCache: false }
 }
 
