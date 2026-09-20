@@ -25,7 +25,7 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 - **Tags** — colour-coded tags with an expanding pill UI, searchable via Spotlight
 - **Spotlight** (`Cmd+K`) — fuzzy search across tiles, thoughts, and tags. Type `#tag` to filter by tag, `>` to send to AI, or `t` to create a new tile
 - **AI processing** — type a thought in natural language, the AI classifies it, splits compound inputs, applies tags, and files it in the right tile. Can also update, delete, and move existing thoughts
-- **History** — full audit log of every action with expand view showing what you said and the actions the LLM took based on that
+- **History** — local and synced actions share the same badges. Expand appears only for additional information, such as before/after values, positions, tags, full text, or AI input and actions.
 - **Sidebar** — Tags, History, and Settings panels
 - **Auth** — secure accounts via Clerk, your data is scoped to you
 - **Offline sync** — canvases, tiles, thoughts, and tags are cached locally and local edits are queued when the connection is unreliable
@@ -64,6 +64,8 @@ The sync engine prioritises the active canvas:
 - Local creates, edits, moves, resizes, reorders, and deletes are written to the outbox and flushed later if the connection drops.
 - IndexedDB is partitioned by Clerk user. Existing unpartitioned data is claimed once by the signed-in account, and signed-out account caches cannot be opened by another account.
 - Small entity spinners show queued local saves and fade after acknowledgement; soft red attention markers flag failures, while an outlined orange dot identifies intentionally device-only changes. The durable status history and resolution actions are available in History.
+- Temporary failures to obtain an authentication token pause uploads without blocking later attempts. Reconnecting rechecks authentication, so queued changes can resume without a manual retry.
+- Pending uploads, including temporary network failures, appear as “Syncing” without error text. Reconnecting bypasses their retry delay; rejected and intentionally device-only changes still require their existing resolution actions.
 - Desktop and mobile publish a sync cycle's accepted changes together. Existing tiles move and resize to their final geometry over 250 ms; content changes, additions, and deletions appear immediately without purple flashes. Reduced-motion preferences disable the geometry animation.
 - Local moves stay immediate while syncing. Assigning a newly created thought its server ID preserves edits made after its saved version, including a drag to another tile.
 - Creates use `client_id` idempotency keys so a retried request cannot create duplicates after packet loss.

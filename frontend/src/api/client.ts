@@ -82,14 +82,16 @@ async function tokenForRequest(path: string, getToken: GetToken, options?: GetTo
     const refreshedToken = await readToken(path, getToken, { skipCache: true })
     if (refreshedToken) return refreshedToken
   }
-  throwUnauthorized(path)
+  // A missing token can be temporary while Clerk recovers from being offline.
+  // Pause this request, but let the next sync attempt ask for a token again.
+  throw new ApiUnauthorizedError(path)
 }
 
 async function readToken(path: string, getToken: GetToken, options?: GetTokenOptions) {
   try {
     return await getToken(options)
   } catch {
-    throwUnauthorized(path)
+    throw new ApiUnauthorizedError(path)
   }
 }
 

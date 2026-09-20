@@ -1,7 +1,7 @@
 import type { SyncActivityState, SyncVisualState } from "./types"
 
 export const SYNC_STATE_LABEL: Record<SyncActivityState, string> = {
-  pending: "Saved locally",
+  pending: "Syncing",
   synced: "Synced",
   error: "Failed to sync",
   local_only: "Only on this device",

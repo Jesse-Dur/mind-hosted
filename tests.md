@@ -33,6 +33,9 @@ changes; it is not the pass/fail gate for application behavior.
 - Server-id adoption rewrites cached children and pending payloads.
 - Flush skips unresolved temporary dependencies without network calls.
 - Network failures preserve operations with retry metadata.
+- Reconnecting bypasses pending network retry delays, including a failure still in flight, without retrying rejected or local-only operations.
+- Token retrieval failures and temporarily missing tokens recover on later sync attempts, even if authentication recovers after the reconnect event. Reconnect rechecks a previously latched auth failure; repeated server 401 responses still pause sync.
+- History uses matching action badges for local and server entries and expands only meaningful details, including full text when summaries are shortened.
 - Stale `flushing` records retry and clear after server acknowledgement.
 - Server acknowledgement of a temporary parent rewrites pending child payloads.
 - Snapshot reconciliation deletes clean missing records while preserving dirty ones.

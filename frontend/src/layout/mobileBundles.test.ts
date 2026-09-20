@@ -116,7 +116,7 @@ describe("responsive bundle boundaries", () => {
     expect(serviceWorkerRegistration).not.toContain("import.meta.env.DEV")
     expect(serviceWorkerRegistration).toContain("isCacheableClerkAsset")
     expect(viteConfig).toContain("configureServer(server)")
-    expect(viteConfig).toContain("caches.match(cacheKey)")
+    expect(viteConfig).toContain("cache.match(cacheKey)")
     expect(viteConfig).toContain("/npm/@clerk/clerk-js@")
   })
 

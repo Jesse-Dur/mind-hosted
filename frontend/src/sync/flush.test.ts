@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import type { SyncPushOperation, SyncPushResponse } from "./types"
-import { isReauthRequired } from "../auth/reauthSignal"
+import { isReauthRequired, notifyReauthRequired } from "../auth/reauthSignal"
 import {
   canvas,
   entityKey,
@@ -15,6 +15,25 @@ import {
 } from "../test/syncTestHarness"
 
 const { flushSyncQueue } = await import("./flush")
+const { startSyncRuntime, stopSyncRuntime } = await import("./runtime")
+
+async function reconnect() {
+  const addEventListener = window.addEventListener
+  let online: (() => void | Promise<void>) | undefined
+  window.addEventListener = (type, listener) => {
+    if (type === "online") online = listener as () => void | Promise<void>
+  }
+  try {
+    startSyncRuntime()
+    if (!online) throw new Error("Missing online listener")
+    await online()
+    // The test harness does not run window timers; run the scheduled flush too.
+    await flushSyncQueue()
+  } finally {
+    stopSyncRuntime()
+    window.addEventListener = addEventListener
+  }
+}
 
 type MockResponse = {
   ok: boolean
@@ -68,6 +87,107 @@ beforeEach(async () => {
 })
 
 describe("frontend sync flush", () => {
+  test.each(["throws", "returns null"])("sync resumes after token retrieval %s during an outage", async (failure) => {
+    const { enqueueUpsert } = await import("./outbox")
+    await enqueueUpsert("thought", thought({ id: 30, client_id: "first" }))
+    await enqueueUpsert("thought", thought({ id: 31, client_id: "second" }))
+    let tokensAvailable = true
+    setGetToken(async () => {
+      if (tokensAvailable) return "test-token"
+      if (failure === "throws") throw new TypeError("Failed to fetch")
+      return null
+    })
+    fetchResponder = (op) => {
+      tokensAvailable = false
+      return { results: [{ ...op, ok: true, revision: 1, entity: thought({ id: op.server_id!, client_id: op.client_id! }) }] }
+    }
+    await flushSyncQueue()
+    expect(fetchCalls).toHaveLength(1)
+    const pending = (await syncDb.outbox.toArray())[0]!
+    expect(pending.status).toBe("pending")
+
+    // Connectivity can return before Clerk can obtain a fresh token.
+    await reconnect()
+    tokensAvailable = true
+    await flushSyncQueue()
+
+    expect(fetchCalls).toHaveLength(2)
+    expect(fetchCalls[1]?.operation.op_id).toBe(pending.opId)
+    expect(await syncDb.outbox.count()).toBe(0)
+    expect((await syncDb.syncActivity.toArray()).every((activity) => activity.state === "synced")).toBe(true)
+  })
+
+  test("reconnecting rechecks a previously latched auth failure", async () => {
+    const { enqueueUpsert } = await import("./outbox")
+    await enqueueUpsert("thought", thought())
+    notifyReauthRequired()
+    fetchResponder = (op) => ({ results: [{ ...op, ok: true, revision: 1, entity: thought() }] })
+    await reconnect()
+    expect(fetchCalls).toHaveLength(1)
+    expect(await syncDb.outbox.count()).toBe(0)
+    expect(isReauthRequired()).toBe(false)
+  })
+
+  test("reconnecting retries a network failure before its backoff expires", async () => {
+    const { enqueueUpsert } = await import("./outbox")
+    await enqueueUpsert("thought", thought({ content: "Saved offline" }))
+    fetchError = new TypeError("Failed to fetch")
+    await flushSyncQueue()
+    const failed = (await syncDb.outbox.toArray())[0]!
+    expect(failed.nextAttemptAt).toBeGreaterThan(Date.now())
+    // Make the assertion independent of how long the test machine takes.
+    await syncDb.outbox.update(failed.opId, { nextAttemptAt: Date.now() + 60000 })
+    fetchError = null
+    fetchResponder = (op) => ({ results: [{ ...op, ok: true, revision: 1, entity: thought({ content: "Saved offline" }) }] })
+
+    await reconnect()
+
+    expect(fetchCalls).toHaveLength(1)
+    expect(fetchCalls[0]?.operation.op_id).toBe(failed.opId)
+    expect(await syncDb.outbox.count()).toBe(0)
+    expect((await syncDb.syncActivity.get(failed.opId))?.state).toBe("synced")
+  })
+
+  test("reconnecting preserves rejected and local-only operations", async () => {
+    for (const status of ["error", "local_only"] as const) {
+      await syncDb.outbox.put({
+        ...outboxRecord({ opId: status, entityType: "thought", action: "upsert", clientId: status, serverId: 30, payload: { tile_id: 20 } }),
+        status, attemptCount: 1, nextAttemptAt: Date.now() + 60000, error: "Do not retry",
+      })
+    }
+    const before = await syncDb.outbox.toArray()
+
+    await reconnect()
+
+    expect(fetchCalls).toHaveLength(0)
+    expect(await syncDb.outbox.toArray()).toEqual(before)
+  })
+
+  test("reconnecting during a failing upload waits for it and then retries once", async () => {
+    const { enqueueUpsert } = await import("./outbox")
+    await enqueueUpsert("thought", thought())
+    const inFlight = Promise.withResolvers<Response>()
+    const requested = Promise.withResolvers<void>()
+    let calls = 0
+    globalThis.fetch = async (_path, init) => {
+      const op = JSON.parse(init!.body as string).operations[0] as SyncPushOperation
+      if (++calls === 1) {
+        requested.resolve()
+        return inFlight.promise
+      }
+      return Response.json({ results: [{ ...op, ok: true, revision: 1, entity: thought() }] })
+    }
+    const flushing = flushSyncQueue()
+    await requested.promise
+    const reconnected = reconnect()
+    expect(calls).toBe(1)
+    inFlight.reject(new TypeError("Failed to fetch"))
+    await Promise.all([flushing, reconnected])
+
+    expect(calls).toBe(2)
+    expect(await syncDb.outbox.count()).toBe(0)
+  })
+
   test("new canvas and tile string IDs are numeric for queued children and moves", async () => {
     const { enqueueUpsert } = await import("./outbox")
     await enqueueUpsert("canvas", canvas({ id: -10, client_id: "new-canvas" }))
@@ -223,7 +343,7 @@ describe("frontend sync flush", () => {
     expect(record?.status).toBe("pending")
     expect(record?.attemptCount).toBe(0)
     expect(record?.error).toBeUndefined()
-    expect(isReauthRequired()).toBe(true)
+    expect(isReauthRequired()).toBe(false)
   })
 
   test("token refresh failures pause sync without retry penalty", async () => {
@@ -244,7 +364,7 @@ describe("frontend sync flush", () => {
     expect(record?.status).toBe("pending")
     expect(record?.attemptCount).toBe(0)
     expect(record?.error).toBeUndefined()
-    expect(isReauthRequired()).toBe(true)
+    expect(isReauthRequired()).toBe(false)
   })
 
   test("unauthorized responses retry with a fresh token before pausing sync", async () => {

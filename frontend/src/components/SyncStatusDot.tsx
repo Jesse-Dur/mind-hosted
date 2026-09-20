@@ -53,6 +53,7 @@ function SyncResolutionDialog({ statuses, onClose }: { statuses: SyncEntityStatu
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {statuses.map((status) => {
             const disabled = busy === status.opId
+            const needsAction = status.state === "error" || status.state === "local_only"
             return (
               <div key={status.key} style={{ border: "1px solid #e8e8e8", borderRadius: 10, padding: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -60,19 +61,18 @@ function SyncResolutionDialog({ statuses, onClose }: { statuses: SyncEntityStatu
                   <strong style={{ fontSize: 13 }}>{status.entityType} · {status.action ?? "saved"}</strong>
                   <span style={{ marginLeft: "auto", fontSize: 11, color: "#888" }}>{SYNC_STATE_LABEL[status.state]}</span>
                 </div>
-                {status.error && (
+                {status.state === "error" && status.error && (
                   <pre style={{ margin: "9px 0 0", padding: 9, borderRadius: 7, background: "#fff5f5", color: "#b42318", whiteSpace: "pre-wrap", wordBreak: "break-word", font: "11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace" }}>{status.error}</pre>
                 )}
                 {status.state === "local_only" && <p style={{ margin: "9px 0 0", color: "#8a5a00", fontSize: 12, lineHeight: 1.4 }}>This version stays on this device and will not appear on your other devices until you try syncing it.</p>}
-                {status.state === "pending" && <p style={{ margin: "9px 0 0", color: "#777", fontSize: 12 }}>The change is safe locally and will retry automatically when Mind can connect.</p>}
-                {status.opId && status.state !== "synced" && (
+                {status.opId && needsAction && (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 11 }}>
                     <button type="button" disabled={disabled} onClick={() => void run(status.opId, retrySyncOperation)} style={actionButtonStyle("primary")}>{status.state === "local_only" ? "Try syncing" : "Retry now"}</button>
                     {status.state === "error" && <button type="button" disabled={disabled} onClick={() => { if (window.confirm("Keep this version only on this device? It will stop retrying and will not appear on your other devices unless you choose Try syncing later.")) void run(status.opId, keepSyncOperationLocal) }} style={actionButtonStyle("neutral")}>Keep locally</button>}
                     <button type="button" disabled={disabled} onClick={() => { if (window.confirm("Discard this local change? Mind will restore the last server-confirmed version. A never-synced creation will be removed, and a failed deletion will be restored. This cannot be undone.")) void run(status.opId, discardSyncOperation) }} style={actionButtonStyle("danger")}>Discard local change</button>
                   </div>
                 )}
-                {status.state !== "synced" && <p style={{ margin: "9px 0 0", color: "#aaa", fontSize: 10.5, lineHeight: 1.4 }}>Discard restores the last confirmed server version. A never-synced creation is removed; a failed deletion is restored.</p>}
+                {needsAction && <p style={{ margin: "9px 0 0", color: "#aaa", fontSize: 10.5, lineHeight: 1.4 }}>Discard restores the last confirmed server version. A never-synced creation is removed; a failed deletion is restored.</p>}
               </div>
             )
           })}
