@@ -141,7 +141,9 @@ export const createThoughtSlice: StoreSlice<ThoughtSlice> = (set, get) => ({
       }
     })
 
-    for (const orderedThought of orderedThoughts) await enqueueUpsert("thought", orderedThought)
+    for (const orderedThought of orderedThoughts) {
+      await enqueueUpsert("thought", orderedThought, { recordHistory: orderedThought.id === id })
+    }
   },
 
   removeThought: (id) => {

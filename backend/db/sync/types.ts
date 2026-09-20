@@ -38,4 +38,4 @@ export type SyncSnapshot = {
 
 export type SyncEntity = Canvas | Tile | Thought | Tag
 export type DeletePayload = { mode?: "deleteContents" | "moveContents"; targetCanvasId?: number }
-export type ApplyOptions = { writeHistory?: boolean }
+export type ApplyOptions = { writeHistory?: boolean; occurredAt?: string }

@@ -33,6 +33,9 @@ changes; it is not the pass/fail gate for application behavior.
 - Server-id adoption rewrites cached children and pending payloads.
 - Flush skips unresolved temporary dependencies without network calls.
 - Network failures preserve operations with retry metadata.
+- Reconnecting bypasses pending network retry delays, including a failure still in flight, without retrying rejected or local-only operations.
+- Token retrieval failures and temporarily missing tokens recover on later sync attempts, even if authentication recovers after the reconnect event. Reconnect rechecks a previously latched auth failure; repeated server 401 responses still pause sync.
+- History uses matching action badges for local and server entries and expands only meaningful details, including full text when summaries are shortened.
 - Stale `flushing` records retry and clear after server acknowledgement.
 - Server acknowledgement of a temporary parent rewrites pending child payloads.
 - Snapshot reconciliation deletes clean missing records while preserving dirty ones.
@@ -40,6 +43,8 @@ changes; it is not the pass/fail gate for application behavior.
 - Pull preserves pending local changes over stale remote upserts.
 - Pull applies remote tile creates to cache, store, metadata, and animation state.
 - Pulling this device's already-applied payload does not animate.
+- Remote thought moves, additions, and deletions publish their animation revision with the final visible list; repeated pulls do not replay the update.
+- Snapshot thought removals publish their animation revision with the refreshed list.
 - Remote deletes do not remove locally dirty entities.
 - Remote canvas deletes with `moveContents` move cached child tiles.
 - Optimistic canvas creation updates state and queues sync.

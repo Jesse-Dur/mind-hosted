@@ -15,34 +15,143 @@ import {
 
 const { enqueueDelete, enqueueUpsert } = await import("./outbox")
 const { adoptLocalReferences, resolvePayload } = await import("./dependencies")
-const { cacheServerEntity, cacheSyncSnapshot, cachedThoughtsForCanvas } = await import("./cache")
+const { cacheServerEntity, cacheSyncSnapshot, cachedThoughtsForCanvas, cachedWorkspaceForSearch } = await import("./cache")
+const { discardSyncOperation, keepSyncOperationLocal } = await import("./resolution")
+const { cachePastEntity, readPastEntitiesCache } = await import("./pastCache")
+const { captureEntityWriteGeneration } = await import("./entityWriteFence")
+const { readSyncActivity } = await import("./status")
 
 beforeEach(async () => {
   await resetFrontendState()
 })
 
 describe("frontend sync outbox", () => {
-  test("repeated upserts keep one durable operation with the latest payload", async () => {
+  test("repeated completed upserts preserve each action in order", async () => {
     await enqueueUpsert("tile", tile({ title: "Draft", width: 280 }))
     await enqueueUpsert("tile", tile({ title: "Final", width: 420 }))
 
-    const records = await syncDb.outbox.toArray()
+    const records = (await syncDb.outbox.toArray()).sort((left, right) => left.createdAt - right.createdAt)
     const entity = await syncDb.entities.get(entityKey("tile", "tile-client"))
 
-    expect(records).toHaveLength(1)
+    expect(records).toHaveLength(2)
     expect(records[0]?.opId).toStartWith("tile:upsert:tile-client")
-    expect(records[0]?.payload).toMatchObject({ title: "Final", width: 420 })
+    expect(records[0]?.payload).toMatchObject({ title: "Draft", width: 280 })
+    expect(records[1]?.payload).toMatchObject({ title: "Final", width: 420 })
+    expect(records[1]!.createdAt).toBeGreaterThan(records[0]!.createdAt)
+    expect(await syncDb.syncActivity.count()).toBe(2)
     expect(entity?.status).toBe("dirty")
     expect((entity?.data as Tile | undefined)?.title).toBe("Final")
   })
 
-  test("temporary create followed by delete removes local state before flush", async () => {
+  test("a centred pinch is recorded as one resize action even when its position changes", async () => {
+    const original = tile({ x: 48, y: 48, width: 280, height: 200 })
+    await cacheServerEntity("tile", original, false)
+    await enqueueUpsert("tile", { ...original, x: 24, y: 24, width: 328, height: 248 })
+
+    expect((await syncDb.syncActivity.toArray())[0]?.summary).toBe("Resize tile “Tasks”")
+  })
+
+  test("internal writes remain durable without creating duplicate History actions", async () => {
+    await enqueueUpsert("tile", tile({ title: "Internal reorder update" }), { recordHistory: false })
+
+    expect(await syncDb.outbox.count()).toBe(1)
+    expect((await syncDb.outbox.toArray())[0]?.recordHistory).toBe(false)
+    expect(await syncDb.syncActivity.count()).toBe(1)
+    expect((await syncDb.syncActivity.toArray())[0]?.hidden).toBe(true)
+    expect(await readSyncActivity()).toHaveLength(0)
+  })
+
+  test("temporary create followed by delete preserves both completed actions", async () => {
     const tempThought = thought({ id: -30, client_id: "temp-thought", tile_id: -20 })
     await enqueueUpsert("thought", tempThought)
     await enqueueDelete("thought", tempThought)
 
-    expect(await syncDb.outbox.toArray()).toHaveLength(0)
-    expect(await syncDb.entities.get(entityKey("thought", "temp-thought"))).toBeUndefined()
+    const operations = (await syncDb.outbox.toArray()).sort((left, right) => left.createdAt - right.createdAt)
+    expect(operations.map((operation) => operation.action)).toEqual(["upsert", "delete"])
+    expect((await syncDb.entities.get(entityKey("thought", "temp-thought")))?.status).toBe("deleted")
+    expect(await syncDb.syncActivity.count()).toBe(2)
+    expect((await readPastEntitiesCache()).pastThoughts).toContainEqual(tempThought)
+  })
+
+  test("deleting a persisted entity makes it available to Past without a network request", async () => {
+    const deletedThought = thought({ id: 30, client_id: "thought-client", content: "Local past item" })
+    await cacheServerEntity("thought", deletedThought, false)
+
+    await enqueueDelete("thought", deletedThought)
+
+    expect((await readPastEntitiesCache()).pastThoughts).toContainEqual(deletedThought)
+  })
+
+  test("a restored live entity evicts a legacy Past copy without a client id", async () => {
+    const legacyDeleted = { ...thought({ id: 31, content: "Legacy deleted item" }), client_id: null }
+    await cachePastEntity("thought", legacyDeleted)
+
+    await cacheServerEntity("thought", { ...legacyDeleted, client_id: "restored-thought" }, false)
+
+    expect((await readPastEntitiesCache()).pastThoughts).toHaveLength(0)
+  })
+
+  test("intentionally local-only entities stay local-only through later edits", async () => {
+    await enqueueUpsert("tile", tile({ title: "First local edit" }))
+    const operation = (await syncDb.outbox.toArray())[0]!
+    await keepSyncOperationLocal(operation.opId)
+
+    await enqueueUpsert("tile", tile({ title: "Later local edit" }))
+
+    const updated = (await syncDb.outbox.toArray()).sort((left, right) => left.createdAt - right.createdAt)
+    expect(updated).toHaveLength(2)
+    expect(updated.every((candidate) => candidate.status === "local_only")).toBe(true)
+    expect(updated[0]?.payload).toMatchObject({ title: "First local edit" })
+    expect(updated[1]?.payload).toMatchObject({ title: "Later local edit" })
+  })
+
+  test("discard restores the last server-confirmed version", async () => {
+    const confirmed = tile({ title: "Confirmed" })
+    await cacheServerEntity("tile", confirmed, false)
+    await enqueueUpsert("tile", tile({ title: "Rejected local edit" }))
+    const operation = (await syncDb.outbox.toArray())[0]!
+    await syncDb.outbox.put({ ...operation, status: "error", error: "Rejected" })
+
+    await discardSyncOperation(operation.opId)
+
+    const restored = await syncDb.entities.get(entityKey("tile", "tile-client"))
+    expect((restored?.data as Tile | undefined)?.title).toBe("Confirmed")
+    expect(restored?.status).toBe("clean")
+    expect(await syncDb.outbox.where("clientId").equals("tile-client").count()).toBe(0)
+  })
+
+  test("discard resolves the selected action without removing later actions", async () => {
+    const confirmed = tile({ title: "Confirmed" })
+    await cacheServerEntity("tile", confirmed, false)
+    await enqueueUpsert("tile", tile({ title: "First edit" }))
+    await enqueueUpsert("tile", tile({ title: "Second edit" }))
+    const operations = (await syncDb.outbox.toArray()).sort((left, right) => left.createdAt - right.createdAt)
+
+    await discardSyncOperation(operations[0]!.opId)
+
+    const remaining = (await syncDb.outbox.toArray()).sort((left, right) => left.createdAt - right.createdAt)
+    const local = await syncDb.entities.get(entityKey("tile", "tile-client"))
+    expect(remaining.map((operation) => operation.opId)).toEqual([operations[1]!.opId])
+    expect((local?.data as Tile | undefined)?.title).toBe("Second edit")
+    expect((await syncDb.syncActivity.get(operations[0]!.opId))?.state).toBe("discarded")
+
+    await discardSyncOperation(operations[1]!.opId)
+    const restored = await syncDb.entities.get(entityKey("tile", "tile-client"))
+    expect((restored?.data as Tile | undefined)?.title).toBe("Confirmed")
+    expect(restored?.status).toBe("clean")
+  })
+
+  test("discarding a local delete removes it from Past and restores the live entity", async () => {
+    const confirmed = tile({ title: "Restore me" })
+    await cacheServerEntity("tile", confirmed, false)
+    await enqueueDelete("tile", confirmed)
+    const operation = (await syncDb.outbox.toArray())[0]!
+    expect((await readPastEntitiesCache()).pastTiles).toHaveLength(1)
+
+    await discardSyncOperation(operation.opId)
+
+    expect((await readPastEntitiesCache()).pastTiles).toHaveLength(0)
+    expect((await syncDb.entities.get(entityKey("tile", "tile-client")))?.status).toBe("clean")
   })
 })
 
@@ -109,6 +218,22 @@ describe("frontend sync dependencies", () => {
     expect((child?.data as Tile | undefined)?.canvas_id).toBe(42)
     expect(child?.canvasId).toBe(42)
     expect(pending?.payload).toMatchObject({ canvas_id: 42 })
+  })
+})
+
+describe("local cross-canvas search cache", () => {
+  test("returns entities from every locally stored canvas", async () => {
+    await Promise.all([
+      cacheServerEntity("tile", tile({ id: 20, client_id: "tile-a", canvas_id: 10 }), false),
+      cacheServerEntity("tile", tile({ id: 21, client_id: "tile-b", canvas_id: 11 }), false),
+      cacheServerEntity("thought", thought({ id: 30, client_id: "thought-a", tile_id: 20 }), false),
+      cacheServerEntity("thought", thought({ id: 31, client_id: "thought-b", tile_id: 21 }), false),
+    ])
+
+    const workspace = await cachedWorkspaceForSearch()
+
+    expect(workspace.tiles.map((item) => item.id).sort()).toEqual([20, 21])
+    expect(workspace.thoughts.map((item) => item.id).sort()).toEqual([30, 31])
   })
 })
 
@@ -209,5 +334,88 @@ describe("frontend sync cache", () => {
 
     const thoughts = await cachedThoughtsForCanvas(10)
     expect(thoughts[0]?.tags).toEqual(["new"])
+  })
+
+  test("snapshot reconciliation cannot overwrite failed or local-only work", async () => {
+    const localTile = tile({ title: "Local authority" })
+    await syncDb.entities.put(entityRecord({
+      entityType: "tile",
+      clientId: "tile-client",
+      serverId: 20,
+      tempId: null,
+      canvasId: 10,
+      status: "dirty",
+      data: localTile,
+      confirmedData: tile({ title: "Earlier server version" }),
+      syncDisposition: "local_only",
+    }))
+    await syncDb.outbox.put({ ...outboxRecord({
+      opId: "local-only-op",
+      entityType: "tile",
+      action: "upsert",
+      clientId: "tile-client",
+      serverId: 20,
+      payload: { title: "Local authority" },
+    }), status: "local_only" })
+
+    await cacheSyncSnapshot({
+      revision: 2,
+      active_canvas_id: 10,
+      canvases: [canvas()],
+      tags: [],
+      tiles: [tile({ title: "Stale remote version" })],
+      thoughts: [],
+    })
+
+    const record = await syncDb.entities.get(entityKey("tile", "tile-client"))
+    expect((record?.data as Tile | undefined)?.title).toBe("Local authority")
+    expect((record?.confirmedData as Tile | undefined)?.title).toBe("Stale remote version")
+    expect(record?.syncDisposition).toBe("local_only")
+  })
+
+  test("an in-flight snapshot cannot roll an acknowledged local tile back to stale geometry", async () => {
+    await cacheServerEntity("tile", tile({ x: 0, y: 0, width: 280, height: 200 }), false)
+    const snapshotGeneration = captureEntityWriteGeneration()
+
+    await enqueueUpsert("tile", tile({ x: 240, y: 168, width: 432, height: 312 }))
+    const localRecord = await syncDb.entities.get(entityKey("tile", "tile-client"))
+    await syncDb.entities.put({ ...localRecord!, status: "clean" })
+    await syncDb.outbox.where("clientId").equals("tile-client").delete()
+
+    const changed = await cacheSyncSnapshot({
+      revision: 2,
+      active_canvas_id: 10,
+      canvases: [canvas()],
+      tags: [],
+      tiles: [tile({ x: 0, y: 0, width: 280, height: 200 })],
+      thoughts: [],
+    }, snapshotGeneration)
+
+    const cached = await syncDb.entities.get(entityKey("tile", "tile-client"))
+    expect(cached?.data).toMatchObject({ x: 240, y: 168, width: 432, height: 312 })
+    expect(changed.tileIds).toEqual([])
+  })
+
+  test("an in-flight snapshot cannot delete a locally changed tile after its outbox clears", async () => {
+    await Promise.all([
+      cacheServerEntity("tile", tile(), false),
+      cacheServerEntity("thought", thought(), false),
+    ])
+    const snapshotGeneration = captureEntityWriteGeneration()
+
+    await enqueueUpsert("tile", tile({ x: 120 }))
+    await syncDb.outbox.where("clientId").equals("tile-client").delete()
+
+    await cacheSyncSnapshot({
+      revision: 2,
+      active_canvas_id: 10,
+      canvases: [canvas()],
+      tags: [],
+      tiles: [],
+      thoughts: [],
+    }, snapshotGeneration)
+
+    expect(await syncDb.entities.get(entityKey("tile", "tile-client"))).toBeDefined()
+    expect(await syncDb.entities.get(entityKey("thought", "thought-client"))).toBeDefined()
   })
 })

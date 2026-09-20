@@ -1,5 +1,10 @@
 import type { Canvas, Tag, Thought, Tile } from "../types"
 import type { AppStore } from "../store/types"
+import { payloadForEntity } from "./entities"
+import { captureEntityWriteGeneration, entityWasWrittenAfter } from "./entityWriteFence"
+import { readEntityRevision } from "./entityRevision"
+import { syncDb } from "./localDb"
+import { currentSyncAccountScope, isSyncAccountScopeCurrent } from "./accountScope"
 import { writeStoredActiveCanvasId } from "../store/storage"
 import type { LocalEntityRecord, SyncEntity, SyncEntityType, SyncPayload } from "./types"
 
@@ -13,6 +18,11 @@ let setState: SetState | null = null
 export function registerSyncStore(get: GetState, set: SetState) {
   getState = get
   setState = set
+}
+
+function upsertTileInPlace(tiles: Tile[], tile: Tile) {
+  if (!tiles.some((item) => item.id === tile.id)) return [...tiles, tile]
+  return tiles.map((item) => item.id === tile.id ? { ...tile, stableKey: item.stableKey ?? tile.stableKey } : item)
 }
 
 function updateMapList<T>(map: Map<number, T[]>, update: (list: T[]) => T[]) {
@@ -113,7 +123,13 @@ export function adoptServerEntity(entityType: SyncEntityType, record: LocalEntit
 
     if (entityType === "thought") {
       const thought = entity as Thought
-      const replaceThought = (item: Thought) => item.id === tempId ? { ...thought, stableKey: item.stableKey } : item
+      const replaceThought = (item: Thought) => {
+        if (item.id !== tempId) return item
+        // A drop updates the UI before its outbox write finishes. Adopt the ID
+        // without replaying older placement or content over that newer edit.
+        const edited = JSON.stringify(payloadForEntity("thought", item)) !== JSON.stringify(payloadForEntity("thought", record.data))
+        return { ...(edited ? item : thought), id: thought.id, client_id: thought.client_id, stableKey: item.stableKey }
+      }
       const keys = new Map(state.thoughtStableKeys)
       const stableKey = keys.get(tempId)
       keys.delete(tempId)
@@ -132,9 +148,9 @@ export function adoptServerEntity(entityType: SyncEntityType, record: LocalEntit
   })
 }
 
-export function applyRemoteEntity(entityType: SyncEntityType, entity: SyncEntity, options: ApplyRemoteEntityOptions = {}) {
-  if (!setState || !getState) return
-  setState((state) => {
+export function applyRemoteEntity(entityType: SyncEntityType, entity: SyncEntity, options: ApplyRemoteEntityOptions = {}, update: SetState | null = setState) {
+  if (!update || !getState) return
+  update((state) => {
     if (entityType === "canvas") {
       const canvas = entity as Canvas
       return { canvases: sortCanvases([...state.canvases.filter((item) => item.id !== canvas.id), canvas]) }
@@ -142,8 +158,10 @@ export function applyRemoteEntity(entityType: SyncEntityType, entity: SyncEntity
     if (entityType === "tile") {
       const tile = entity as Tile
       const movedThoughts = tile.canvas_id === null ? [] : thoughtsForTile(state, tile.id)
-      const tileCache = updateMapList(state.tileCache, (tiles) => tiles.filter((item) => item.id !== tile.id))
-      if (tile.canvas_id !== null) tileCache.set(tile.canvas_id, [...(tileCache.get(tile.canvas_id) ?? []).filter((item) => item.id !== tile.id), tile])
+      const tileCache = new Map([...state.tileCache].map(([canvasId, tiles]) => [canvasId,
+        canvasId === tile.canvas_id ? upsertTileInPlace(tiles, tile) : tiles.filter((item) => item.id !== tile.id),
+      ]))
+      if (tile.canvas_id !== null && !tileCache.has(tile.canvas_id)) tileCache.set(tile.canvas_id, [tile])
       const thoughtCache = updateMapList(state.thoughtCache, (thoughts) => thoughts.filter((thought) => thought.tile_id !== tile.id))
       if (tile.canvas_id !== null && movedThoughts.length > 0) {
         thoughtCache.set(tile.canvas_id, mergeThoughts(thoughtCache.get(tile.canvas_id) ?? [], movedThoughts))
@@ -152,7 +170,7 @@ export function applyRemoteEntity(entityType: SyncEntityType, entity: SyncEntity
         ? mergeThoughts(state.thoughts.filter((thought) => thought.tile_id !== tile.id), movedThoughts)
         : state.thoughts.filter((thought) => thought.tile_id !== tile.id)
       return {
-        tiles: state.activeCanvasId === tile.canvas_id ? [...state.tiles.filter((item) => item.id !== tile.id), tile] : state.tiles.filter((item) => item.id !== tile.id),
+        tiles: state.activeCanvasId === tile.canvas_id ? upsertTileInPlace(state.tiles, tile) : state.tiles.filter((item) => item.id !== tile.id),
         tileCache,
         thoughts: activeThoughts,
         thoughtCache,
@@ -191,9 +209,9 @@ export function applyRemoteEntity(entityType: SyncEntityType, entity: SyncEntity
   if (entityType === "thought") getState().markRemoteChanges([], [(entity as Thought).id])
 }
 
-export function removeRemoteEntity(entityType: SyncEntityType, serverId: number | null, payload?: SyncPayload) {
-  if (!setState || serverId === null) return
-  setState((state) => {
+export function removeRemoteEntity(entityType: SyncEntityType, serverId: number | null, payload?: SyncPayload, update: SetState | null = setState) {
+  if (!update || serverId === null) return
+  update((state) => {
     if (entityType === "canvas") {
       const tileCache = new Map(state.tileCache)
       const thoughtCache = new Map(state.thoughtCache)
@@ -258,4 +276,66 @@ export function removeRemoteEntity(entityType: SyncEntityType, serverId: number 
       }))) : state.thoughtCache,
     }
   })
+}
+
+// A batch belongs to one sync invocation. Only committed pull results are appended.
+export type RemoteStoreChange = {
+  entityType: SyncEntityType
+  id: number
+  entity?: SyncEntity
+  payload?: SyncPayload
+  animate?: boolean
+  clientId: string
+  revision: number
+}
+
+export function createRemoteStoreBatch() {
+  const scope = currentSyncAccountScope()
+  const initialLocalTileChanges = getState?.().recentLocalTileChangeIds
+  const changes: RemoteStoreChange[] = []
+  return {
+    append(committed: RemoteStoreChange[]) { changes.push(...committed) },
+    async publish() {
+      if (!setState || !getState || changes.length === 0 || !isSyncAccountScopeCurrent(scope)) return
+      const committed = changes.splice(0)
+      const latest = new Map(committed.map((change) => [`${change.entityType}:${change.id}`, change]))
+      const generation = captureEntityWriteGeneration()
+      // Revalidate after the whole cycle: another pull or local edit may have
+      // overtaken an accepted event while the next response was in flight.
+      const protectedKeys = new Set<string>()
+      await syncDb.transaction("r", syncDb.metadata, syncDb.outbox, async () => {
+        for (const [key, change] of latest) {
+          const revision = await readEntityRevision(change.entityType, change.id)
+          const pending = await syncDb.outbox.where("clientId").equals(change.clientId).first()
+          if (revision > change.revision || pending) protectedKeys.add(key)
+        }
+      })
+      if (!isSyncAccountScopeCurrent(scope)) return
+      const tileIds: number[] = []
+      const thoughtIds: number[] = []
+      setState((current) => {
+        for (const [key, change] of latest) {
+          const locallyMoved = change.entityType === "tile"
+            && (current.recentLocalTileChangeIds.get(change.id) ?? 0) > (initialLocalTileChanges?.get(change.id) ?? 0)
+          if (locallyMoved || entityWasWrittenAfter(change.entityType, change.clientId, generation)) protectedKeys.add(key)
+        }
+        let next = current
+        const update: SetState = (updater) => { next = { ...next, ...updater(next) } }
+        for (const change of committed) {
+          if (protectedKeys.has(`${change.entityType}:${change.id}`)) continue
+          if (change.entity) applyRemoteEntity(change.entityType, change.entity, {}, update)
+          else removeRemoteEntity(change.entityType, change.id, change.payload, update)
+          if (change.animate && change.entityType === "tile") tileIds.push(change.id)
+          if (change.animate && change.entityType === "thought") thoughtIds.push(change.id)
+        }
+        // Publish the presentation marker with the data, including deletions.
+        // A separate notification can arrive after React has removed the rows.
+        return next.thoughts === current.thoughts ? next : {
+          ...next,
+          remoteThoughtRevision: current.remoteThoughtRevision + 1,
+        }
+      })
+      if (tileIds.length || thoughtIds.length) getState().markRemoteChanges(tileIds, thoughtIds)
+    },
+  }
 }

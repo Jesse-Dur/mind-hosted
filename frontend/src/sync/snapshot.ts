@@ -2,6 +2,8 @@ import type { Canvas, Tag, Thought, Tile } from "../types"
 import { getApi } from "../store/apiAuth"
 import { cacheSyncSnapshot, cachedCanvases, cachedTags, cachedThoughtsForCanvas, cachedTiles, setMetadataNumber } from "./cache"
 import { GLOBAL_REVISION_KEY, canvasRevisionKey } from "./revisions"
+import { captureEntityWriteGeneration } from "./entityWriteFence"
+import { assertSyncAccountScopeCurrent, currentSyncAccountScope, runSyncAccountTask } from "./accountScope"
 
 export type CachedSnapshot = {
   revision: number
@@ -17,7 +19,9 @@ export type CachedSnapshot = {
 const inFlightSnapshots = new Map<string, Promise<CachedSnapshot>>()
 
 function snapshotKey(canvasId: number | null | undefined) {
-  return canvasId === null || canvasId === undefined ? "default" : String(canvasId)
+  const account = currentSyncAccountScope()?.userId ?? "unscoped"
+  const canvas = canvasId === null || canvasId === undefined ? "default" : String(canvasId)
+  return `${account}:${canvas}`
 }
 
 export async function fetchAndCacheSnapshot(canvasId?: number | null): Promise<CachedSnapshot> {
@@ -25,9 +29,12 @@ export async function fetchAndCacheSnapshot(canvasId?: number | null): Promise<C
   const existing = inFlightSnapshots.get(key)
   if (existing) return existing
 
-  const request = (async () => {
-    const snapshot = await getApi().sync.snapshot(canvasId ?? undefined)
-    const changedIds = await cacheSyncSnapshot(snapshot)
+  const snapshotGeneration = captureEntityWriteGeneration()
+  const request = runSyncAccountTask(async (scope) => {
+    const snapshot = await getApi(scope).sync.snapshot(canvasId ?? undefined)
+    assertSyncAccountScopeCurrent(scope)
+    const changedIds = await cacheSyncSnapshot(snapshot, snapshotGeneration)
+    assertSyncAccountScopeCurrent(scope)
     await setMetadataNumber(GLOBAL_REVISION_KEY, snapshot.revision)
     if (snapshot.active_canvas_id !== null) {
       await setMetadataNumber(canvasRevisionKey(snapshot.active_canvas_id), snapshot.revision)
@@ -42,7 +49,7 @@ export async function fetchAndCacheSnapshot(canvasId?: number | null): Promise<C
       changedTileIds: changedIds.tileIds,
       changedThoughtIds: changedIds.thoughtIds,
     }
-  })().finally(() => {
+  }).finally(() => {
     inFlightSnapshots.delete(key)
   })
 

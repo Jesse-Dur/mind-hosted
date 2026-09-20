@@ -5,6 +5,7 @@ import { TagMenu } from "./TagMenu"
 import { CloseButton } from "./CloseButton"
 import { ThoughtTags } from "./ThoughtTags"
 import { useThoughtEdit } from "../hooks/useThoughtEdit"
+import { SyncStatusDot } from "./SyncStatusDot"
 import { getThoughtControlMetrics } from "../utils/canvasFontSize"
 import type { Thought as ThoughtType } from "../types"
 
@@ -26,17 +27,11 @@ const thoughtAnimationStyles = `
   80% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0.03), 0 0 0 2px rgba(124,58,237,0.4); }
   100% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0); }
 }
-@keyframes remoteThoughtUpdate {
-  0% { background: #f5f3ff; border-color: #a78bfa; box-shadow: 0 0 0 2px rgba(124,58,237,0.24); }
-  60% { background: #faf7ff; border-color: #c4b5fd; box-shadow: 0 0 0 2px rgba(124,58,237,0.12); }
-  100% { background: #fafafa; border-color: #ebebeb; box-shadow: 0 0 0 0 rgba(124,58,237,0); }
-}
 `
 
 export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver, onDrop, dragging }: Props) {
-  const { highlightedId, remoteChangedThoughtIds, removeThought, updateThoughtTags } = useStore()
+  const { highlightedId, removeThought, updateThoughtTags } = useStore()
   const isHighlighted = highlightedId?.type === "thought" && Number(highlightedId.id) === Number(thought.id)
-  const isRemoteChanged = remoteChangedThoughtIds.has(thought.id)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [localTags, setLocalTags] = useState(thought.tags)
 
@@ -57,7 +52,7 @@ export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver
 
   return (
     <>
-      {(isHighlighted || isRemoteChanged) && <style>{thoughtAnimationStyles}</style>}
+      {isHighlighted && <style>{thoughtAnimationStyles}</style>}
       <div
         draggable={!editing}
         onDragStart={(e) => {
@@ -97,9 +92,7 @@ export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver
           animation: !dragging
             ? isHighlighted
               ? "thoughtHighlight 3s linear forwards"
-              : isRemoteChanged
-                ? "remoteThoughtUpdate 850ms ease-out forwards"
-                : undefined
+              : undefined
             : undefined,
         }}
       >
@@ -119,6 +112,7 @@ export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver
           >{content}</span>
         </div>
         <ThoughtTags tags={localTags} />
+        <SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} />
         <CloseButton onClick={remove} size={controlSize} iconSize={closeIconSize} />
       </div>
 

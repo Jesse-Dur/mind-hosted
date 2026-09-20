@@ -56,6 +56,7 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
               tags: snapshot.tags,
               tiles: s.activeCanvasId === snapshot.activeCanvasId ? snapshot.tiles : s.tiles,
               thoughts: s.activeCanvasId === snapshot.activeCanvasId ? snapshot.thoughts : s.thoughts,
+              remoteThoughtRevision: s.remoteThoughtRevision + Number(s.activeCanvasId === snapshot.activeCanvasId),
               tileCache: snapshot.activeCanvasId === null ? s.tileCache : new Map(s.tileCache).set(snapshot.activeCanvasId, snapshot.tiles),
               thoughtCache: snapshot.activeCanvasId === null ? s.thoughtCache : new Map(s.thoughtCache).set(snapshot.activeCanvasId, snapshot.thoughts),
             }
@@ -175,7 +176,9 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
         return updated
       }),
     }))
-    for (const canvas of changed) void enqueueUpsert("canvas", canvas)
+    changed.forEach((canvas, index) => {
+      void enqueueUpsert("canvas", canvas, { recordHistory: index === 0 })
+    })
   },
 
   removeCanvas: async (id, options) => {
@@ -248,11 +251,11 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
       ...(options.mode === "moveContents" ? { targetCanvasId: options.targetCanvasId } : {}),
     })
     if (options.mode === "moveContents") {
-      await Promise.all(sourceTiles.map((tile) => enqueueUpsert("tile", { ...tile, canvas_id: options.targetCanvasId })))
+      await Promise.all(sourceTiles.map((tile) => enqueueUpsert("tile", { ...tile, canvas_id: options.targetCanvasId }, { recordHistory: false })))
     } else {
       await Promise.all([
-        ...sourceThoughts.map((thought) => enqueueDelete("thought", thought)),
-        ...sourceTiles.map((tile) => enqueueDelete("tile", tile)),
+        ...sourceThoughts.map((thought) => enqueueDelete("thought", thought, {}, { recordHistory: false })),
+        ...sourceTiles.map((tile) => enqueueDelete("tile", tile, {}, { recordHistory: false })),
       ])
       get().adjustBillingFeatureUsage("tiles", -sourceTiles.length)
       get().adjustBillingFeatureUsage("thoughts", -sourceThoughts.length)

@@ -1,0 +1,8 @@
+.tile-geometry {
+  --tile-geometry-duration: 250ms;
+  --tile-geometry-transition: left var(--tile-geometry-duration) ease-out, top var(--tile-geometry-duration) ease-out, width var(--tile-geometry-duration) ease-out, height var(--tile-geometry-duration) ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile-geometry { --tile-geometry-duration: 0ms; }
+}

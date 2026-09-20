@@ -1,14 +1,20 @@
 import type { Canvas } from "../types"
-import { DEFAULT_CANVAS_FONT_SIZE, normalizeCanvasFontSize } from "../utils/canvasFontSize"
+import { readLocalDevicePreferences } from "../preferences/devicePreferences"
+import { getActiveSyncUserId } from "../sync/localDb"
+import { normalizeCanvasFontSize } from "../utils/canvasFontSize"
 
 const ACTIVE_CANVAS_STORAGE_KEY = "activeCanvasId"
 const TABS_VISIBLE_STORAGE_KEY = "tabsVisible"
 const CANVAS_HEIGHT_STORAGE_KEY = "canvasHeight"
 const CANVAS_FONT_SIZE_STORAGE_KEY = "canvasFontSize"
-const DEFAULT_CANVAS_HEIGHT = 1440
+
+function activeCanvasStorageKey() {
+  const userId = getActiveSyncUserId()
+  return userId ? `${ACTIVE_CANVAS_STORAGE_KEY}:${encodeURIComponent(userId)}` : ACTIVE_CANVAS_STORAGE_KEY
+}
 
 export function readStoredActiveCanvasId() {
-  const raw = localStorage.getItem(ACTIVE_CANVAS_STORAGE_KEY)
+  const raw = localStorage.getItem(activeCanvasStorageKey())
   if (raw === null) return null
   const id = Number(raw)
   if (!Number.isInteger(id)) return null
@@ -23,12 +29,13 @@ export function getStoredActiveCanvasId(canvases: Canvas[]) {
 
 export function writeStoredActiveCanvasId(id: number | null) {
   // A single writer avoids subtle drift between active state and restored tabs.
-  if (id === null) localStorage.removeItem(ACTIVE_CANVAS_STORAGE_KEY)
-  else localStorage.setItem(ACTIVE_CANVAS_STORAGE_KEY, String(id))
+  const key = activeCanvasStorageKey()
+  if (id === null) localStorage.removeItem(key)
+  else localStorage.setItem(key, String(id))
 }
 
 export function readStoredTabsVisible() {
-  return localStorage.getItem(TABS_VISIBLE_STORAGE_KEY) !== "false"
+  return readLocalDevicePreferences().tabsVisible
 }
 
 export function writeStoredTabsVisible(visible: boolean) {
@@ -36,7 +43,7 @@ export function writeStoredTabsVisible(visible: boolean) {
 }
 
 export function readStoredCanvasHeight() {
-  return Number(localStorage.getItem(CANVAS_HEIGHT_STORAGE_KEY) ?? DEFAULT_CANVAS_HEIGHT)
+  return readLocalDevicePreferences().canvasHeight
 }
 
 export function writeStoredCanvasHeight(height: number) {
@@ -44,8 +51,7 @@ export function writeStoredCanvasHeight(height: number) {
 }
 
 export function readStoredCanvasFontSize() {
-  const raw = localStorage.getItem(CANVAS_FONT_SIZE_STORAGE_KEY)
-  return raw === null || raw.trim() === "" ? DEFAULT_CANVAS_FONT_SIZE : normalizeCanvasFontSize(Number(raw))
+  return readLocalDevicePreferences().canvasFontSize
 }
 
 export function writeStoredCanvasFontSize(fontSize: number) {

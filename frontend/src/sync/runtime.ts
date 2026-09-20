@@ -1,14 +1,38 @@
-import { flushSyncQueue, scheduleFlush } from "./flush"
+import { cancelScheduledFlush, flushSyncQueue, scheduleFlush, waitForSyncIdle } from "./flush"
+import { syncDb } from "./localDb"
 import { pullSync } from "./pull"
+import { createRemoteStoreBatch } from "./storeBridge"
 import { isApiUnauthorizedError } from "../api/errors"
+import { clearReauthRequired } from "../auth/reauthSignal"
+import { assertSyncAccountScopeCurrent, isSyncAccountScopeCurrent, isStaleSyncAccountError, runSyncAccountTask } from "./accountScope"
 
 let activeCanvasId: number | null = null
+let started = false
+const onOnline = () => runSyncAccountTask(async (scope) => {
+  await runSyncWork(async () => {
+    // Let an in-flight failure record its backoff before clearing it on reconnect.
+    await waitForSyncIdle()
+    assertSyncAccountScopeCurrent(scope)
+    clearReauthRequired()
+    await syncDb.transaction("rw", syncDb.outbox, async () => {
+      await syncDb.outbox.where("status").equals("pending")
+        .and((record) => record.attemptCount > 0)
+        .modify({ nextAttemptAt: 0 })
+      assertSyncAccountScopeCurrent(scope)
+    })
+    assertSyncAccountScopeCurrent(scope)
+    await flushSyncQueue()
+  })
+}).catch(console.error)
+const onVisibilityChange = () => {
+  if (document.visibilityState === "visible") syncInBackground().catch(console.error)
+}
 
 async function runSyncWork(work: () => Promise<void>) {
   try {
     await work()
   } catch (error) {
-    if (isApiUnauthorizedError(error)) return
+    if (isApiUnauthorizedError(error) || isStaleSyncAccountError(error)) return
     throw error
   }
 }
@@ -19,24 +43,46 @@ export function setSyncActiveCanvas(canvasId: number | null) {
 }
 
 export async function syncActiveCanvas(canvasId = activeCanvasId) {
-  await runSyncWork(async () => {
-    await flushSyncQueue()
-    if (canvasId !== null && canvasId > 0) await pullSync(canvasId)
+  await runSyncAccountTask(async (scope) => {
+    await runSyncWork(async () => {
+      await flushSyncQueue()
+      assertSyncAccountScopeCurrent(scope)
+      if (canvasId !== null && canvasId > 0) await pullSync(canvasId)
+    })
   })
 }
 
 export async function syncInBackground() {
-  await runSyncWork(async () => {
-    await flushSyncQueue()
-    if (activeCanvasId !== null && activeCanvasId > 0) await pullSync(activeCanvasId)
-    await pullSync()
+  await runSyncAccountTask(async (scope) => {
+    await runSyncWork(async () => {
+      await flushSyncQueue()
+      assertSyncAccountScopeCurrent(scope)
+      const batch = createRemoteStoreBatch()
+      try {
+        if (activeCanvasId !== null && activeCanvasId > 0) await pullSync(activeCanvasId, batch)
+        assertSyncAccountScopeCurrent(scope)
+        await pullSync(undefined, batch)
+      } finally {
+        // A failed later request must not hide an earlier committed response.
+        if (isSyncAccountScopeCurrent(scope)) await batch.publish()
+      }
+    })
   })
 }
 
 export function startSyncRuntime() {
-  window.addEventListener("online", () => scheduleFlush())
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") syncInBackground().catch(console.error)
-  })
+  if (started) return
+  started = true
+  window.addEventListener("online", onOnline)
+  document.addEventListener("visibilitychange", onVisibilityChange)
   scheduleFlush()
+}
+
+export function stopSyncRuntime() {
+  if (!started) return
+  started = false
+  activeCanvasId = null
+  window.removeEventListener("online", onOnline)
+  document.removeEventListener("visibilitychange", onVisibilityChange)
+  cancelScheduledFlush()
 }

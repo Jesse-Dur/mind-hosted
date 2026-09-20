@@ -2,9 +2,11 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import {
   canvas,
+  clearReauthRequired,
   entityKey,
   entityRecord,
   resetFrontendState,
+  setGetToken,
   syncDb,
   tag,
   thought,
@@ -61,13 +63,16 @@ describe("canvas font size preference", () => {
     useStore.getState().setCanvasFontSize(24)
     expect(useStore.getState().canvasFontSize).toBe(24)
     expect(localStorage.getItem("canvasFontSize")).toBe("24")
+    expect(readStoredCanvasFontSize()).toBe(24)
 
     useStore.getState().setCanvasFontSize(100)
     expect(useStore.getState().canvasFontSize).toBe(MAX_CANVAS_FONT_SIZE)
 
     useStore.getState().setCanvasFontSize(1)
     expect(useStore.getState().canvasFontSize).toBe(MIN_CANVAS_FONT_SIZE)
+    expect(readStoredCanvasFontSize()).toBe(MIN_CANVAS_FONT_SIZE)
 
+    localStorage.clear()
     localStorage.setItem("canvasFontSize", "not-a-size")
     expect(readStoredCanvasFontSize()).toBe(DEFAULT_CANVAS_FONT_SIZE)
   })
@@ -181,6 +186,73 @@ describe("frontend store optimistic updates", () => {
     expect(state.tags[0]?.name).toBe("cached-tag")
     expect(state.tiles[0]?.title).toBe("Cached tile")
     expect(state.thoughts[0]?.content).toBe("Cached thought")
+  })
+
+  test("an expired session can restore a cached workspace", async () => {
+    setGetToken(async () => null)
+    await syncDb.entities.put(entityRecord({
+      entityType: "canvas",
+      clientId: "canvas-client",
+      serverId: 10,
+      tempId: null,
+      canvasId: 10,
+      status: "clean",
+      data: canvas({ id: 10, name: "Cached" }),
+    }))
+
+    expect(await bootstrapCriticalWorkspace(undefined, false)).toEqual({ activeCanvasId: 10, hasUsableCache: true })
+    expect(useStore.getState().canvases[0]?.name).toBe("Cached")
+  })
+
+  test("a remembered account without local data waits for sign-in before fetching", async () => {
+    const requests: string[] = []
+    globalThis.fetch = (async (path: string | Request) => {
+      requests.push(requestUrl(path))
+      if (!requestUrl(path).includes("/sync/snapshot")) return Response.json({ events: [], latest_revision: 1 })
+      return Response.json({ revision: 1, active_canvas_id: 10, canvases: [canvas()], tags: [], tiles: [tile()], thoughts: [thought()] })
+    }) as typeof fetch
+
+    expect(await bootstrapCriticalWorkspace(undefined, false)).toBeNull()
+    expect(requests).toEqual([])
+    expect(useStore.getState().canvases).toEqual([])
+
+    const result = await bootstrapCriticalWorkspace(undefined, true)
+    expect(result).toEqual({ activeCanvasId: 10, hasUsableCache: false })
+    expect(requests.some((path) => path.includes("/sync/snapshot"))).toBe(true)
+    expect(useStore.getState().thoughts[0]?.content).toBe(thought().content)
+  })
+
+  test("an uncached startup stays pending until its server snapshot finishes", async () => {
+    let releaseSnapshot!: (response: Response) => void
+    globalThis.fetch = (async (path: string | Request) => {
+      if (!requestUrl(path).includes("/sync/snapshot")) return Response.json({ events: [], latest_revision: 1 })
+      return new Promise<Response>((resolve) => { releaseSnapshot = resolve })
+    }) as typeof fetch
+    let finished = false
+    const boot = bootstrapCriticalWorkspace().then((result) => { finished = true; return result })
+    while (!releaseSnapshot) await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(finished).toBe(false)
+    expect(useStore.getState().canvases).toEqual([])
+    releaseSnapshot(Response.json({ revision: 1, active_canvas_id: 10, canvases: [canvas()], tags: [], tiles: [], thoughts: [] }))
+    expect(await boot).toEqual({ activeCanvasId: 10, hasUsableCache: false })
+  })
+
+  test("an unauthorized uncached startup is not ready and can retry after sign-in", async () => {
+    setGetToken(async () => null)
+    expect(await bootstrapCriticalWorkspace()).toBeNull()
+    expect(useStore.getState().canvases).toEqual([])
+
+    setGetToken(async () => "renewed-token")
+    clearReauthRequired()
+    globalThis.fetch = (async (path: string | Request) => {
+      if (!requestUrl(path).includes("/sync/snapshot")) return Response.json({ events: [], latest_revision: 1 })
+      return Response.json({ revision: 1, active_canvas_id: 10, canvases: [canvas()], tags: [], tiles: [tile()], thoughts: [thought()] })
+    }) as typeof fetch
+
+    expect(await bootstrapCriticalWorkspace()).toEqual({ activeCanvasId: 10, hasUsableCache: false })
+    expect(useStore.getState().tiles[0]?.title).toBe(tile().title)
+    expect(useStore.getState().thoughts[0]?.content).toBe(thought().content)
   })
 
   test("sync runtime starts without waiting for network", async () => {
@@ -847,7 +919,7 @@ describe("frontend store optimistic updates", () => {
     expect(thoughtRecord?.payload).toMatchObject({ tile_id: tempTileId, content: "Write tests" })
   })
 
-  test("rapid tile create then move coalesces to the final canvas position", async () => {
+  test("rapid tile create then move preserves both actions and the final canvas position", async () => {
     useStore.setState({
       canvases: [canvas({ id: 10 }), canvas({ id: 11, name: "Later" })],
       activeCanvasId: 10,
@@ -874,8 +946,10 @@ describe("frontend store optimistic updates", () => {
     const records = await syncDb.outbox.where("clientId").equals(optimisticTile.client_id ?? "").toArray()
     const state = useStore.getState()
 
-    expect(records).toHaveLength(1)
-    expect(records[0]?.payload).toMatchObject({ canvas_id: 11, x: 300, y: 400 })
+    const orderedRecords = [...records].sort((left, right) => left.createdAt - right.createdAt)
+    expect(orderedRecords).toHaveLength(2)
+    expect(orderedRecords[0]?.payload).toMatchObject({ canvas_id: 10, x: 0, y: 0 })
+    expect(orderedRecords[1]?.payload).toMatchObject({ canvas_id: 11, x: 300, y: 400 })
     expect(state.tiles).toHaveLength(0)
     expect(state.tileCache.get(11)?.[0]).toMatchObject({ id: optimisticTile.id, canvas_id: 11 })
   })
@@ -1138,7 +1212,9 @@ describe("frontend store optimistic updates", () => {
     await useStore.getState().moveThoughtToTile(31, 20, { targetCanvasId: 10, orderedIds: [31, 30, 32] })
 
     const records = await syncDb.outbox.toArray()
-    const orderByClientId = new Map(records.map((record) => [record.clientId, record.payload.sort_order]))
+    const orderByClientId = new Map([...records]
+      .sort((left, right) => left.createdAt - right.createdAt)
+      .map((record) => [record.clientId, record.payload.sort_order]))
     const finalOrder = [...useStore.getState().thoughts]
       .sort((left, right) => left.sort_order - right.sort_order)
       .map((item) => [item.id, item.sort_order])
@@ -1147,6 +1223,7 @@ describe("frontend store optimistic updates", () => {
     expect(orderByClientId.get("thought-31")).toBe(0)
     expect(orderByClientId.get("thought-30")).toBe(1)
     expect(orderByClientId.get("thought-32")).toBe(2)
+    expect((await syncDb.syncActivity.toArray()).filter((activity) => !activity.hidden)).toHaveLength(2)
   })
 
   test("temporary tile with temporary thoughts can be deleted before flush", async () => {
@@ -1175,8 +1252,12 @@ describe("frontend store optimistic updates", () => {
 
     expect(useStore.getState().tiles).toHaveLength(0)
     expect(useStore.getState().thoughts).toHaveLength(0)
-    expect(await syncDb.outbox.toArray()).toHaveLength(0)
-    expect(await syncDb.entities.toArray()).toHaveLength(0)
+    const operations = await syncDb.outbox.toArray()
+    expect(operations).toHaveLength(4)
+    expect(operations.filter((operation) => operation.action === "upsert")).toHaveLength(2)
+    expect(operations.filter((operation) => operation.action === "delete")).toHaveLength(2)
+    expect(operations.find((operation) => operation.entityType === "thought" && operation.action === "delete")?.recordHistory).toBe(false)
+    expect((await syncDb.entities.toArray()).every((record) => record.status === "deleted")).toBe(true)
   })
 
   test("deleting a canvas with moveContents moves known children and queues server work", async () => {

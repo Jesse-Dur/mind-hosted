@@ -12,6 +12,8 @@ type SyncOperationRequest = {
   client_id?: string | null
   server_id?: number | null
   payload?: SyncPayload
+  write_history?: boolean
+  occurred_at?: string
 }
 
 const entityTypes = new Set<SyncEntityType>(["canvas", "tile", "thought", "tag"])
@@ -38,6 +40,8 @@ function parseOperation(value: unknown): SyncOperationRequest | null {
   if (serverId === undefined) return null
   if ("client_id" in value && value.client_id !== null && typeof value.client_id !== "string") return null
   if ("payload" in value && !isRecord(value.payload)) return null
+  if ("write_history" in value && typeof value.write_history !== "boolean") return null
+  if ("occurred_at" in value && (typeof value.occurred_at !== "string" || !Number.isFinite(Date.parse(value.occurred_at)))) return null
 
   return {
     op_id: opId,
@@ -46,6 +50,8 @@ function parseOperation(value: unknown): SyncOperationRequest | null {
     client_id: typeof value.client_id === "string" ? value.client_id : null,
     server_id: serverId,
     payload: isRecord(value.payload) ? value.payload : {},
+    write_history: value.write_history !== false,
+    occurred_at: typeof value.occurred_at === "string" ? value.occurred_at : undefined,
   }
 }
 
@@ -101,6 +107,7 @@ syncRoute.post("/push", async (c) => {
         operation.client_id ?? null,
         operation.server_id ?? null,
         operation.payload ?? {},
+        { writeHistory: operation.write_history !== false, occurredAt: operation.occurred_at },
       )
       results.push({ ok: true, ...result })
     } catch (error) {

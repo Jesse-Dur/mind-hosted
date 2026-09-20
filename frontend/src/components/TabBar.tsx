@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useStore } from "../store"
 import { AiStatusPill } from "./AiStatusPill"
 import { CanvasDeleteDialog } from "./CanvasDeleteDialog"
@@ -7,7 +7,9 @@ import { Tooltip } from "./Tooltip"
 import { getTabShortcutAction, newCanvasShortcutLabel, tabShortcutLabel } from "../utils/tabShortcuts"
 import { getCrossCanvasDrag, moveCrossCanvasDrag, setCrossCanvasDragEnteredCanvas, subscribeCrossCanvasDrag, subscribeCrossCanvasDragPointer } from "../utils/crossCanvasDrag"
 import { createCrossCanvasTabHoverController, type CrossCanvasTabHoverController } from "../utils/crossCanvasTabHover"
+import { pointInsideRect } from "../utils/pointerRect"
 import { canvasIdentityKey } from "../utils/canvasIdentity"
+import { resolveTargetTap, type TargetTap } from "../utils/targetDoubleTap"
 import type { Canvas } from "../types"
 import type { CanvasDeleteOptions } from "../store/types"
 
@@ -44,9 +46,9 @@ type DragPreview = {
 
 type CanvasOrderUpdate = Pick<Canvas, "id" | "sort_order" | "is_favourite">
 
-export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
+export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }: { slidingOut?: boolean; onOpenMenu?: () => void; leftAccessory?: ReactNode; topOffset?: number | string }) {
   const { canvases, activeCanvasId, setActiveCanvas, addCanvas, updateCanvas, removeCanvas, reorderCanvases, setSidebarOpen, sidebarOpen, aiStatus } = useStore()
-  const aiExpanded = aiStatus !== "idle"
+  const aiExpanded = leftAccessory === undefined && aiStatus !== "idle"
   const [renamingKey, setRenamingKey] = useState<string | null>(null)
   const [selectRenameText, setSelectRenameText] = useState(false)
   const [renameValue, setRenameValue] = useState("")
@@ -75,6 +77,7 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
   const renameRef = useRef<HTMLInputElement>(null)
   const dragRef = useRef<DragState | null>(null)
   const dragCleanupRef = useRef<(() => void) | null>(null)
+  const lastTabTapRef = useRef<TargetTap | null>(null)
   const displayCanvasesRef = useRef<Canvas[]>([])
   const tabRefs = useRef(new Map<number, HTMLDivElement>())
   const crossDragHoverControllerRef = useRef<CrossCanvasTabHoverController | null>(null)
@@ -200,8 +203,7 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
     for (const canvas of displayCanvasesRef.current) {
       const rect = tabRefs.current.get(canvas.id)?.getBoundingClientRect()
       if (!rect) continue
-      const inside = clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom
-      if (inside) return canvas.id
+      if (pointInsideRect(clientX, clientY, rect)) return canvas.id
     }
     return null
   }
@@ -450,10 +452,17 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
     setPreviewCanvases(null)
 
     if (!wasDragging) {
+      const tap = resolveTargetTap(lastTabTapRef.current, canvasIdentityKey(canvas), performance.now())
+      lastTabTapRef.current = tap.next
+      if (tap.isDoubleTap) {
+        startRename(canvas)
+        return
+      }
       switchCanvas(canvas.id)
       return
     }
 
+    lastTabTapRef.current = null
     if (!preview && !target) return
     const ordered = preview ?? (target ? buildReorderedCanvases(drag.id, target) : null)
     if (ordered) reorderCanvases(getOrderUpdates(ordered))
@@ -464,6 +473,7 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
     if (drag && pointerId !== undefined && drag.pointerId !== pointerId) return
     dragCleanupRef.current?.()
     dragRef.current = null
+    lastTabTapRef.current = null
     setDraggingId(null)
     setDragOffset({ x: 0, y: 0 })
     setDragPreview(null)
@@ -491,7 +501,7 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
       `}</style>
       <div
         ref={containerRef}
-        style={{ position: "fixed", top: 0, left: 0, right: 0, height: BAR_H, zIndex: 40, background: "#ede9fe", animation: `${slidingOut ? "tabBarSlideUp" : "tabBarSlideDown"} 0.18s cubic-bezier(0.4,0,0.2,1) forwards`, overflow: "visible" }}
+        style={{ position: "fixed", top: topOffset, left: 0, right: 0, height: BAR_H, zIndex: 40, background: "#ede9fe", animation: `${slidingOut ? "tabBarSlideUp" : "tabBarSlideDown"} 0.18s cubic-bezier(0.4,0,0.2,1) forwards`, overflow: "visible" }}
       >
         {/* SVG outline — single continuous path, auto-measures all [data-tabbar-jut] elements */}
         <TabBarOutline containerRef={containerRef} barH={BAR_H} jutH={JUT_H} shallowH={JUT_H_INACTIVE} />
@@ -502,20 +512,20 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
             data-tabbar-jut
             style={{ background: "#ede9fe", border: "none", borderRadius: "0 0 8px 0", display: "flex", alignItems: "center", height: aiExpanded ? JUT_H + 10 : JUT_H, padding: "0 10px", gap: 8, transition: "height 0.25s cubic-bezier(0.4,0,0.2,1)" }}
           >
-            <Tooltip label="Sidebar" placement="bottom" align="start">
+            <Tooltip label={onOpenMenu ? "Menu" : "Sidebar"} placement="bottom" align="start" disabled={Boolean(onOpenMenu)}>
               <button
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-                style={{ background: "none", border: "none", cursor: "pointer", width: 24, height: 24, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: "#1a1a1a", transition: "background 0.15s ease", flexShrink: 0, padding: 0 }}
+                onClick={() => onOpenMenu ? onOpenMenu() : setSidebarOpen(!sidebarOpen)}
+                style={{ background: "none", border: "none", cursor: "pointer", width: 24, height: 24, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: "#1a1a1a", transition: "background 0.15s ease", flexShrink: 0, padding: 0, userSelect: "none", WebkitUserSelect: "none" }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = "#ddd6fe")}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
-                aria-label="Sidebar"
+                aria-label={onOpenMenu ? "Open menu" : "Sidebar"}
               >
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ pointerEvents: "none" }}>
                   <path d="M2 4h12M2 8h8M2 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
                 </svg>
               </button>
             </Tooltip>
-            <AiStatusPill />
+            {leftAccessory === undefined ? <AiStatusPill /> : leftAccessory}
           </div>
         </div>
 
@@ -543,7 +553,6 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
                     e.preventDefault()
                     moveCrossCanvasDrag(e.clientX, e.clientY)
                   }}
-                  onDoubleClick={() => startRename(canvas)}
                   onContextMenu={(e) => {
                     e.preventDefault()
                     const menuWidth = 160
@@ -650,7 +659,7 @@ export function TabBar({ slidingOut }: { slidingOut?: boolean }) {
               data-tabbar-jut
               onClick={handleNewTab}
               aria-label="New canvas"
-              style={{ flexShrink: 0, width: 32, height: JUT_H, borderRadius: "0 0 0 8px", border: "none", background: "#ede9fe", cursor: "pointer", color: "#1a1a1a", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "auto" }}
+              style={{ flexShrink: 0, width: 32, height: JUT_H, borderRadius: "0 0 0 8px", border: "none", background: "#ede9fe", cursor: "pointer", color: "#1a1a1a", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "auto", userSelect: "none", WebkitUserSelect: "none" }}
               onMouseEnter={(e) => { const s = e.currentTarget.querySelector("span") as HTMLElement; if (s) { s.style.background = "#ddd6fe" } }}
               onMouseLeave={(e) => { const s = e.currentTarget.querySelector("span") as HTMLElement; if (s) s.style.background = "transparent" }}>
               <span style={{ width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.15s ease", borderRadius: "50%" }}>

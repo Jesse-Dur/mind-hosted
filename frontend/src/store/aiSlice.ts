@@ -2,18 +2,28 @@ import type { AiSlice, StoreSlice } from "./types"
 import { getApi } from "./apiAuth"
 import { isApiRateLimitError } from "../api/errors"
 import type { BillingLimitFeature } from "../types"
+import {
+  assertSyncAccountScopeCurrent,
+  currentSyncAccountScope,
+  isStaleSyncAccountError,
+  runSyncAccountTask,
+} from "../sync/accountScope"
 
 export const createAiSlice: StoreSlice<AiSlice> = (set, get) => ({
   aiStatus: "idle",
 
   loadAiStatus: async () => {
     try {
-      const { status } = await getApi().ai.status()
-      set({ aiStatus: status as AiSlice["aiStatus"] })
+      await runSyncAccountTask(async (scope) => {
+        const { status } = await getApi(scope).ai.status()
+        assertSyncAccountScopeCurrent(scope)
+        set({ aiStatus: status as AiSlice["aiStatus"] })
+      })
     } catch { /* ignore transient status failures */ }
   },
 
   startAiPolling: () => {
+    const scope = currentSyncAccountScope()
     let poll: ReturnType<typeof setInterval> | null = null
     let lastRevision: number | null = null
     let syncing = false
@@ -35,7 +45,12 @@ export const createAiSlice: StoreSlice<AiSlice> = (set, get) => ({
 
     poll = setInterval(async () => {
       try {
-        const { status, latest_revision } = await getApi().ai.status()
+        const { status, latest_revision } = await runSyncAccountTask(async (taskScope) => {
+          assertSyncAccountScopeCurrent(scope)
+          if (taskScope?.generation !== scope?.generation) throw new Error("AI polling account changed")
+          return getApi(scope).ai.status()
+        })
+        assertSyncAccountScopeCurrent(scope)
         set({ aiStatus: status as AiSlice["aiStatus"] })
         await syncIfRevisionChanged(latest_revision)
         if (status === "idle") {
@@ -57,7 +72,8 @@ export const createAiSlice: StoreSlice<AiSlice> = (set, get) => ({
     if (!trimmed) return
     set({ aiStatus: "processing" })
     get().startAiPolling()
-    getApi().ai.process(trimmed, priority).catch((error: unknown) => {
+    runSyncAccountTask((scope) => getApi(scope).ai.process(trimmed, priority)).catch((error: unknown) => {
+      if (isStaleSyncAccountError(error)) return
       set({ aiStatus: "idle" })
       if (isApiRateLimitError(error)) {
         get().showBillingCreationLimitNotice(error.featureId as BillingLimitFeature, { resetAt: error.resetAt })

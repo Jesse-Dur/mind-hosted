@@ -1,12 +1,16 @@
 import { useState, useRef } from "react"
 import { useStore } from "../store"
 
-export function TagDot({ tag }: { tag: string }) {
+export function TagDot({ tag, expandOnHover = true }: { tag: string; expandOnHover?: boolean }) {
   const { tags } = useStore()
   const [hovered, setHovered] = useState(false)
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const match = tags.find((t) => t.name === tag)
   const color = match?.color ?? "#888"
+
+  if (!expandOnHover) {
+    return <span aria-label={tag} style={{ width: 12, height: 20, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><span aria-hidden style={{ width: 8, height: 8, borderRadius: "50%", background: color }} /></span>
+  }
 
   function onEnter() {
     if (leaveTimer.current) clearTimeout(leaveTimer.current)

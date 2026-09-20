@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react"
+import { useRef, useState, useEffect, useLayoutEffect } from "react"
 import { useStore } from "../store"
 import { Tile } from "./Tile"
 import { getCrossCanvasDrag, subscribeCrossCanvasDrag, subscribeCrossCanvasDragPointer, type CrossCanvasDragSession } from "../utils/crossCanvasDrag"
@@ -76,14 +76,13 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
     return () => clearTimeout(t)
   }, [activeCanvasKey])
 
-  // Only sync displayed tiles when not mid-transition
-  useEffect(() => {
-    if (!transitioning.current) setDisplayedTiles(tiles)
-  }, [tiles])
-
-  useEffect(() => {
-    if (!transitioning.current) setDisplayedThoughts(thoughts)
-  }, [thoughts])
+  // Settle optimistic moves before paint when the drag preview is cleared.
+  // Keep the old canvas intact until its fade-out has finished.
+  useLayoutEffect(() => {
+    if (transitioning.current || prevCanvasKey.current !== activeCanvasKey) return
+    setDisplayedTiles(tiles)
+    setDisplayedThoughts(thoughts)
+  }, [tiles, thoughts, activeCanvasKey])
 
   useEffect(() => {
     function updateScale() {

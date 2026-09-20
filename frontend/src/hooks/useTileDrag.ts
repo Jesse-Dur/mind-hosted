@@ -1,4 +1,4 @@
-import { useRef } from "react"
+import { useLayoutEffect, useRef, useState } from "react"
 import { useStore } from "../store"
 import { beginCrossCanvasDrag, endCrossCanvasDrag, getCrossCanvasDrag, moveCrossCanvasDrag } from "../utils/crossCanvasDrag"
 import type { Thought, Tile } from "../types"
@@ -7,6 +7,18 @@ const GRID = 24
 function snap(n: number) { return Math.round(n / GRID) * GRID }
 
 export function useTileDrag(tile: Tile, tileThoughts: Thought[], scale: number) {
+  const [isInteracting, setIsInteracting] = useState(false)
+  const [finalFrame, setFinalFrame] = useState<Partial<Pick<Tile, "x" | "y" | "width" | "height">> | null>(null)
+
+  useLayoutEffect(() => {
+    if (!finalFrame || !Object.entries(finalFrame).every(([key, value]) => tile[key as keyof typeof finalFrame] === value)) return
+    // Canvas can deliver the final tile props one render after the pointer release.
+    // Flush that geometry before re-enabling transitions, including opacity.
+    document.querySelector<HTMLElement>(`[data-tile-id="${tile.id}"]`)?.getBoundingClientRect()
+    setFinalFrame(null)
+    setIsInteracting(false)
+  }, [tile, finalFrame])
+
   const updateTile = useStore((s) => s.updateTile)
   const moveTileLocal = useStore((s) => s.moveTileLocal)
   const moveTileToCanvas = useStore((s) => s.moveTileToCanvas)
@@ -63,6 +75,7 @@ export function useTileDrag(tile: Tile, tileThoughts: Thought[], scale: number) 
       e.preventDefault()
       if (!crossDragStarted) {
         crossDragStarted = true
+        setIsInteracting(true)
         beginCrossCanvasDrag({
           kind: "tile",
           tile,
@@ -86,10 +99,16 @@ export function useTileDrag(tile: Tile, tileThoughts: Thought[], scale: number) 
         const enteredCanvasId = session?.kind === "tile" && session.tile.id === tile.id ? session.enteredCanvasId : null
         if (enteredCanvasId !== null && enteredCanvasId !== sourceCanvasId) {
           const dropPoint = getCanvasDropPoint(e.clientX, e.clientY, grabOffsetX, grabOffsetY, tileWidth, tileHeight)
-          if (dropPoint) void moveTileToCanvas(tile.id, enteredCanvasId, dropPoint.x, dropPoint.y)
+          if (dropPoint) {
+            setFinalFrame(dropPoint)
+            void moveTileToCanvas(tile.id, enteredCanvasId, dropPoint.x, dropPoint.y)
+          }
         } else {
           const dropPoint = getCanvasDropPoint(e.clientX, e.clientY, grabOffsetX, grabOffsetY, tileWidth, tileHeight)
-          if (dropPoint) updateTile(tile.id, dropPoint)
+          if (dropPoint) {
+            setFinalFrame(dropPoint)
+            updateTile(tile.id, dropPoint)
+          }
         }
       }
       drag.current = null
@@ -105,6 +124,7 @@ export function useTileDrag(tile: Tile, tileThoughts: Thought[], scale: number) 
   function onResizeDown(e: React.MouseEvent) {
     e.preventDefault()
     e.stopPropagation()
+    setIsInteracting(true)
     resize.current = { mx: e.clientX, my: e.clientY, tw: tile.width, th: tile.height }
 
     function onMove(e: MouseEvent) {
@@ -119,6 +139,7 @@ export function useTileDrag(tile: Tile, tileThoughts: Thought[], scale: number) 
       if (resize.current) {
         const width = Math.min(snap(CANVAS_W - tile.x), Math.max(GRID * 4, snap(resize.current.tw + (e.clientX - resize.current.mx) / scale)))
         const height = Math.min(snap(CANVAS_H - tile.y), Math.max(GRID * 4, snap(resize.current.th + (e.clientY - resize.current.my) / scale)))
+        setFinalFrame({ width, height })
         updateTile(tile.id, { width, height })
       }
       resize.current = null
@@ -130,5 +151,5 @@ export function useTileDrag(tile: Tile, tileThoughts: Thought[], scale: number) 
     window.addEventListener("mouseup", onUp)
   }
 
-  return { onDragDown, onResizeDown }
+  return { onDragDown, onResizeDown, isInteracting }
 }

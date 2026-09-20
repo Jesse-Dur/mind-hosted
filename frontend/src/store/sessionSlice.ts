@@ -1,11 +1,11 @@
 import { initialBillingState } from "./billingSlice"
-import { writeStoredActiveCanvasId } from "./storage"
 import type { SessionSlice, StoreSlice } from "./types"
+import { advanceLoadGeneration } from "./loadGeneration"
 
 export const createSessionSlice: StoreSlice<SessionSlice> = (set, get) => ({
   resetStore: () => {
+    advanceLoadGeneration()
     get().resetBillingState()
-    writeStoredActiveCanvasId(null)
     set({
       canvases: [],
       activeCanvasId: null,
@@ -24,10 +24,13 @@ export const createSessionSlice: StoreSlice<SessionSlice> = (set, get) => ({
       newHistoryIds: new Set(),
       aiStatus: "idle",
       syncPendingCount: 0,
+      syncEntityStatuses: new Map(),
+      syncActivity: [],
       highlightedId: null,
       recentLocalTileChangeIds: new Map(),
       remoteChangedTileIds: new Set(),
       remoteChangedThoughtIds: new Set(),
+      remoteThoughtRevision: 0,
       sidebarOpen: false,
       spotlightOpen: false,
       ...initialBillingState(),

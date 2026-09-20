@@ -139,7 +139,7 @@ export const createTileSlice: StoreSlice<TileSlice> = (set, get) => ({
     get().adjustBillingFeatureUsage("thoughts", -tileThoughts.length)
     get().discardThoughtsForTile(id)
     await Promise.all([
-      ...tileThoughts.map((thought) => enqueueDelete("thought", thought)),
+      ...tileThoughts.map((thought) => enqueueDelete("thought", thought, {}, { recordHistory: false })),
       enqueueDelete("tile", tile),
     ])
   },

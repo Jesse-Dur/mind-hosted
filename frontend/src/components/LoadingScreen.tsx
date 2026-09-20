@@ -12,11 +12,15 @@ export function LoadingScreen({ loaded }: { loaded: boolean }) {
     if (!splash) return
     const elapsed = Date.now() - mountTime.current
     const delay = Math.max(0, MIN_MS - elapsed)
+    let removalTimer: number | null = null
     const t = setTimeout(() => {
       splash.classList.add("hide")
-      setTimeout(() => splash.remove(), 150)
+      removalTimer = window.setTimeout(() => splash.remove(), 420)
     }, delay)
-    return () => clearTimeout(t)
+    return () => {
+      clearTimeout(t)
+      if (removalTimer !== null) window.clearTimeout(removalTimer)
+    }
   }, [loaded])
 
   return null

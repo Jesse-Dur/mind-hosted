@@ -1,8 +1,9 @@
-import type { BillingPlans, BillingUsage, HistoryEvent } from "../types"
+import type { BillingPlans, BillingUsage, HistoryEvent, Thought, Tile } from "../types"
 
 export const HISTORY_CACHE_KEY = "history"
 export const BILLING_USAGE_CACHE_KEY = "billing-usage"
 export const BILLING_PLANS_CACHE_KEY = "billing-plans"
+export const PAST_ENTITIES_CACHE_KEY = "past-entities"
 
 export type HistoryCacheRecord = {
   key: typeof HISTORY_CACHE_KEY
@@ -24,4 +25,16 @@ export type BillingPlansCacheRecord = {
   updatedAt: number
 }
 
-export type QueryCacheRecord = HistoryCacheRecord | BillingUsageCacheRecord | BillingPlansCacheRecord
+export type PastEntitiesCacheRecord = {
+  key: typeof PAST_ENTITIES_CACHE_KEY
+  serverPastTiles: Tile[]
+  serverPastThoughts: Thought[]
+  optimisticPastTiles: Tile[]
+  optimisticPastThoughts: Thought[]
+  // Read-only compatibility with the first Past cache shape.
+  pastTiles?: Tile[]
+  pastThoughts?: Thought[]
+  updatedAt: number
+}
+
+export type QueryCacheRecord = HistoryCacheRecord | BillingUsageCacheRecord | BillingPlansCacheRecord | PastEntitiesCacheRecord
