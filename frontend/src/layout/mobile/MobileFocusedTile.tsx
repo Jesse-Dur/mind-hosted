@@ -9,12 +9,14 @@ import { DeleteDialog } from "../../components/DeleteDialog"
 import { useThoughtEdit } from "../../hooks/useThoughtEdit"
 import { beginCrossCanvasDrag, endCrossCanvasDrag, getCrossCanvasDrag, moveCrossCanvasDrag, setThoughtDragTarget, subscribeCrossCanvasDrag, type CrossCanvasDragSession } from "../../utils/crossCanvasDrag"
 import { mobileThoughtInsertionIndex, mobileThoughtOrderIds, sameThoughtOrder } from "../../utils/mobileThoughtOrder"
+import { optimisticIdentityKey } from "../../utils/optimisticIdentity"
+import { MobileThoughtList } from "./MobileThoughtList"
 import type { Thought, Tile } from "../../types"
 
 type FocusTarget = (tileId: number, canvasId?: number | null) => void
 
 export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Tile | null; thoughts: Thought[]; onFocusTarget: FocusTarget }) {
-  const { updateTile, removeTile, canvasFontSize } = useStore()
+  const { updateTile, removeTile, canvasFontSize, remoteThoughtRevision } = useStore()
   const [title, setTitle] = useState(tile?.title ?? "")
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [dragSession, setDragSession] = useState<CrossCanvasDragSession | null>(() => getCrossCanvasDrag())
@@ -43,10 +45,15 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
         <SyncStatusDot entities={[{ entityType: "tile", id: tile.id, clientId: tile.client_id }, ...tileThoughts.map((thought) => ({ entityType: "thought" as const, id: thought.id, clientId: thought.client_id }))]} />
         <button onClick={() => setConfirmDelete(true)} aria-label="Delete tile" style={smallButton}>×</button>
       </div>
-      <div data-mobile-thought-list style={{ flex: 1, overflowY: "auto", overscrollBehavior: "contain", padding: "8px 9px max(12px,env(safe-area-inset-bottom))", display: "flex", flexDirection: "column", gap: 5 }}>
-        {displayedThoughts.map((thought) => <MobileThought key={thought.stableKey ?? thought.id} thought={thought} onFocusTarget={onFocusTarget} />)}
-        <ThoughtInput tileId={tile.id} fontSize={canvasFontSize + 1} />
-      </div>
+      <MobileThoughtList
+        thoughts={displayedThoughts}
+        scopeKey={optimisticIdentityKey(tile, "tile")}
+        remoteRevision={remoteThoughtRevision}
+        disabled={dragSession !== null}
+        style={{ flex: 1, overflowY: "auto", overscrollBehavior: "contain", padding: "8px 9px max(12px,env(safe-area-inset-bottom))", display: "flex", flexDirection: "column", gap: 5 }}
+        renderThought={(thought) => <MobileThought thought={thought} onFocusTarget={onFocusTarget} />}
+        footer={<ThoughtInput tileId={tile.id} fontSize={canvasFontSize + 1} />}
+      />
       {confirmDelete && <DeleteDialog
         title={`Delete “${tile.title}”?`}
         message={`The tile and all ${tileThoughts.length} thought${tileThoughts.length === 1 ? "" : "s"} inside it will be deleted locally now and from your other devices after sync. A failed server deletion remains recoverable from History.`}

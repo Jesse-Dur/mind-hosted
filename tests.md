@@ -40,6 +40,8 @@ changes; it is not the pass/fail gate for application behavior.
 - Pull preserves pending local changes over stale remote upserts.
 - Pull applies remote tile creates to cache, store, metadata, and animation state.
 - Pulling this device's already-applied payload does not animate.
+- Remote thought moves, additions, and deletions publish their animation revision with the final visible list; repeated pulls do not replay the update.
+- Snapshot thought removals publish their animation revision with the refreshed list.
 - Remote deletes do not remove locally dirty entities.
 - Remote canvas deletes with `moveContents` move cached child tiles.
 - Optimistic canvas creation updates state and queues sync.

@@ -34,6 +34,7 @@ export interface UiSlice {
   recentLocalTileChangeIds: Map<number, number>
   remoteChangedTileIds: Set<number>
   remoteChangedThoughtIds: Set<number>
+  remoteThoughtRevision: number
   markLocalTileChange: (tileId: number) => void
   markRemoteChanges: (tileIds: number[], thoughtIds: number[]) => void
   setHighlight: (type: "tile" | "thought", id: number) => void

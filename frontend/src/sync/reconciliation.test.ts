@@ -59,7 +59,7 @@ test.each(["untag", "delete tag"] as const)("adding tags then %s does not flash 
   expect(useStore.getState().remoteChangedThoughtIds.size).toBe(0)
   expect(useStore.getState().remoteChangedTileIds.size).toBe(0)
 
-  // A subsequent edit from another device still deserves the purple indicator.
+  // A subsequent edit from another device is still tracked as a remote change.
   events.push({
     revision: events.length + 1, canvas_id: 10, entity_type: "thought", entity_id: initial.id,
     client_id: initial.client_id!, op_id: "another-device-tag-edit", action: "upsert",
@@ -202,4 +202,44 @@ test("temporary identities are adopted even when a newer pull precedes the creat
   expect(useStore.getState().tiles.map((tile) => tile.id)).toEqual([20])
   expect(useStore.getState().thoughts[0]?.tile_id).toBe(20)
   expect((await syncDb.entities.get(entityKey("thought", "thought-client")))?.data).toMatchObject({ tile_id: 20 })
+})
+
+test("a creation acknowledgement cannot move a dropped thought back to its source tile", async () => {
+  const source = tile()
+  const target = tile({ id: 21, client_id: "target-tile" })
+  const moving = thought({ id: -30, tile_id: source.id, stableKey: "moving-thought" })
+  await cacheServerEntity("tile", source, false)
+  await cacheServerEntity("tile", target, false)
+  await enqueueUpsert("thought", moving)
+  useStore.setState({
+    activeCanvasId: 10, tiles: [source, target], thoughts: [moving],
+    thoughtCache: new Map([[10, [moving]]]),
+  })
+  let release!: (response: Response) => void
+  globalThis.fetch = () => new Promise<Response>((resolve) => { release = resolve })
+  const push = flushSyncQueue()
+  while (!release) await new Promise((resolve) => setTimeout(resolve, 0))
+  const positions: number[] = []
+  const unsubscribe = useStore.subscribe((state) => {
+    const current = state.thoughts.find((item) => item.client_id === moving.client_id)
+    if (current) positions.push(current.tile_id)
+  })
+  try {
+    const drop = useStore.getState().moveThoughtToTile(moving.id, target.id, { orderedIds: [moving.id] })
+    expect(useStore.getState().thoughts[0]?.tile_id).toBe(target.id)
+    release(json({ results: [{ ok: true, server_id: 30, revision: 1, entity: thought({ tile_id: source.id }) }] }))
+    await Promise.all([drop, push])
+    expect(positions.length).toBeGreaterThan(0)
+    expect(positions.every((id) => id === target.id)).toBe(true)
+    expect(useStore.getState().thoughts[0]).toMatchObject({ id: 30, tile_id: target.id, stableKey: "moving-thought" })
+    expect(useStore.getState().thoughtCache.get(10)?.[0]?.tile_id).toBe(target.id)
+
+    globalThis.fetch = async (_path, init) => {
+      const op = JSON.parse(init!.body as string).operations[0] as SyncPushOperation
+      return json({ results: [{ ok: true, server_id: 30, revision: 2, entity: thought({ ...op.payload, id: 30 }) }] })
+    }
+    await flushSyncQueue()
+    expect(positions.every((id) => id === target.id)).toBe(true)
+    expect((await syncDb.entities.get(entityKey("thought", moving.client_id!)))?.data).toMatchObject({ id: 30, tile_id: target.id })
+  } finally { unsubscribe() }
 })

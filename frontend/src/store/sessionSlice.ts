@@ -30,6 +30,7 @@ export const createSessionSlice: StoreSlice<SessionSlice> = (set, get) => ({
       recentLocalTileChangeIds: new Map(),
       remoteChangedTileIds: new Set(),
       remoteChangedThoughtIds: new Set(),
+      remoteThoughtRevision: 0,
       sidebarOpen: false,
       spotlightOpen: false,
       ...initialBillingState(),

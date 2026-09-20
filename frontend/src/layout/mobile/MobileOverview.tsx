@@ -1,3 +1,4 @@
+import "../../styles/tileGeometry.css"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import { useStore } from "../../store"
 import { beginCrossCanvasDrag, endCrossCanvasDrag, getCrossCanvasDrag, moveCrossCanvasDrag, subscribeCrossCanvasDrag } from "../../utils/crossCanvasDrag"
@@ -5,7 +6,8 @@ import { suppressNativeSelection } from "../../utils/mobileGestureSelection"
 import { shouldDismissMobileToast } from "../../utils/mobileSwipeDismiss"
 import { getMobileTileDropPoint, getMobileTileResize } from "../../utils/mobileTileGesture"
 import { optimisticIdentityKey } from "../../utils/optimisticIdentity"
-import type { Tile } from "../../types"
+import { MobileThoughtList, ThoughtPreviewBar } from "./MobileThoughtList"
+import type { Thought, Tile } from "../../types"
 
 const GRID = 24
 const HOLD_TO_DRAG_MS = 300
@@ -43,7 +45,7 @@ function overviewDragFeedback(session = getCrossCanvasDrag()): OverviewDragFeedb
 }
 
 export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: number | null; onFocusTile: (tileId: number, canvasId?: number | null) => void }) {
-  const { tiles, thoughts, canvasHeight, activeCanvasId, addTile, updateTile, moveTileToCanvas, setActiveCanvas } = useStore()
+  const { tiles, thoughts, canvasHeight, activeCanvasId, addTile, updateTile, moveTileToCanvas, setActiveCanvas, remoteThoughtRevision } = useStore()
   const canvasWidth = Math.round(canvasHeight * 16 / 9)
   const hostRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
@@ -59,10 +61,14 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
   const [draft, setDraft] = useState<(TileFrame & { tile: Tile }) | null>(null)
   const [droppedTile, setDroppedTile] = useState<{ id: number; x: number; y: number } | null>(null)
   const [undo, setUndo] = useState<Undo | null>(null)
-  const thoughtCountByTile = useMemo(() => {
-    const counts = new Map<number, number>()
-    for (const thought of thoughts) counts.set(thought.tile_id, (counts.get(thought.tile_id) ?? 0) + 1)
-    return counts
+  const thoughtsByTile = useMemo(() => {
+    const groups = new Map<number, Thought[]>()
+    for (const thought of [...thoughts].sort((a, b) => a.sort_order - b.sort_order)) {
+      const group = groups.get(thought.tile_id) ?? []
+      if (group.length < 6) group.push(thought)
+      groups.set(thought.tile_id, group)
+    }
+    return groups
   }, [thoughts])
 
   useEffect(() => {
@@ -239,6 +245,7 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
     const changed = finalDraft.x !== gesture.tile.x || finalDraft.y !== gesture.tile.y || finalDraft.width !== gesture.tile.width || finalDraft.height !== gesture.tile.height
     if (!changed) return
     setUndo({ tileId: gesture.tile.id, beforeCanvasId: gesture.sourceCanvasId, before: { x: gesture.tile.x, y: gesture.tile.y, width: gesture.tile.width, height: gesture.tile.height } })
+    setDroppedTile({ id: gesture.tile.id, x: finalDraft.x, y: finalDraft.y })
     void updateTile(gesture.tile.id, { x: finalDraft.x, y: finalDraft.y, width: finalDraft.width, height: finalDraft.height })
   }
 
@@ -370,16 +377,21 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
         {tiles.filter((tile) => tile.visible).map((tile) => {
           const resizing = interaction?.kind === "resize" && interaction.tileId === tile.id && draft?.tile.id === tile.id
           const frame = resizing && draft ? draft : tile
-          const count = Math.min(6, thoughtCountByTile.get(tile.id) ?? 0)
           const isDropTarget = dragFeedback.targetTileId === tile.id
           const isFocused = focusedTileId === tile.id
           const isDragging = dragFeedback.tileDraggingId === tile.id
           const isDropped = droppedTile?.id === tile.id && droppedTile.x === frame.x && droppedTile.y === frame.y
-          return <div key={optimisticIdentityKey(tile, "tile")} data-mobile-tile-id={tile.id} onPointerDown={(event) => beginTileGesture(event, tile)} onContextMenu={(event) => event.preventDefault()} style={{ position: "absolute", left: frame.x, top: frame.y, width: frame.width, height: frame.height, boxSizing: "border-box", background: isDropTarget || isFocused ? "#f5f3ff" : "rgba(255,255,255,.94)", border: `2px solid ${isDropTarget || isFocused ? "#7c3aed" : "#d4d4d4"}`, borderRadius: 9, overflow: "hidden", boxShadow: isDropTarget ? "0 0 0 8px rgba(124,58,237,.2)" : isFocused ? "0 0 0 5px rgba(124,58,237,.12)" : "0 3px 12px rgba(0,0,0,.05)", pointerEvents: "auto", touchAction: "none", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", opacity: isDragging ? 0 : 1, transition: resizing ? "none" : `${isDropped ? "" : "left 160ms ease, top 160ms ease, opacity 140ms ease, "}width 160ms ease, height 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease` }}>
+          return <div className="tile-geometry" key={optimisticIdentityKey(tile, "tile")} data-mobile-tile-id={tile.id} onPointerDown={(event) => beginTileGesture(event, tile)} onContextMenu={(event) => event.preventDefault()} style={{ position: "absolute", left: frame.x, top: frame.y, width: frame.width, height: frame.height, boxSizing: "border-box", background: isDropTarget || isFocused ? "#f5f3ff" : "rgba(255,255,255,.94)", border: `2px solid ${isDropTarget || isFocused ? "#7c3aed" : "#d4d4d4"}`, borderRadius: 9, overflow: "hidden", boxShadow: isDropTarget ? "0 0 0 8px rgba(124,58,237,.2)" : isFocused ? "0 0 0 5px rgba(124,58,237,.12)" : "0 3px 12px rgba(0,0,0,.05)", pointerEvents: "auto", touchAction: "none", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", opacity: isDragging ? 0 : 1, transition: resizing ? "none" : `${isDropped ? "" : "var(--tile-geometry-transition), opacity 140ms ease, "}background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease` }}>
             <div style={{ height: Math.max(44, Math.min(68, frame.height * .24)), borderBottom: "1px solid #ddd", padding: "9px 12px", fontWeight: 700, fontSize: 44, lineHeight: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "#222", userSelect: "none", WebkitUserSelect: "none" }}>{tile.title}</div>
-            <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-              {Array.from({ length: count }).map((_, index) => <div key={index} style={{ height: 15, width: `${78 - index % 3 * 9}%`, borderRadius: 5, background: "linear-gradient(90deg,#e8e8e8,#f2f2f2,#e8e8e8)" }} />)}
-            </div>
+            <MobileThoughtList
+              preview
+              thoughts={thoughtsByTile.get(tile.id) ?? []}
+              scopeKey={optimisticIdentityKey(tile, "tile")}
+              remoteRevision={remoteThoughtRevision}
+              disabled={draggingCanvas || interaction !== null}
+              style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}
+              renderThought={(thought) => <ThoughtPreviewBar thought={thought} />}
+            />
           </div>
         })}
         {interaction?.kind === "drag" && draft && <div data-mobile-tile-drag-preview style={{ position: "absolute", left: draft.x, top: draft.y, width: draft.width, height: draft.height, zIndex: 20, boxSizing: "border-box", border: "3px solid #7c3aed", borderRadius: 9, overflow: "hidden", background: "rgba(255,255,255,.96)", boxShadow: "0 0 0 7px rgba(124,58,237,.12), 0 8px 24px rgba(88,28,135,.18)", pointerEvents: "none" }}>

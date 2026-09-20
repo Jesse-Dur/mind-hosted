@@ -416,3 +416,160 @@ describe("frontend sync pull", () => {
     expect(useStore.getState().tileCache.get(11)?.[0]).toMatchObject({ id: 20, canvas_id: 11 })
   })
 })
+
+describe("coordinated sync publication", () => {
+  const remoteMove = (revision: number, overrides: Record<string, unknown> = {}): SyncPullResponse => ({
+    latest_revision: revision,
+    events: [{
+      revision, canvas_id: 10, entity_type: "tile", entity_id: 20,
+      client_id: "tile-client", op_id: `remote-${revision}`, action: "upsert",
+      data: tileEventData(overrides), created_at: "2026-01-01T00:00:00.000Z",
+    }],
+  })
+
+  async function seedTiles() {
+    const first = tile({ stableKey: "keep-this-key" })
+    const second = tile({ id: 21, client_id: "second-tile" })
+    useStore.setState({ activeCanvasId: 10, tiles: [first, second], tileCache: new Map([[10, [first, second]]]) })
+    await syncDb.entities.bulkPut([first, second].map((data) => entityRecord({
+      entityType: "tile", clientId: data.client_id!, serverId: data.id, tempId: null,
+      canvasId: 10, status: "clean", data,
+    })))
+  }
+
+  function observeTileFrames() {
+    const frames: number[][] = []
+    const unsubscribe = useStore.subscribe((state, before) => {
+      if (state.tiles !== before.tiles) frames.push(state.tiles.map((item) => item.x))
+    })
+    return { frames, unsubscribe }
+  }
+
+  test("a pull publishes only final geometry while preserving tile order and identity", async () => {
+    await seedTiles()
+    pullResponse = remoteMove(1, { x: 96 })
+    pullResponse.events.push(...remoteMove(2, { x: 240 }).events)
+    const second = remoteMove(3, { id: 21, client_id: "second-tile", x: 480 }).events[0]!
+    pullResponse.events.push({ ...second, entity_id: 21, client_id: "second-tile" })
+    pullResponse.latest_revision = 3
+    const { frames, unsubscribe } = observeTileFrames()
+    try {
+      await pullSync(10)
+      expect(frames).toEqual([[240, 480]])
+      expect(useStore.getState().tiles.map((item) => item.id)).toEqual([20, 21])
+      expect(useStore.getState().tiles[0]?.stableKey).toBe("keep-this-key")
+      expect(useStore.getState().tileCache.get(10)?.map((item) => item.id)).toEqual([20, 21])
+    } finally { unsubscribe() }
+  })
+
+  test("a rolled-back pull never changes visible tiles", async () => {
+    await seedTiles()
+    const failCommit = (_key: unknown, value: { key: string }) => {
+      if (value.key === "entityRevision:tile:20") throw new Error("test transaction failure")
+    }
+    syncDb.metadata.hook("creating", failCommit)
+    pullResponse = remoteMove(1, { x: 240 })
+    const { frames, unsubscribe } = observeTileFrames()
+    try {
+      await expect(pullSync(10)).rejects.toThrow("test transaction failure")
+      expect(frames).toEqual([])
+      expect((await syncDb.entities.get(entityKey("tile", "tile-client")))?.data).toMatchObject({ x: 0 })
+    } finally {
+      syncDb.metadata.hook("creating").unsubscribe(failCommit)
+      unsubscribe()
+    }
+  })
+
+  test("queued remote changes preserve a newer local edit", async () => {
+    await seedTiles()
+    const { createRemoteStoreBatch } = await import("./storeBridge")
+    const batch = createRemoteStoreBatch()
+    pullResponse = remoteMove(1, { x: 240 })
+    await pullSync(10, batch)
+    expect(useStore.getState().tiles[0]?.x).toBe(0)
+    await useStore.getState().updateTile(20, { x: 720 })
+    await batch.publish()
+    expect(useStore.getState().tiles[0]?.x).toBe(720)
+    expect((await syncDb.outbox.toArray())[0]?.payload.x).toBe(720)
+  })
+
+  for (const newerX of [0, 480]) test(`a deferred batch cannot replace newer published geometry (${newerX})`, async () => {
+    await seedTiles()
+    const { createRemoteStoreBatch } = await import("./storeBridge")
+    const older = createRemoteStoreBatch()
+    pullResponse = remoteMove(1, { x: 240 })
+    await pullSync(10, older)
+    pullResponse = remoteMove(2, { x: newerX })
+    await pullSync(10)
+    await older.publish()
+    expect(useStore.getState().tiles[0]?.x).toBe(newerX)
+  })
+
+  test("a later response in a batch can supersede an intervening pull", async () => {
+    await seedTiles()
+    const { createRemoteStoreBatch } = await import("./storeBridge")
+    const batch = createRemoteStoreBatch()
+    pullResponse = remoteMove(1, { x: 240 })
+    await pullSync(10, batch)
+    pullResponse = remoteMove(2, { x: 480 })
+    await pullSync(10)
+    pullResponse = remoteMove(3, { x: 720 })
+    await pullSync(undefined, batch)
+    await batch.publish()
+    expect(useStore.getState().tiles[0]?.x).toBe(720)
+  })
+
+  test("dependent moves and deletion publish together without showing a transient tile", async () => {
+    await seedTiles()
+    useStore.setState({ canvases: [canvas(), canvas({ id: 11, client_id: "target-canvas" })] })
+    pullResponse = remoteMove(1, { x: 240, canvas_id: 11 })
+    pullResponse.events.push({ ...remoteMove(2).events[0]!, action: "delete", data: { id: 20 } })
+    pullResponse.latest_revision = 2
+    const { frames, unsubscribe } = observeTileFrames()
+    try {
+      await pullSync()
+      expect(frames).toEqual([[0]])
+      expect(useStore.getState().tileCache.get(11)).toEqual([])
+    } finally { unsubscribe() }
+  })
+
+  // Exercise the actual active-canvas + global cycle, including its failure path.
+  for (const outcome of ["success", "network failure", "transaction failure", "account change"] as const) {
+    test(`one background cycle publishes once: ${outcome}`, async () => {
+      const runtime = await import("./runtime")
+      const { prepareSyncAccount, invalidateSyncAccount } = await import("./accountScope")
+      runtime.startSyncRuntime()
+      runtime.setSyncActiveCanvas(10)
+      await runtime.syncActiveCanvas(10)
+      await seedTiles()
+      if (outcome === "account change") await prepareSyncAccount("shuffle-test")
+      const failSecondCommit = (_key: unknown, value: { key: string }) => {
+        if (value.key === "globalRevision") throw new Error("test commit failure")
+      }
+      if (outcome === "transaction failure") syncDb.metadata.hook("creating", failSecondCommit)
+      let pulls = 0
+      globalThis.fetch = async () => {
+        pulls += 1
+        if (pulls === 2) {
+          expect(useStore.getState().tiles[0]?.x).toBe(0)
+          if (outcome === "network failure") throw new Error("test offline")
+          if (outcome === "account change") invalidateSyncAccount()
+        }
+        return new Response(JSON.stringify(remoteMove(pulls, { x: pulls * 240 })))
+      }
+      const { frames, unsubscribe } = observeTileFrames()
+      try {
+        if (outcome === "network failure") await expect(runtime.syncInBackground()).rejects.toThrow("test offline")
+        else if (outcome === "transaction failure") await expect(runtime.syncInBackground()).rejects.toThrow("test commit failure")
+        else await runtime.syncInBackground()
+        expect(pulls).toBe(2)
+        expect(frames).toEqual(outcome === "account change" ? [] : [[outcome === "success" ? 480 : 240, 0]])
+      } finally {
+        unsubscribe()
+        runtime.stopSyncRuntime()
+        syncDb.metadata.hook("creating").unsubscribe(failSecondCommit)
+        invalidateSyncAccount()
+      }
+    })
+  }
+})

@@ -188,7 +188,7 @@ async function flushRecord(record: OutboxRecord, scope: SyncAccountScope | null)
     entity_type: record.entityType,
     action: record.action,
     client_id: record.clientId,
-    server_id: record.serverId,
+    server_id: record.serverId === null ? null : Number(record.serverId),
     payload,
     write_history: record.recordHistory !== false,
     occurred_at: new Date(record.createdAt).toISOString(),
@@ -212,9 +212,11 @@ async function flushRecord(record: OutboxRecord, scope: SyncAccountScope | null)
     return
   }
   const entity = result.entity ? entityFromPayload(record.entityType, result.entity as unknown as SyncPayload) : undefined
+  // Postgres BIGSERIAL IDs can arrive as strings, including on replayed acks.
+  const serverId = result.server_id === null ? null : Number(result.server_id)
   await syncDb.transaction("rw", syncDb.tables, async () => {
     assertSyncAccountScopeCurrent(scope)
-    await applyPushResult(record, entity ?? undefined, result.server_id, result.revision)
+    await applyPushResult(record, entity ?? undefined, serverId, result.revision)
     assertSyncAccountScopeCurrent(scope)
   })
   scheduleFlush()

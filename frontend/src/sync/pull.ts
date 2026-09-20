@@ -2,10 +2,10 @@ import { getApi } from "../store/apiAuth"
 import { cacheServerEntity, metadataNumber, removeLocalThoughtTag } from "./cache"
 import { entityFromPayload, isTile, positiveIntegerField } from "./entityPayload"
 import { getEntityRecord, payloadForEntity } from "./entities"
-import { entityKey } from "./ids"
+import { entityKey, serverClientId } from "./ids"
 import { syncDb } from "./localDb"
 import { GLOBAL_REVISION_KEY, canvasRevisionKey } from "./revisions"
-import { applyRemoteEntity, removeRemoteEntity } from "./storeBridge"
+import { createRemoteStoreBatch, type RemoteStoreChange } from "./storeBridge"
 import type { SyncEntity, SyncEntityType, SyncPullEvent } from "./types"
 import { cachePastEntity } from "./pastCache"
 import { assertSyncAccountScopeCurrent, runSyncAccountTask } from "./accountScope"
@@ -60,6 +60,7 @@ async function deleteLocalEntity(entityType: SyncEntityType, clientId: string | 
   const record = await syncDb.entities.get(key)
   if (record) await cachePastEntity(entityType, record.data)
   await syncDb.entities.delete(key)
+  return localClientId
 }
 
 async function moveLocalCanvasContents(sourceCanvasId: number | null, targetCanvasId: number | null) {
@@ -79,7 +80,7 @@ async function moveLocalCanvasContents(sourceCanvasId: number | null, targetCanv
   }))
 }
 
-async function applyPullEvent(event: SyncPullEvent) {
+async function applyPullEvent(event: SyncPullEvent, changes: RemoteStoreChange[]) {
   if (event.revision <= await readEntityRevision(event.entity_type, event.entity_id)) return
   const pending = await hasPendingLocal(event.entity_type, event.client_id, event.entity_id)
   if (pending) {
@@ -99,8 +100,8 @@ async function applyPullEvent(event: SyncPullEvent) {
     if (event.entity_type === "tag" && typeof event.data.name === "string") {
       await removeLocalThoughtTag(event.data.name)
     }
-    await deleteLocalEntity(event.entity_type, event.client_id, event.entity_id)
-    removeRemoteEntity(event.entity_type, event.entity_id, event.data)
+    const clientId = await deleteLocalEntity(event.entity_type, event.client_id, event.entity_id)
+    if (event.entity_id !== null) changes.push({ entityType: event.entity_type, id: event.entity_id, payload: event.data, clientId: clientId ?? serverClientId(event.entity_type, event.entity_id), revision: event.revision })
     await writeEntityRevision(event.entity_type, event.entity_id, event.revision)
     return
   }
@@ -108,12 +109,14 @@ async function applyPullEvent(event: SyncPullEvent) {
   if (!entity) return
   const animate = !await wasAcknowledgedByThisDevice(event) && await shouldAnimateRemoteEntity(event.entity_type, entity)
   await cacheServerEntity(event.entity_type, entity)
-  applyRemoteEntity(event.entity_type, entity, { animate })
+  changes.push({ entityType: event.entity_type, id: entity.id, entity, animate, clientId: entity.client_id ?? serverClientId(event.entity_type, entity.id), revision: event.revision })
   await writeEntityRevision(event.entity_type, event.entity_id, event.revision)
 }
 
-export async function pullSync(canvasId?: number) {
+export async function pullSync(canvasId?: number, batch?: ReturnType<typeof createRemoteStoreBatch>) {
   return runSyncAccountTask(async (scope) => {
+    const target = batch ?? createRemoteStoreBatch()
+    const changes: RemoteStoreChange[] = []
     const key = canvasId === undefined ? GLOBAL_REVISION_KEY : canvasRevisionKey(canvasId)
     const since = await metadataNumber(key)
     assertSyncAccountScopeCurrent(scope)
@@ -130,10 +133,12 @@ export async function pullSync(canvasId?: number) {
         if ((legacy.get(identity)?.revision ?? 0) < event.revision) legacy.set(identity, event)
       }
       for (const event of legacy.values()) await writeEntityRevision(event.entity_type, event.entity_id, event.revision)
-      for (const event of response.events) await applyPullEvent(event)
+      for (const event of response.events) await applyPullEvent(event, changes)
       await advanceRevision(key, response.latest_revision)
       assertSyncAccountScopeCurrent(scope)
     })
     assertSyncAccountScopeCurrent(scope)
+    target.append(changes)
+    if (!batch) await target.publish()
   })
 }

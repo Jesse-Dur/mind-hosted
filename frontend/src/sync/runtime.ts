@@ -1,7 +1,8 @@
 import { cancelScheduledFlush, flushSyncQueue, scheduleFlush } from "./flush"
 import { pullSync } from "./pull"
+import { createRemoteStoreBatch } from "./storeBridge"
 import { isApiUnauthorizedError } from "../api/errors"
-import { assertSyncAccountScopeCurrent, isStaleSyncAccountError, runSyncAccountTask } from "./accountScope"
+import { assertSyncAccountScopeCurrent, isSyncAccountScopeCurrent, isStaleSyncAccountError, runSyncAccountTask } from "./accountScope"
 
 let activeCanvasId: number | null = null
 let started = false
@@ -39,9 +40,15 @@ export async function syncInBackground() {
     await runSyncWork(async () => {
       await flushSyncQueue()
       assertSyncAccountScopeCurrent(scope)
-      if (activeCanvasId !== null && activeCanvasId > 0) await pullSync(activeCanvasId)
-      assertSyncAccountScopeCurrent(scope)
-      await pullSync()
+      const batch = createRemoteStoreBatch()
+      try {
+        if (activeCanvasId !== null && activeCanvasId > 0) await pullSync(activeCanvasId, batch)
+        assertSyncAccountScopeCurrent(scope)
+        await pullSync(undefined, batch)
+      } finally {
+        // A failed later request must not hide an earlier committed response.
+        if (isSyncAccountScopeCurrent(scope)) await batch.publish()
+      }
     })
   })
 }

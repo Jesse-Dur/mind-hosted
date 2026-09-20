@@ -38,10 +38,11 @@ self.addEventListener("fetch", event => {
     if (response.ok || response.type === "opaque") await caches.open(CACHE).then(cache => cache.put(cacheKey, response.clone()));
     return response;
   });
-  event.respondWith(caches.match(cacheKey).then(cached => {
-    if (!cached) return network;
-    event.waitUntil(network.then(() => undefined).catch(() => undefined));
-    return cached;
+  // Vite module URLs can outlive their contents. Prefer fresh modules online.
+  event.respondWith(network.catch(async error => {
+    const cached = await caches.open(CACHE).then(cache => cache.match(cacheKey));
+    if (cached) return cached;
+    throw error;
   }));
 });`)
       })

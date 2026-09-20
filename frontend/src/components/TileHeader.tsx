@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useLayoutEffect, useState } from "react"
 import { useStore } from "../store"
 import { CloseButton } from "./CloseButton"
 import { SyncStatusDot } from "./SyncStatusDot"
@@ -14,7 +14,8 @@ export function TileHeader({ tile, fontSize, thoughtIdentities, onDragDown, edit
     : Math.max(22, Math.round(fontSize * 1.1))
   const closeIconSize = Math.max(6, Math.round(8 * closeScale))
 
-  useEffect(() => {
+  // Settle the committed title before paint as Canvas catches up after blur.
+  useLayoutEffect(() => {
     if (!editing) setTitle(tile.title)
   }, [editing, tile.title])
 

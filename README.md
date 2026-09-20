@@ -30,6 +30,7 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 - **Auth** — secure accounts via Clerk, your data is scoped to you
 - **Offline sync** — canvases, tiles, thoughts, and tags are cached locally and local edits are queued when the connection is unreliable
 - **Installable mobile workspace** — the PWA has a phone/tablet split view, canvas overview, direct touch gestures, and cross-canvas thought and tile dragging without an app store
+- **Mobile sync transitions** — removed thoughts fade out before the remaining rows slide into place. Incoming thoughts fade in, and the overview previews follow the same movement. Reduced-motion preferences are respected.
 
 ---
 
@@ -63,8 +64,10 @@ The sync engine prioritises the active canvas:
 - Local creates, edits, moves, resizes, reorders, and deletes are written to the outbox and flushed later if the connection drops.
 - IndexedDB is partitioned by Clerk user. Existing unpartitioned data is claimed once by the signed-in account, and signed-out account caches cannot be opened by another account.
 - Small entity spinners show queued local saves and fade after acknowledgement; soft red attention markers flag failures, while an outlined orange dot identifies intentionally device-only changes. The durable status history and resolution actions are available in History.
-- Remote tile and thought upserts animate only when a pull or snapshot changes this device's cached payload; local optimistic writes stay immediate.
+- Desktop and mobile publish a sync cycle's accepted changes together. Existing tiles move and resize to their final geometry over 250 ms; content changes, additions, and deletions appear immediately without purple flashes. Reduced-motion preferences disable the geometry animation.
+- Local moves stay immediate while syncing. Assigning a newly created thought its server ID preserves edits made after its saved version, including a drag to another tile.
 - Creates use `client_id` idempotency keys so a retried request cannot create duplicates after packet loss.
+- Creation acknowledgements normalize server IDs before linking queued children. Retry now also normalizes parent IDs saved as text by older clients, preserving failed thought creations and moves.
 - Normal writes use `POST /api/sync/push`; incremental multi-device updates use `GET /api/sync/pull`.
 
 The multi-device model is sequential rather than realtime collaborative editing. A device pushes revisioned changes to the server, and another device pulls those revisions later. For v1, conflict handling is intentionally simple: pending local changes are preserved over stale server lists, and same-field conflicts resolve by the latest accepted server operation.
@@ -119,6 +122,8 @@ This starts both servers concurrently:
 - **Frontend** — `http://localhost:5173` (Vite + React)
 
 Open `http://localhost:5173` in your browser.
+
+The development service worker prefers network responses while online so reloads use current Vite modules, with cached files as an offline fallback. Production uses separate build-specific caches.
 
 ---
 

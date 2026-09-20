@@ -37,6 +37,7 @@ export const createUiSlice: StoreSlice<UiSlice> = (set, get) => {
   recentLocalTileChangeIds: new Map(),
   remoteChangedTileIds: new Set(),
   remoteChangedThoughtIds: new Set(),
+  remoteThoughtRevision: 0,
 
   setSpotlightOpen: (open) => set({ spotlightOpen: open }),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),

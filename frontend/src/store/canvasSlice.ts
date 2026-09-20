@@ -56,6 +56,7 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
               tags: snapshot.tags,
               tiles: s.activeCanvasId === snapshot.activeCanvasId ? snapshot.tiles : s.tiles,
               thoughts: s.activeCanvasId === snapshot.activeCanvasId ? snapshot.thoughts : s.thoughts,
+              remoteThoughtRevision: s.remoteThoughtRevision + Number(s.activeCanvasId === snapshot.activeCanvasId),
               tileCache: snapshot.activeCanvasId === null ? s.tileCache : new Map(s.tileCache).set(snapshot.activeCanvasId, snapshot.tiles),
               thoughtCache: snapshot.activeCanvasId === null ? s.thoughtCache : new Map(s.thoughtCache).set(snapshot.activeCanvasId, snapshot.thoughts),
             }

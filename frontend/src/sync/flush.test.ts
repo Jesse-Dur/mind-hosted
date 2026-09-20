@@ -9,6 +9,8 @@ import {
   resetFrontendState,
   setGetToken,
   syncDb,
+  tag,
+  thought,
   tile,
 } from "../test/syncTestHarness"
 
@@ -66,6 +68,106 @@ beforeEach(async () => {
 })
 
 describe("frontend sync flush", () => {
+  test("new canvas and tile string IDs are numeric for queued children and moves", async () => {
+    const { enqueueUpsert } = await import("./outbox")
+    await enqueueUpsert("canvas", canvas({ id: -10, client_id: "new-canvas" }))
+    await enqueueUpsert("tile", tile({ id: -20, client_id: "new-tile", canvas_id: -10 }))
+    await enqueueUpsert("tile", tile({ id: 21, client_id: "moved-tile", canvas_id: -10 }))
+    await enqueueUpsert("thought", thought({ id: -30, client_id: "new-thought", tile_id: -20 }))
+    await enqueueUpsert("thought", thought({ id: 31, client_id: "moved-thought", tile_id: -20 }))
+    await syncDb.entities.put(entityRecord({
+      entityType: "thought", clientId: "local-thought", serverId: null, tempId: -32,
+      canvasId: null, status: "dirty", syncDisposition: "local_only",
+      data: thought({ id: -32, client_id: "local-thought", tile_id: -20 }),
+    }))
+    fetchResponder = (operation) => {
+      if (operation.entity_type === "tile" && operation.payload.canvas_id !== 10) {
+        return { results: [{ ...operation, ok: false, error: "Invalid canvas id", revision: null }] }
+      }
+      if (operation.entity_type === "thought" && operation.payload.tile_id !== 20) {
+        return { results: [{ ...operation, ok: false, error: "Invalid tile id", revision: null }] }
+      }
+      const id = operation.server_id ?? (operation.entity_type === "canvas" ? 10 : operation.entity_type === "tile" ? 20 : 30)
+      // BIGSERIAL IDs arrive as strings from Postgres, despite the API's TS types.
+      return { results: [{
+        ...operation, ok: true, server_id: String(id), revision: fetchCalls.length,
+        entity: { ...operation.payload, id: String(id), client_id: operation.client_id },
+      }] } as unknown as SyncPushResponse
+    }
+
+    await flushSyncQueue()
+
+    expect(fetchCalls.filter(({ operation }) => operation.entity_type === "tile")
+      .map(({ operation }) => operation.payload.canvas_id)).toEqual([10, 10])
+    expect(fetchCalls.filter(({ operation }) => operation.entity_type === "thought")
+      .map(({ operation }) => operation.payload.tile_id)).toEqual([20, 20])
+    expect(await syncDb.outbox.count()).toBe(0)
+    expect((await syncDb.entities.get(entityKey("thought", "local-thought")))?.data).toMatchObject({ tile_id: 20 })
+    for (const clientId of ["new-thought", "moved-thought"]) {
+      expect((await syncDb.entities.get(entityKey("thought", clientId)))?.data).toMatchObject({ tile_id: 20 })
+    }
+  })
+
+  test("moving a deleted canvas's contents to a new canvas sends a numeric target ID", async () => {
+    const { enqueueDelete, enqueueUpsert } = await import("./outbox")
+    await enqueueUpsert("canvas", canvas({ id: -10, client_id: "new-canvas" }))
+    await enqueueDelete("canvas", canvas({ id: 11 }), { mode: "moveContents", targetCanvasId: -10 })
+    fetchResponder = (operation) => ({ results: [{
+      ...operation, ok: true, server_id: String(operation.server_id ?? 10), revision: fetchCalls.length,
+      ...(operation.action === "upsert" ? { entity: { ...canvas(), id: "10", client_id: operation.client_id } } : {}),
+    }] } as unknown as SyncPushResponse)
+
+    await flushSyncQueue()
+
+    expect(fetchCalls.map(({ operation }) => operation.action)).toEqual(["upsert", "delete"])
+    expect(fetchCalls[1]?.operation.payload.targetCanvasId).toBe(10)
+    expect(await syncDb.outbox.count()).toBe(0)
+  })
+
+  test.each([
+    ["canvas", canvas({ id: -10 })],
+    ["tile", tile({ id: -20 })],
+    ["thought", thought({ id: -30 })],
+    ["tag", tag({ id: -40 })],
+  ] as const)("%s create, edit and delete keep numeric IDs with string acknowledgements", async (entityType, entity) => {
+    const { enqueueDelete, enqueueUpsert } = await import("./outbox")
+    await enqueueUpsert(entityType, entity)
+    await enqueueUpsert(entityType, { ...entity, ...("name" in entity ? { name: "Edited" } : "content" in entity ? { content: "Edited" } : { title: "Edited" }) })
+    await enqueueDelete(entityType, entity)
+    fetchResponder = (operation) => ({ results: [{
+      ...operation, ok: true, server_id: String(-entity.id), revision: fetchCalls.length,
+      ...(operation.action === "upsert" ? { entity: { ...entity, ...operation.payload, id: String(-entity.id) } } : {}),
+    }] } as unknown as SyncPushResponse)
+
+    await flushSyncQueue()
+
+    expect(fetchCalls.map(({ operation }) => operation.action)).toEqual(["upsert", "upsert", "delete"])
+    expect(fetchCalls.map(({ operation }) => operation.server_id)).toEqual([null, -entity.id, -entity.id])
+    expect(await syncDb.outbox.count()).toBe(0)
+    expect(await syncDb.entities.count()).toBe(0)
+  })
+
+  test("retry repairs a thought's string tile ID saved by an earlier acknowledgement", async () => {
+    const { retrySyncOperation } = await import("./resolution")
+    await syncDb.outbox.put({
+      ...outboxRecord({
+        opId: "failed-thought", entityType: "thought", action: "upsert",
+        clientId: "thought-client", serverId: "30" as unknown as number, payload: { tile_id: "20", content: "Keep me" },
+      }),
+      status: "error", error: "Invalid tile id",
+    })
+    fetchResponder = (operation) => operation.payload.tile_id === 20
+      ? { results: [{ ...operation, ok: true, server_id: 30, revision: 1, entity: thought({ content: "Keep me" }) }] }
+      : { results: [{ ...operation, ok: false, error: "Invalid tile id", revision: null }] }
+
+    await retrySyncOperation("failed-thought")
+    await flushSyncQueue()
+
+    expect(fetchCalls[0]?.operation.payload.tile_id).toBe(20)
+    expect(fetchCalls[0]?.operation.server_id).toBe(30)
+    expect(await syncDb.outbox.count()).toBe(0)
+  })
+
   test("unresolved temporary parent dependencies stay queued without a network call", async () => {
     await syncDb.outbox.put(outboxRecord({
       opId: "blocked-tile-op",
