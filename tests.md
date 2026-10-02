@@ -7,7 +7,7 @@ changes; it is not the pass/fail gate for application behavior.
 ## Manual Commands
 
 - `bun run test`: run the current manual regression suite and type/build checks.
-- `bun run test:backend`: run backend sync database integration tests.
+- `bun run test:backend`: run snapshot revision tests, then backend sync database integration tests in a separate process to isolate the mocked database client.
 - `bun run test:frontend-sync`: run frontend offline sync tests.
 - `bun run test:store`: run frontend optimistic store tests.
 - `bun run typecheck`: run backend TypeScript checking and the frontend production build.
@@ -23,6 +23,8 @@ changes; it is not the pass/fail gate for application behavior.
 - Invalid tile and thought parent references reject before writes.
 - Canvas deletion supports both `moveContents` and `deleteContents`.
 - Snapshots return active-canvas data.
+- Snapshots await their revision anchor before reading entity data; a concurrent canvas change omitted by the snapshot remains available to the next pull.
+- New-user snapshots initialize a default canvas and return a numeric zero revision when no sync events exist.
 - Pull responses expose normalized numeric revisions and include entity events.
 
 ## Browser Sync Motion Checks

@@ -61,6 +61,7 @@ The sync engine prioritises the active canvas:
 
 - On boot, cached canvases, tiles, thoughts, and tags can render before network requests finish.
 - Server refreshes use `GET /api/sync/snapshot`, scoped to the active canvas where possible, so current-state repair does not need the old entity CRUD routes.
+- After default-canvas initialization, snapshots capture their revision before reading canvases and other entity data. Changes made during those reads remain eligible for the next pull, including changes already visible in the snapshot.
 - The active canvas is pulled and reconciled before inactive canvases.
 - Background canvas hydration is sequential and stops when the active canvas changes, so the newly selected tab gets priority.
 - Local creates, edits, moves, resizes, reorders, and deletes are written to the outbox and flushed later if the connection drops.
