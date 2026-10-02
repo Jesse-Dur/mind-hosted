@@ -69,7 +69,7 @@ The sync engine prioritises the active canvas:
 - Temporary failures to obtain an authentication token pause uploads without blocking later attempts. Reconnecting rechecks authentication, so queued changes can resume without a manual retry.
 - Pending uploads, including temporary network failures, appear as “Syncing” without error text. Reconnecting bypasses their retry delay; rejected and intentionally device-only changes still require their existing resolution actions.
 - Desktop and mobile publish a sync cycle's accepted changes together. Existing tiles move and resize to their final geometry over 250 ms; content changes, additions, and deletions appear immediately without purple flashes. Reduced-motion preferences disable the geometry animation.
-- Local moves stay immediate while syncing. Assigning a newly created thought its server ID preserves edits made after its saved version, including a drag to another tile.
+- Local moves stay immediate while syncing. Assigning a newly created tile or thought its server ID preserves newer local edits. Mobile tile drags, resizes, and Undo continue through that ID change without showing a second tile or resetting the position.
 - Creates use `client_id` idempotency keys so a retried request cannot create duplicates after packet loss.
 - Creation acknowledgements normalize server IDs before linking queued children. Retry now also normalizes parent IDs saved as text by older clients, preserving failed thought creations and moves.
 - Normal writes use `POST /api/sync/push`; incremental multi-device updates use `GET /api/sync/pull`.

@@ -1,5 +1,7 @@
 import { beforeEach, expect, test } from "bun:test"
-import { entityKey, resetFrontendState, syncDb, tag, thought, tile, useStore } from "../test/syncTestHarness"
+import { createElement } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { canvas, entityKey, resetFrontendState, syncDb, tag, thought, tile, useStore } from "../test/syncTestHarness"
 import { cacheServerEntity } from "./cache"
 import { enqueueDelete, enqueueUpsert } from "./outbox"
 import { flushSyncQueue } from "./flush"
@@ -7,6 +9,10 @@ import { pullSync } from "./pull"
 import { discardSyncOperation } from "./resolution"
 import { upsertEntityRecord } from "./entities"
 import type { SyncPullEvent, SyncPushOperation } from "./types"
+import { findMobileGestureTile } from "../utils/mobileTileGesture"
+import { optimisticIdentityKey } from "../utils/optimisticIdentity"
+import { beginCrossCanvasDrag, endCrossCanvasDrag } from "../utils/crossCanvasDrag"
+import { MobileOverview } from "../layout/mobile/MobileOverview"
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } })
 const localTile = () => syncDb.entities.get(entityKey("tile", "tile-client"))
@@ -16,6 +22,122 @@ const event = (revision: number, x: number, opId = `remote-${revision}`, action:
 })
 
 beforeEach(resetFrontendState)
+
+test("mobile overview keeps the original tile hidden when creation sync changes its ID during a drag", async () => {
+  const moving = tile({ id: -20, stableKey: "moving-tile" })
+  const other = tile({ id: 21, client_id: "other-tile" })
+  await enqueueUpsert("tile", moving)
+  useStore.setState({ activeCanvasId: 10, tiles: [moving, other], tileCache: new Map([[10, [moving, other]]]) })
+  beginCrossCanvasDrag({ kind: "tile", tile: moving, thoughts: [], sourceCanvasId: 10, grabOffsetX: 0, grabOffsetY: 0, clientX: 50, clientY: 50, enteredCanvasId: null })
+  const renderOverview = () => {
+    // Zustand's server renderer reads the initial snapshot. Use the current
+    // state for this render, then restore it without changing subscriptions.
+    const initial = useStore.getInitialState()
+    const original = { ...initial }
+    try {
+      Object.assign(initial, useStore.getState())
+      return renderToStaticMarkup(createElement(MobileOverview, { focusedTileId: null, onFocusTile: () => {} }))
+    } finally { Object.assign(initial, original) }
+  }
+  const tileElement = (html: string, id: number) => html.match(new RegExp(`<div[^>]*data-mobile-tile-id="${id}"[^>]*>`))?.[0]
+  try {
+    expect(tileElement(renderOverview(), moving.id)).toContain("opacity:0;")
+    mockPush(1)
+    await flushSyncQueue()
+    expect(useStore.getState().tiles.map((item) => item.id)).toEqual([20, 21])
+    const html = renderOverview()
+    expect(tileElement(html, 20)).toContain("opacity:0;")
+    expect(tileElement(html, other.id)).toContain("opacity:1;")
+    endCrossCanvasDrag()
+    expect(tileElement(renderOverview(), 20)).toContain("opacity:1;")
+  } finally { endCrossCanvasDrag() }
+})
+
+const tileEdits = [
+  { action: "move", target: { canvas_id: 10, x: 240, y: 192, width: 280, height: 200 } },
+  { action: "cross-canvas move", target: { canvas_id: 11, x: 240, y: 192, width: 280, height: 200 } },
+  { action: "resize", target: { canvas_id: 10, x: 24, y: 24, width: 480, height: 336 } },
+] as const
+
+test.each(tileEdits)("a mobile $action survives tile creation sync before, during and after the commit", async ({ action, target }) => {
+  for (const timing of ["before", "during", "after"] as const) {
+    await resetFrontendState()
+    const moving = tile({ id: -20, stableKey: "moving-tile" })
+    const contents = thought({ tile_id: moving.id })
+    await enqueueUpsert("tile", moving)
+    useStore.setState({
+      activeCanvasId: 10, canvases: [canvas(), canvas({ id: 11, client_id: "target-canvas" })],
+      tiles: [moving], thoughts: [contents],
+      tileCache: new Map([[10, [moving]], [11, []]]), thoughtCache: new Map([[10, [contents]]]),
+    })
+    // The gesture and Undo keep this identity even after the numeric ID changes.
+    const tileKey = optimisticIdentityKey(moving, "tile")
+    let release!: (response: Response) => void
+    globalThis.fetch = () => new Promise<Response>((resolve) => { release = resolve })
+    const push = flushSyncQueue()
+    while (!release) await new Promise((resolve) => setTimeout(resolve, 0))
+    const acknowledge = () => release(json({ results: [{ ok: true, server_id: 20, revision: 1, entity: tile() }] }))
+    if (timing === "before") {
+      acknowledge()
+      await push
+    }
+    const state = useStore.getState()
+    const current = findMobileGestureTile(tileKey, state.tiles, state.tileCache)!
+    expect(current).toBeDefined()
+    expect(current.id).toBe(timing === "before" ? 20 : -20)
+    const frames: ReturnType<typeof tile>[] = []
+    const unsubscribe = useStore.subscribe((next) => {
+      const item = findMobileGestureTile(tileKey, next.tiles, next.tileCache)
+      if (item) frames.push(item)
+    })
+    try {
+      const drop = action === "cross-canvas move"
+        ? state.moveTileToCanvas(current.id, target.canvas_id, target.x, target.y)
+        : state.updateTile(current.id, target)
+      if (timing === "after") await drop
+      if (timing !== "before") acknowledge()
+      await Promise.all([drop, push])
+      expect(frames.length).toBeGreaterThan(0)
+      for (const frame of frames) expect(frame).toMatchObject(target)
+      expect(useStore.getState().tileCache.get(target.canvas_id)).toMatchObject([{ id: 20, ...target, stableKey: tileKey }])
+      expect(useStore.getState().thoughtCache.get(target.canvas_id)?.[0]?.tile_id).toBe(20)
+      expect(useStore.getState().tiles).toHaveLength(target.canvas_id === 10 ? 1 : 0)
+
+      mockPush(2)
+      await flushSyncQueue()
+      expect((await localTile())?.data).toMatchObject({ id: 20, ...target })
+      expect(await syncDb.outbox.count()).toBe(0)
+      // Undo must also find a synced tile after switching away from its canvas.
+      const synced = findMobileGestureTile(tileKey, useStore.getState().tiles, useStore.getState().tileCache)!
+      expect(synced).toMatchObject({ id: 20, ...target })
+      if (target.canvas_id !== moving.canvas_id) await useStore.getState().moveTileToCanvas(synced.id, moving.canvas_id!, moving.x, moving.y)
+      else await useStore.getState().updateTile(synced.id, { x: moving.x, y: moving.y, width: moving.width, height: moving.height })
+      expect(useStore.getState().tiles).toMatchObject([{ id: 20, canvas_id: 10, x: moving.x, y: moving.y, width: moving.width, height: moving.height }])
+    } finally { unsubscribe() }
+  }
+})
+
+test("tile adoption preserves a dropped frame when its local record is written before its outbox row", async () => {
+  const moving = tile({ id: -20, stableKey: "moving-tile" })
+  await enqueueUpsert("tile", moving)
+  useStore.setState({ activeCanvasId: 10, tiles: [moving], tileCache: new Map([[10, [moving]]]) })
+  let release!: (response: Response) => void
+  globalThis.fetch = () => new Promise<Response>((resolve) => { release = resolve })
+  const push = flushSyncQueue()
+  while (!release) await new Promise((resolve) => setTimeout(resolve, 0))
+  const dropped = { ...moving, x: 240, y: 192 }
+  // Reproduce the interval between the local entity write and saveOutbox.
+  useStore.setState({ tiles: [dropped], tileCache: new Map([[10, [dropped]]]) })
+  await upsertEntityRecord("tile", dropped, "dirty")
+  release(json({ results: [{ ok: true, server_id: 20, revision: 1, entity: tile() }] }))
+  await push
+  expect(useStore.getState().tiles).toMatchObject([{ id: 20, x: 240, y: 192, stableKey: "moving-tile" }])
+  expect(useStore.getState().tileCache.get(10)).toMatchObject([{ id: 20, x: 240, y: 192 }])
+  await enqueueUpsert("tile", useStore.getState().tiles[0]!)
+  mockPush(2)
+  await flushSyncQueue()
+  expect((await localTile())?.data).toMatchObject({ id: 20, x: 240, y: 192 })
+})
 
 test.each(["untag", "delete tag"] as const)("adding tags then %s does not flash as a remote edit", async (removal) => {
   const initial = thought({ tags: [] })

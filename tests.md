@@ -41,6 +41,8 @@ Mobile tab gesture checks use touch pointer events: a swipe scrolls without reor
 - Temporary create followed by delete removes local state before flush.
 - Operations with temporary parents wait until the parent has a server id.
 - Server-id adoption rewrites cached children and pending payloads.
+- Tile moves, cross-canvas drops, resizing, and Undo survive creation sync before, during, and after the gesture commit. Adoption preserves the dropped frame even when its local entity write finishes before its outbox row.
+- Rendering the mobile overview after server-ID adoption keeps the dragged tile's original hidden while other tiles remain visible.
 - Flush skips unresolved temporary dependencies without network calls.
 - Network failures preserve operations with retry metadata.
 - Reconnecting bypasses pending network retry delays, including a failure still in flight, without retrying rejected or local-only operations.

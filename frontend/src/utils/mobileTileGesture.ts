@@ -1,7 +1,21 @@
+import type { Tile } from "../types"
+import { optimisticIdentityKey } from "./optimisticIdentity"
+
 const GRID = 24
 
 const snap = (value: number) => Math.round(value / GRID) * GRID
 const floorToGrid = (value: number) => Math.floor(value / GRID) * GRID
+
+export function findMobileGestureTile(tileKey: string, tiles: Tile[], tileCache: Map<number, Tile[]>) {
+  const matches = (tile: Tile) => optimisticIdentityKey(tile, "tile") === tileKey
+  const visible = tiles.find(matches)
+  if (visible) return visible
+  for (const cached of tileCache.values()) {
+    const tile = cached.find(matches)
+    if (tile) return tile
+  }
+  return null
+}
 
 export function getMobileTileDropPoint({ clientX, clientY, hostLeft, hostTop, viewX, viewY, scale, grabOffsetX = 0, grabOffsetY = 0, canvasWidth, canvasHeight, tileWidth = 0, tileHeight = 0 }: { clientX: number; clientY: number; hostLeft: number; hostTop: number; viewX: number; viewY: number; scale: number; grabOffsetX?: number; grabOffsetY?: number; canvasWidth: number; canvasHeight: number; tileWidth?: number; tileHeight?: number }) {
   const safeScale = Math.max(.01, scale)

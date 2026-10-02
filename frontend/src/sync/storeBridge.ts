@@ -88,7 +88,7 @@ function sameTagIdentity(left: Tag, right: Tag) {
   return left.id === right.id || Boolean(left.client_id && right.client_id && left.client_id === right.client_id)
 }
 
-export function adoptServerEntity(entityType: SyncEntityType, record: LocalEntityRecord | undefined, entity: SyncEntity) {
+export function adoptServerEntity(entityType: SyncEntityType, record: LocalEntityRecord | undefined, entity: SyncEntity, submittedPayload?: SyncPayload) {
   if (!setState || !record) return
   const tempId = record.tempId
   if (tempId === null || tempId === entity.id) return
@@ -111,7 +111,14 @@ export function adoptServerEntity(entityType: SyncEntityType, record: LocalEntit
 
     if (entityType === "tile") {
       const tile = entity as Tile
-      const replaceTile = (item: Tile) => item.id === tempId ? { ...tile, stableKey: item.stableKey } : item
+      const replaceTile = (item: Tile) => {
+        if (item.id !== tempId) return item
+        // A drop can reach the UI before its durable write. Compare against the
+        // submitted create, even if the local record already contains the drop.
+        const baseline = submittedPayload ?? payloadForEntity("tile", record.data)
+        const edited = JSON.stringify(payloadForEntity("tile", item)) !== JSON.stringify(baseline)
+        return { ...(edited ? item : tile), id: tile.id, client_id: tile.client_id, stableKey: item.stableKey }
+      }
       const retileThought = (thought: Thought) => thought.tile_id === tempId ? { ...thought, tile_id: tile.id } : thought
       return {
         tiles: state.tiles.map(replaceTile),

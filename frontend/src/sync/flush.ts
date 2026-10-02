@@ -152,7 +152,7 @@ async function applyPushResult(record: OutboxRecord, resultEntity: SyncEntity | 
     } else {
       const cached = await cacheServerEntity(record.entityType, acknowledgedEntity, false)
       await deleteSupersededTagRecord(record, localRecord, cached, pending)
-      adoptServerEntity(record.entityType, localRecord, cached.data)
+      adoptServerEntity(record.entityType, localRecord, cached.data, record.payload)
     }
   } else if (record.action === "delete") {
     if (pending && localRecord) {

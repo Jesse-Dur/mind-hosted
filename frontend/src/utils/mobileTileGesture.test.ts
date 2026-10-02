@@ -1,7 +1,21 @@
 import { describe, expect, test } from "bun:test"
-import { getMobileTileDropPoint, getMobileTileResize } from "./mobileTileGesture"
+import { findMobileGestureTile, getMobileTileDropPoint, getMobileTileResize } from "./mobileTileGesture"
+import { optimisticIdentityKey } from "./optimisticIdentity"
+import type { Tile } from "../types"
 
 describe("mobile tile gestures", () => {
+  test("resolves the gesture's tile after server-ID adoption and a canvas switch", () => {
+    const pending: Tile = { id: -20, client_id: "moving", canvas_id: 10, title: "New tile", x: 48, y: 48, width: 240, height: 192, importance: 1, visible: true, created_at: "2026-01-01" }
+    const key = optimisticIdentityKey(pending, "tile")
+    const saved = { ...pending, id: 20 }
+    expect(findMobileGestureTile(key, [saved], new Map())).toBe(saved)
+    expect(findMobileGestureTile(key, [], new Map([[10, [saved]]]))).toBe(saved)
+    // A deleted tile must not be resurrected from the gesture snapshot.
+    expect(findMobileGestureTile(key, [], new Map())).toBeNull()
+    const updated = { ...saved, x: 240 }
+    expect(findMobileGestureTile(key, [updated], new Map([[10, [saved]]]))).toBe(updated)
+  })
+
   test("tracks the grabbed point and snaps the tile preview to the desktop grid", () => {
     expect(getMobileTileDropPoint({
       clientX: 179,
