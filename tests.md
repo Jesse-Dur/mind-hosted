@@ -31,6 +31,8 @@ Shared-browser checks in the real workspace use temporary in-memory updates, res
 
 Desktop regression: the canvas retains its displayed thoughts during canvas transitions. Their remote animation revision must travel with that displayed list through `Tile` and `TileContent`; reading the newer revision directly in `TileContent` consumes the signal before the displayed thoughts change.
 
+Mobile thought entry checks use a temporary phone-width focused tile in the shared browser without changing saved data. Background and footer-spacing clicks focus the input in populated and empty tiles. Thought cards, selected text, prevented clicks, and active or just-completed drags do not redirect focus. Starting or cancelling a pointer gesture does not focus the input; thought editing and the delete dialog still work. Opening the software keyboard needs a physical-device check.
+
 Mobile tab gesture checks use touch pointer events: a swipe scrolls without reordering or switching canvases, a stationary 350 ms hold arms reordering, and cancellation clears the pending hold. Holding and releasing opens tab actions. Mouse movement still starts reordering immediately.
 
 ## Current Frontend Coverage

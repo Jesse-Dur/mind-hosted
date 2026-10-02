@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react"
+import type { CSSProperties, MouseEventHandler, ReactNode } from "react"
 import type { Thought } from "../../types"
 import { optimisticIdentityKey } from "../../utils/optimisticIdentity"
 import { SyncAnimatedList } from "../../components/SyncAnimatedList"
@@ -14,6 +14,7 @@ type Props = {
   style: CSSProperties
   renderThought: (thought: Thought) => ReactNode
   footer?: ReactNode
+  onClick?: MouseEventHandler<HTMLDivElement>
 }
 
 export function MobileThoughtList({ thoughts, renderThought, footer, preview, ...props }: Props) {

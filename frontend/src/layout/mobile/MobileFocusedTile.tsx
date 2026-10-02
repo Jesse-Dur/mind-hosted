@@ -10,6 +10,7 @@ import { useThoughtEdit } from "../../hooks/useThoughtEdit"
 import { beginCrossCanvasDrag, endCrossCanvasDrag, getCrossCanvasDrag, moveCrossCanvasDrag, setThoughtDragTarget, subscribeCrossCanvasDrag, type CrossCanvasDragSession } from "../../utils/crossCanvasDrag"
 import { mobileThoughtInsertionIndex, mobileThoughtOrderIds, sameThoughtOrder } from "../../utils/mobileThoughtOrder"
 import { optimisticIdentityKey } from "../../utils/optimisticIdentity"
+import { hasExpandedTextSelection } from "../../utils/textSelection"
 import { MobileThoughtList } from "./MobileThoughtList"
 import type { Thought, Tile } from "../../types"
 
@@ -20,8 +21,17 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
   const [title, setTitle] = useState(tile?.title ?? "")
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [dragSession, setDragSession] = useState<CrossCanvasDragSession | null>(() => getCrossCanvasDrag())
+  const thoughtInputRef = useRef<HTMLInputElement>(null)
+  const dragEndedAt = useRef(0)
   useEffect(() => setTitle(tile?.title ?? ""), [tile?.id, tile?.title])
-  useEffect(() => subscribeCrossCanvasDrag(setDragSession), [])
+  useEffect(() => {
+    let previousSession = getCrossCanvasDrag()
+    return subscribeCrossCanvasDrag((session) => {
+      if (previousSession && !session) dragEndedAt.current = Date.now()
+      previousSession = session
+      setDragSession(session)
+    })
+  }, [])
 
   if (!tile) return <div style={{ height: "100%", display: "grid", placeItems: "center", color: "#aaa", textAlign: "center", padding: 24 }}><div><p style={{ fontSize: 15, marginBottom: 6 }}>This canvas is empty</p><p style={{ fontSize: 12 }}>Tap + in the canvas preview to add a tile.</p></div></div>
   const tileThoughts = thoughts.filter((thought) => thought.tile_id === tile.id).sort((a, b) => a.sort_order - b.sort_order)
@@ -38,6 +48,15 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
     if (next !== tile!.title) void updateTile(tile!.id, { title: next })
   }
 
+  function focusThoughtInput(event: React.MouseEvent<HTMLDivElement>) {
+    if (event.defaultPrevented || getCrossCanvasDrag() || Date.now() - dragEndedAt.current < 350 || hasExpandedTextSelection()) return
+    const target = event.target
+    // Ignore thought controls and events bubbling through React from portals.
+    if (!(target instanceof Element) || !event.currentTarget.contains(target)
+      || target.closest("[data-mobile-thought-id], input, button, [contenteditable]")) return
+    thoughtInputRef.current?.focus()
+  }
+
   return (
     <section data-mobile-tile-id={tile.id} style={{ height: "100%", background: thoughtDropTarget ? "#faf7ff" : "#fff", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: thoughtDropTarget ? "inset 0 0 0 3px rgba(124,58,237,.42)" : "inset 0 0 0 0 rgba(124,58,237,0)", transition: "background-color 160ms ease, box-shadow 160ms ease" }}>
       <div style={{ height: 46, flexShrink: 0, display: "flex", alignItems: "center", borderBottom: "1px solid #e9e9e9", padding: "0 10px", gap: 8 }}>
@@ -50,9 +69,10 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
         scopeKey={optimisticIdentityKey(tile, "tile")}
         remoteRevision={remoteThoughtRevision}
         disabled={dragSession !== null}
+        onClick={focusThoughtInput}
         style={{ flex: 1, overflowY: "auto", overscrollBehavior: "contain", padding: "8px 9px max(12px,env(safe-area-inset-bottom))", display: "flex", flexDirection: "column", gap: 5 }}
         renderThought={(thought) => <MobileThought thought={thought} onFocusTarget={onFocusTarget} />}
-        footer={<ThoughtInput tileId={tile.id} fontSize={canvasFontSize + 1} />}
+        footer={<ThoughtInput tileId={tile.id} fontSize={canvasFontSize + 1} inputRef={thoughtInputRef} />}
       />
       {confirmDelete && <DeleteDialog
         title={`Delete “${tile.title}”?`}
