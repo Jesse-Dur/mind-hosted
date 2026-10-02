@@ -31,6 +31,8 @@ Shared-browser checks in the real workspace use temporary in-memory updates, res
 
 Desktop regression: the canvas retains its displayed thoughts during canvas transitions. Their remote animation revision must travel with that displayed list through `Tile` and `TileContent`; reading the newer revision directly in `TileContent` consumes the signal before the displayed thoughts change.
 
+Mobile tab gesture checks use touch pointer events: a swipe scrolls without reordering or switching canvases, a stationary 350 ms hold arms reordering, and cancellation clears the pending hold. Holding and releasing opens tab actions. Mouse movement still starts reordering immediately.
+
 ## Current Frontend Coverage
 
 - Repeated queued upserts keep one durable operation with the latest payload.

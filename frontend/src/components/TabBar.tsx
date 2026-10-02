@@ -18,6 +18,8 @@ const BAR_H = 14
 const JUT_H = 28
 const JUT_H_INACTIVE = 24
 const DRAG_THRESHOLD = 4
+const TOUCH_SCROLL_THRESHOLD = 8
+const TOUCH_REORDER_HOLD_MS = 350
 const FAVOURITE_BOUNDARY_HYSTERESIS = 10
 const DRAG_STAR_SLOT_W = 12
 const CROSS_CANVAS_TAB_DWELL_MS = 450
@@ -29,6 +31,8 @@ type DragState = {
   startY: number
   centerOffsetX: number
   isDragging: boolean
+  touchMode?: "pending" | "scroll" | "reorder"
+  scrollStart: number
   target: InsertTarget | null
   preview: Canvas[] | null
 }
@@ -387,16 +391,24 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
 
   function onTabPointerDown(e: React.PointerEvent<HTMLDivElement>, canvas: Canvas) {
     if (e.button !== 0 || renamingKey === canvasIdentityKey(canvas)) return
+    if (dragRef.current && dragRef.current.pointerId !== e.pointerId) return
     // Tab clicks prevent native blur for drag support, so save an active rename before switching.
     if (renamingKey !== null) commitRename()
     e.preventDefault()
     dragCleanupRef.current?.()
     const rect = tabRefs.current.get(canvas.id)?.getBoundingClientRect()
     const centerOffsetX = rect ? rect.left + rect.width / 2 - e.clientX : 0
-    dragRef.current = { id: canvas.id, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, centerOffsetX, isDragging: false, target: null, preview: null }
+    const drag: DragState = { id: canvas.id, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, centerOffsetX, isDragging: false, touchMode: e.pointerType === "touch" ? "pending" : undefined, scrollStart: scrollRef.current?.scrollLeft ?? 0, target: null, preview: null }
+    dragRef.current = drag
     setDragOffset({ x: 0, y: 0 })
     setDragPreview(null)
     setPreviewCanvases(null)
+
+    const holdTimer = drag.touchMode === "pending" ? window.setTimeout(() => {
+      if (dragRef.current !== drag || drag.touchMode !== "pending") return
+      drag.touchMode = "reorder"
+      startTabDrag(drag)
+    }, TOUCH_REORDER_HOLD_MS) : undefined
 
     const onPointerMove = (event: PointerEvent) => updateDrag(event.pointerId, event.clientX, event.clientY, () => event.preventDefault())
     const onPointerUp = (event: PointerEvent) => finishDrag(event.pointerId, canvas)
@@ -405,11 +417,20 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
     window.addEventListener("pointerup", onPointerUp)
     window.addEventListener("pointercancel", onPointerCancel)
     dragCleanupRef.current = () => {
+      window.clearTimeout(holdTimer)
       window.removeEventListener("pointermove", onPointerMove)
       window.removeEventListener("pointerup", onPointerUp)
       window.removeEventListener("pointercancel", onPointerCancel)
       dragCleanupRef.current = null
     }
+  }
+
+  function startTabDrag(drag: DragState) {
+    drag.isDragging = true
+    const rect = tabRefs.current.get(drag.id)?.getBoundingClientRect()
+    if (rect) setDragPreview({ left: rect.left, top: rect.top, width: rect.width, height: rect.height })
+    setContextMenu(null)
+    setDraggingId(drag.id)
   }
 
   function updateDrag(pointerId: number, clientX: number, clientY: number, preventDefault: () => void) {
@@ -418,16 +439,22 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
 
     const dx = clientX - drag.startX
     const dy = clientY - drag.startY
-    if (!drag.isDragging && Math.hypot(dx, dy) < DRAG_THRESHOLD) return
+    // Touch owns the gesture: movement scrolls; a stationary hold arms reordering.
+    // Keeping touch-action:none avoids a browser pan cancelling an armed drag.
+    if (drag.touchMode === "pending") {
+      if (Math.hypot(dx, dy) < TOUCH_SCROLL_THRESHOLD) return
+      drag.touchMode = "scroll"
+      lastTabTapRef.current = null
+    }
+    if (drag.touchMode === "scroll") {
+      preventDefault()
+      if (scrollRef.current) scrollRef.current.scrollLeft = drag.scrollStart - dx
+      return
+    }
+    if (!drag.target && Math.hypot(dx, dy) < DRAG_THRESHOLD) return
     preventDefault()
 
-    if (!drag.isDragging) {
-      drag.isDragging = true
-      const rect = tabRefs.current.get(drag.id)?.getBoundingClientRect()
-      if (rect) setDragPreview({ left: rect.left, top: rect.top, width: rect.width, height: rect.height })
-      setContextMenu(null)
-      setDraggingId(drag.id)
-    }
+    if (!drag.isDragging) startTabDrag(drag)
 
     const previousIsFavourite = drag.target?.isFavourite ?? displayCanvasesRef.current.find((canvas) => canvas.id === drag.id)?.is_favourite
     const target = getInsertTarget(clientX + drag.centerOffsetX, drag.id, previousIsFavourite)
@@ -454,6 +481,7 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
     setInsertTarget(null)
     setPreviewCanvases(null)
 
+    if (drag.touchMode === "scroll") return
     if (!wasDragging) {
       const tap = resolveTargetTap(lastTabTapRef.current, canvasIdentityKey(canvas), performance.now())
       lastTabTapRef.current = tap.next
@@ -466,6 +494,11 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
     }
 
     lastTabTapRef.current = null
+    if (drag.touchMode === "reorder" && !preview && !target) {
+      const menuWidth = 160
+      setContextMenu({ x: Math.max(0, Math.min(drag.startX, window.innerWidth - menuWidth)), y: drag.startY, canvas })
+      return
+    }
     if (!preview && !target) return
     const ordered = preview ?? (target ? buildReorderedCanvases(drag.id, target) : null)
     if (ordered) reorderCanvases(getOrderUpdates(ordered))
@@ -558,6 +591,7 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
                   }}
                   onContextMenu={(e) => {
                     e.preventDefault()
+                    if (dragRef.current?.touchMode) return
                     const menuWidth = 160
                     const x = e.clientX + menuWidth > window.innerWidth ? e.clientX - menuWidth : e.clientX
                     setContextMenu({ x, y: e.clientY, canvas })

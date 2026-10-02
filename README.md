@@ -30,6 +30,7 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 - **Auth** — secure accounts via Clerk, your data is scoped to you
 - **Offline sync** — canvases, tiles, thoughts, and tags are cached locally and local edits are queued when the connection is unreliable
 - **Installable mobile workspace** — the PWA has a phone/tablet split view, canvas overview, direct touch gestures, and cross-canvas thought and tile dragging without an app store
+- **Mobile canvas tabs** — swipe across tabs to scroll. Hold briefly, then move to reorder; hold and release to open tab actions. Tap to switch canvases or double-tap to rename.
 - **Sync transitions** — on desktop and mobile, removed thoughts fade out before the remaining rows slide into place. Incoming thoughts fade in, and mobile overview previews follow the same movement. Canvas tabs also fade and slide when synced additions, removals, reordering, or renames change the tab strip. Reduced-motion preferences are respected.
 
 ---
