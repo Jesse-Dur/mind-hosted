@@ -26,6 +26,7 @@ function hiddenThoughtIdForTile(tileId: number) {
 }
 
 export function useTileThoughts(tileId: number, tileThoughts: Thought[]) {
+  const [dragActive, setDragActive] = useState(() => getCrossCanvasDrag() !== null)
   const [orderedIds, setOrderedIds] = useState<number[]>([])
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const [dropTarget, setDropTarget] = useState(false)
@@ -46,6 +47,7 @@ export function useTileThoughts(tileId: number, tileThoughts: Thought[]) {
   }
 
   useEffect(() => subscribeCrossCanvasDrag((session) => {
+    setDragActive(session !== null)
     const nextHiddenThoughtId = hiddenThoughtIdForTile(tileId)
     setHiddenThoughtId((current) => current === nextHiddenThoughtId ? current : nextHiddenThoughtId)
 
@@ -194,6 +196,7 @@ export function useTileThoughts(tileId: number, tileThoughts: Thought[]) {
   }
 
   return {
+    dragActive,
     orderedIds,
     draggingId,
     dropTarget,

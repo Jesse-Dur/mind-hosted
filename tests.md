@@ -25,6 +25,12 @@ changes; it is not the pass/fail gate for application behavior.
 - Snapshots return active-canvas data.
 - Pull responses expose normalized numeric revisions and include entity events.
 
+## Browser Sync Motion Checks
+
+Shared-browser checks in the real workspace use temporary in-memory updates, restored after each check. They cover desktop thoughts and mobile focused thoughts and preview bars. Animation timeline samples verify that removals fade before survivors slide, with no remaining transforms at the end. Focus survives updates; drag gestures suppress sync motion.
+
+Desktop regression: the canvas retains its displayed thoughts during canvas transitions. Their remote animation revision must travel with that displayed list through `Tile` and `TileContent`; reading the newer revision directly in `TileContent` consumes the signal before the displayed thoughts change.
+
 ## Current Frontend Coverage
 
 - Repeated queued upserts keep one durable operation with the latest payload.

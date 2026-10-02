@@ -18,7 +18,7 @@ const tileAnimationStyles = `
 }
 `
 
-export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: Thought[]; scale?: number }) {
+export function Tile({ tile, thoughts, remoteThoughtRevision, scale = 1 }: { tile: TileType; thoughts: Thought[]; remoteThoughtRevision: number; scale?: number }) {
   const { canvasFontSize, highlightedId } = useStore()
   const [editing, setEditing] = useState(false)
   const isHighlighted = highlightedId?.type === "tile" && Number(highlightedId.id) === Number(tile.id)
@@ -78,7 +78,7 @@ export function Tile({ tile, thoughts, scale = 1 }: { tile: TileType; thoughts: 
         }}
       >
         <TileHeader tile={tile} fontSize={effectiveFontSize} thoughtIdentities={tileThoughts.map((thought) => ({ id: thought.id, clientId: thought.client_id }))} onDragDown={onDragDown} editing={editing} setEditing={setEditing} />
-        <TileContent tileId={tile.id} fontSize={effectiveFontSize} tileThoughts={tileThoughts} />
+        <TileContent tileId={tile.id} fontSize={effectiveFontSize} tileThoughts={tileThoughts} remoteThoughtRevision={remoteThoughtRevision} />
         <div
           onMouseDown={onResizeDown}
           style={{ position: "absolute", bottom: 0, right: 0, width: 16, height: 16, cursor: "nwse-resize", display: "flex", alignItems: "center", justifyContent: "center" }}
