@@ -52,6 +52,7 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
             writeStoredActiveCanvasId(nextActiveCanvasId)
             return {
               canvases: mergedCanvases,
+              remoteCanvasRevision: s.remoteCanvasRevision + 1,
               activeCanvasId: nextActiveCanvasId,
               tags: snapshot.tags,
               tiles: s.activeCanvasId === snapshot.activeCanvasId ? snapshot.tiles : s.tiles,

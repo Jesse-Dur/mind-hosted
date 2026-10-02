@@ -35,6 +35,7 @@ export interface UiSlice {
   remoteChangedTileIds: Set<number>
   remoteChangedThoughtIds: Set<number>
   remoteThoughtRevision: number
+  remoteCanvasRevision: number
   markLocalTileChange: (tileId: number) => void
   markRemoteChanges: (tileIds: number[], thoughtIds: number[]) => void
   setHighlight: (type: "tile" | "thought", id: number) => void

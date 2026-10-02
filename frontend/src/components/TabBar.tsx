@@ -3,6 +3,7 @@ import { useStore } from "../store"
 import { AiStatusPill } from "./AiStatusPill"
 import { CanvasDeleteDialog } from "./CanvasDeleteDialog"
 import { TabBarOutline } from "./TabBarOutline"
+import { SyncAnimatedList } from "./SyncAnimatedList"
 import { Tooltip } from "./Tooltip"
 import { getTabShortcutAction, newCanvasShortcutLabel, tabShortcutLabel } from "../utils/tabShortcuts"
 import { getCrossCanvasDrag, moveCrossCanvasDrag, setCrossCanvasDragEnteredCanvas, subscribeCrossCanvasDrag, subscribeCrossCanvasDragPointer } from "../utils/crossCanvasDrag"
@@ -47,7 +48,7 @@ type DragPreview = {
 type CanvasOrderUpdate = Pick<Canvas, "id" | "sort_order" | "is_favourite">
 
 export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }: { slidingOut?: boolean; onOpenMenu?: () => void; leftAccessory?: ReactNode; topOffset?: number | string }) {
-  const { canvases, activeCanvasId, setActiveCanvas, addCanvas, updateCanvas, removeCanvas, reorderCanvases, setSidebarOpen, sidebarOpen, aiStatus } = useStore()
+  const { canvases, activeCanvasId, setActiveCanvas, addCanvas, updateCanvas, removeCanvas, reorderCanvases, setSidebarOpen, sidebarOpen, aiStatus, remoteCanvasRevision } = useStore()
   const aiExpanded = leftAccessory === undefined && aiStatus !== "idle"
   const [renamingKey, setRenamingKey] = useState<string | null>(null)
   const [selectRenameText, setSelectRenameText] = useState(false)
@@ -60,6 +61,7 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
   const [dragPreview, setDragPreview] = useState<DragPreview | null>(null)
   const [insertTarget, setInsertTarget] = useState<InsertTarget | null>(null)
   const [previewCanvases, setPreviewCanvases] = useState<Canvas[] | null>(null)
+  const [crossDragActive, setCrossDragActive] = useState(() => getCrossCanvasDrag() !== null)
   const [crossDragHoverId, setCrossDragHoverId] = useState<number | null>(null)
   const leftControlsRef = useRef<HTMLDivElement>(null)
   const [leftWidth, setLeftWidth] = useState(120)
@@ -150,6 +152,7 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
 
   useEffect(() => {
     const unsubscribeSnapshot = subscribeCrossCanvasDrag((session) => {
+      setCrossDragActive(session !== null)
       if (!session) clearCrossDragHover()
     })
     const unsubscribePointer = subscribeCrossCanvasDragPointer((session) => {
@@ -530,15 +533,15 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
         </div>
 
         {/* Tabs scroll area — bounded so it can't overlap left controls or + button */}
-        <div ref={scrollRef} className="tabbar-scroll" style={{ position: "absolute", top: 0, left: leftWidth, right: 32, display: "flex", alignItems: "flex-start", overflowX: "auto", justifyContent: "flex-end", gap: 1, zIndex: 2, pointerEvents: "none" }}>
-          {displayCanvases.map((canvas, index) => {
+        <SyncAnimatedList containerRef={scrollRef} scopeKey="canvases" axis="horizontal" remoteRevision={remoteCanvasRevision} disabled={dragRef.current !== null || crossDragActive} className="tabbar-scroll" style={{ position: "absolute", top: 0, left: leftWidth, right: 32, display: "flex", alignItems: "flex-start", overflowX: "auto", justifyContent: "safe flex-end", gap: 1, zIndex: 2, pointerEvents: "none" }}
+          items={displayCanvases.map((canvas, index) => {
             const canvasKey = canvasIdentityKey(canvas)
             const isActive = canvas.id === activeCanvasId
             const isNew = canvasKey === newTabKey
             const isDragging = canvas.id === draggingId
             const isCrossDragHover = canvas.id === crossDragHoverId
             const dragPlaceholderFavourite = isDragging ? dragPreviewFavourite : canvas.is_favourite
-            return (
+            return { key: canvasKey, layoutKey: `${canvas.name}:${canvas.is_favourite}`, content: (
               <Tooltip key={canvasKey} label={tabShortcutLabel(index)} placement="bottom" disabled={contextMenu !== null || renamingKey === canvasKey || isDragging}>
                 <div
                   ref={(el) => {
@@ -610,9 +613,9 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
                   }
                 </div>
               </Tooltip>
-            )
+            ) }
           })}
-        </div>
+        />
 
         {draggingCanvas && dragPreview && (
           <div

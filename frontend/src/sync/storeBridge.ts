@@ -330,9 +330,11 @@ export function createRemoteStoreBatch() {
         }
         // Publish the presentation marker with the data, including deletions.
         // A separate notification can arrive after React has removed the rows.
-        return next.thoughts === current.thoughts ? next : {
+        if (next === current) return current
+        return {
           ...next,
-          remoteThoughtRevision: current.remoteThoughtRevision + 1,
+          remoteThoughtRevision: current.remoteThoughtRevision + Number(next.thoughts !== current.thoughts),
+          remoteCanvasRevision: current.remoteCanvasRevision + Number(next.canvases !== current.canvases),
         }
       })
       if (tileIds.length || thoughtIds.length) getState().markRemoteChanges(tileIds, thoughtIds)

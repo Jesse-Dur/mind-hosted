@@ -213,6 +213,7 @@ export async function resetFrontendState() {
     remoteChangedTileIds: new Set(),
     remoteChangedThoughtIds: new Set(),
     remoteThoughtRevision: 0,
+    remoteCanvasRevision: 0,
     syncPendingCount: 0,
     syncEntityStatuses: new Map(),
     syncActivity: [],

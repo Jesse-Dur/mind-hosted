@@ -31,6 +31,7 @@ export const createSessionSlice: StoreSlice<SessionSlice> = (set, get) => ({
       remoteChangedTileIds: new Set(),
       remoteChangedThoughtIds: new Set(),
       remoteThoughtRevision: 0,
+      remoteCanvasRevision: 0,
       sidebarOpen: false,
       spotlightOpen: false,
       ...initialBillingState(),

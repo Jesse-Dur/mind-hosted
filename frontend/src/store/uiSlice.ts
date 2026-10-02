@@ -38,6 +38,7 @@ export const createUiSlice: StoreSlice<UiSlice> = (set, get) => {
   remoteChangedTileIds: new Set(),
   remoteChangedThoughtIds: new Set(),
   remoteThoughtRevision: 0,
+  remoteCanvasRevision: 0,
 
   setSpotlightOpen: (open) => set({ spotlightOpen: open }),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),

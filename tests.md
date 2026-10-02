@@ -27,7 +27,7 @@ changes; it is not the pass/fail gate for application behavior.
 
 ## Browser Sync Motion Checks
 
-Shared-browser checks in the real workspace use temporary in-memory updates, restored after each check. They cover desktop thoughts and mobile focused thoughts and preview bars. Animation timeline samples verify that removals fade before survivors slide, with no remaining transforms at the end. Focus survives updates; drag gestures suppress sync motion.
+Shared-browser checks in the real workspace use temporary in-memory updates, restored after each check. They cover desktop thoughts, mobile focused thoughts and preview bars, and canvas tabs on both layouts. Animation timeline samples verify that removals fade before survivors slide, with no remaining transforms at the end. Focus survives updates; drag gestures suppress sync motion; overflowing mobile tabs remain scrollable.
 
 Desktop regression: the canvas retains its displayed thoughts during canvas transitions. Their remote animation revision must travel with that displayed list through `Tile` and `TileContent`; reading the newer revision directly in `TileContent` consumes the signal before the displayed thoughts change.
 
@@ -51,6 +51,8 @@ Desktop regression: the canvas retains its displayed thoughts during canvas tran
 - Pulling this device's already-applied payload does not animate.
 - Remote thought moves, additions, and deletions publish their animation revision with the final visible list; repeated pulls do not replay the update.
 - Snapshot thought removals publish their animation revision with the refreshed list.
+- Canvas additions, deletions, reordering, and favourite changes publish their animation revision with the final tabs; repeated pulls and protected local edits do not replay it.
+- Cached canvas refreshes publish snapshot removals with their animation revision, and signing out resets it.
 - Remote deletes do not remove locally dirty entities.
 - Remote canvas deletes with `moveContents` move cached child tiles.
 - Optimistic canvas creation updates state and queues sync.
