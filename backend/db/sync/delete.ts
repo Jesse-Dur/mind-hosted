@@ -89,12 +89,13 @@ export async function deleteEntity(userId: string, entityType: SyncEntityType, s
     await reconcileAutumnResourcesAfterMutation(userId, ["thoughts"])
     return thought ?? null
   }
-  const [tag] = await sql<Tag[]>`SELECT * FROM tags WHERE id = ${serverId} AND user_id = ${userId}`
-  if (!tag) return null
-  let thoughtTagDelta = 0
-  await sql.begin(async (tx) => {
+  const mutation = await sql.begin(async (tx) => {
+    const [tag] = await tx<Tag[]>`SELECT * FROM tags WHERE id = ${serverId} AND user_id = ${userId} FOR UPDATE`
+    if (!tag) return null
+    let thoughtTagDelta = 0
     const thoughts = await tx<Thought[]>`
       SELECT * FROM thoughts WHERE user_id = ${userId} AND deleted_at IS NULL AND ${tag.name} = ANY(tags)
+      ORDER BY id FOR UPDATE
     `
     for (const thought of thoughts) {
       const updatedTags = thought.tags.filter((name) => name !== tag.name)
@@ -108,7 +109,9 @@ export async function deleteEntity(userId: string, entityType: SyncEntityType, s
       const entry = buildDeleteHistory(entityType, tag, payload)
       await historyDb.log(userId, entry.action, entry.summary, entry.detail, { clientId: clientId ?? tag.client_id, opId, occurredAt, query: tx })
     }
+    return { tag, storageDelta: -estimateTagStorage(tag) + thoughtTagDelta }
   })
-  await addStorageDelta(userId, -estimateTagStorage(tag) + thoughtTagDelta)
-  return tag ?? null
+  if (!mutation) return null
+  await addStorageDelta(userId, mutation.storageDelta)
+  return mutation.tag
 }

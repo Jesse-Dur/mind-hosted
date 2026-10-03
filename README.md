@@ -74,6 +74,7 @@ The sync engine prioritises the active canvas:
 - Creates use `client_id` idempotency keys so a retried request cannot create duplicates after packet loss.
 - Creation acknowledgements normalize server IDs before linking queued children. Retry now also normalizes parent IDs saved as text by older clients, preserving failed thought creations and moves.
 - Normal writes use `POST /api/sync/push`; incremental multi-device updates use `GET /api/sync/pull`.
+- Tag renames and deletions lock the current tag row before reading its name. Server-ID and client-ID updates share that lock; thought-label propagation and History commit in the same transaction.
 
 The multi-device model is sequential rather than realtime collaborative editing. A device pushes revisioned changes to the server, and another device pulls those revisions later. For v1, conflict handling is intentionally simple: pending local changes are preserved over stale server lists, and same-field conflicts resolve by the latest accepted server operation.
 

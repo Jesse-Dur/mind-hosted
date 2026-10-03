@@ -168,19 +168,27 @@ export async function upsertTag(userId: string, clientId: string | null, serverI
   const name = stringValue(payload.name).trim().slice(0, 16)
   if (!name) throw new Error("Invalid tag name")
   const color = stringValue(payload.color, "#888")
-  const existing = serverId
-    ? (await sql<Tag[]>`SELECT * FROM tags WHERE id = ${serverId} AND user_id = ${userId}`)[0]
-    : clientId
-      ? (await sql<Tag[]>`SELECT * FROM tags WHERE user_id = ${userId} AND client_id = ${clientId}`)[0]
-      : undefined
+  const { tag, storageDelta } = await sql.begin(async (tx) => {
+    // Both identity aliases lock the same row before reading the previous name.
+    // Keep that state protected through propagation and History's commit.
+    const existing = serverId
+      ? (await tx<Tag[]>`SELECT * FROM tags WHERE id = ${serverId} AND user_id = ${userId} FOR UPDATE`)[0]
+      : clientId
+        ? (await tx<Tag[]>`SELECT * FROM tags WHERE user_id = ${userId} AND client_id = ${clientId} FOR UPDATE`)[0]
+        : undefined
 
-  if (existing) {
-    let thoughtTagDelta = 0
-    const updated = await sql.begin(async (tx) => {
-      await tx`UPDATE tags SET client_id = COALESCE(client_id, ${clientId}), name = ${name}, color = ${color}, updated_at = NOW() WHERE id = ${existing.id} AND user_id = ${userId}`
+    if (existing) {
+      let thoughtTagDelta = 0
+      const [updated] = await tx<Tag[]>`
+        UPDATE tags SET client_id = COALESCE(client_id, ${clientId}), name = ${name}, color = ${color}, updated_at = NOW()
+        WHERE id = ${existing.id} AND user_id = ${userId}
+        RETURNING *
+      `
+      if (!updated) throw new Error("Tag update did not return a row")
       if (existing.name !== name) {
         const thoughts = await tx<{ id: number; content: string; tags: string[] }[]>`
           SELECT id, content, tags FROM thoughts WHERE user_id = ${userId} AND deleted_at IS NULL AND ${existing.name} = ANY(tags)
+          ORDER BY id FOR UPDATE
         `
         for (const thought of thoughts) {
           const updatedTags = thought.tags.map((tag) => tag === existing.name ? name : tag)
@@ -188,28 +196,21 @@ export async function upsertTag(userId: string, clientId: string | null, serverI
           await tx`UPDATE thoughts SET tags = ${updatedTags}, updated_at = NOW() WHERE id = ${thought.id} AND user_id = ${userId}`
         }
       }
-      const current = (await tx<Tag[]>`SELECT * FROM tags WHERE id = ${existing.id} AND user_id = ${userId}`)[0]
-      if (!current) throw new Error("Tag update did not return a row")
-      await logUpsertHistory(userId, "tag", existing, current, writeHistory, clientId, opId, occurredAt, tx)
-      return current
-    })
-    await addStorageDelta(userId, estimateTagStorage(updated) - estimateTagStorage(existing) + thoughtTagDelta)
-    return updated
-  }
+      await logUpsertHistory(userId, "tag", existing, updated, writeHistory, clientId, opId, occurredAt, tx)
+      return { tag: updated, storageDelta: estimateTagStorage(updated) - estimateTagStorage(existing) + thoughtTagDelta }
+    }
 
-  const { tag, beforeConflict } = await sql.begin(async (transaction) => {
-    const before = (await transaction<Tag[]>`SELECT * FROM tags WHERE user_id = ${userId} AND name = ${name}`)[0] ?? null
-    const [created] = await transaction<Tag[]>`
+    const before = (await tx<Tag[]>`SELECT * FROM tags WHERE user_id = ${userId} AND name = ${name} FOR UPDATE`)[0] ?? null
+    const [created] = await tx<Tag[]>`
       INSERT INTO tags (user_id, client_id, name, color)
       VALUES (${userId}, ${clientId}, ${name}, ${color})
       ON CONFLICT(user_id, name) DO UPDATE SET client_id = COALESCE(tags.client_id, excluded.client_id), color = excluded.color, updated_at = NOW()
       RETURNING *
     `
     if (!created) throw new Error("Tag create did not return a row")
-    await logUpsertHistory(userId, "tag", before, created, writeHistory, clientId, opId, occurredAt, transaction)
-    return { tag: created, beforeConflict: before }
+    await logUpsertHistory(userId, "tag", before, created, writeHistory, clientId, opId, occurredAt, tx)
+    return { tag: created, storageDelta: estimateTagStorage(created) - (before ? estimateTagStorage(before) : 0) }
   })
-  const oldStorage = beforeConflict ? estimateTagStorage(beforeConflict) : 0
-  await addStorageDelta(userId, estimateTagStorage(tag) - oldStorage)
+  await addStorageDelta(userId, storageDelta)
   return tag
 }

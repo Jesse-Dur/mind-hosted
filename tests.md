@@ -19,6 +19,9 @@ changes; it is not the pass/fail gate for application behavior.
 - `client_id` idempotency is scoped per user.
 - Duplicate client creates update one row and do not duplicate create history.
 - Canvas, tile, thought, and tag upserts preserve relationships and payload fields.
+- Concurrent tag renames through server and client IDs preserve thought labels, History transitions, and storage totals in either request order.
+- Tag deletion reads the current name after a competing rename; name-conflict updates use the current colour, and renames of different tags preserve both labels on shared thoughts.
+- Failed tag renames roll back their writes and release their locks.
 - Thought creates without `sort_order` append after existing thoughts.
 - Invalid tile and thought parent references reject before writes.
 - Canvas deletion supports both `moveContents` and `deleteContents`.
@@ -26,6 +29,10 @@ changes; it is not the pass/fail gate for application behavior.
 - Snapshots await their revision anchor before reading entity data; a concurrent canvas change omitted by the snapshot remains available to the next pull.
 - New-user snapshots initialize a default canvas and return a numeric zero revision when no sync events exist.
 - Pull responses expose normalized numeric revisions and include entity events.
+
+## Browser Tag Checks
+
+Shared-browser checks against the running backend cover tag creation, renaming, and deletion through the UI. Concurrent authenticated pushes use server-only and client-only identities in both request orders; server snapshots, pulled local caches, and the History panel preserve the rename chain and unrelated thought labels. The temporary tag and canvas are removed after the checks, and the original canvas is restored.
 
 ## Browser Sync Motion Checks
 
