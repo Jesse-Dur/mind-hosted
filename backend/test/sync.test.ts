@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import type { syncDb as SyncDb } from "../db/sync"
 import type { sql as Sql } from "../db/client"
+import type { Canvas } from "../types"
 import type postgres from "postgres"
 
 const RUN_ID = `${Date.now()}_${Math.random().toString(36).slice(2)}`
@@ -118,6 +119,7 @@ if (!process.env.DATABASE_URL) {
 } else {
   const { sql } = await import("../db/client")
   const { syncDb } = await import("../db/sync")
+  const { logEvent } = await import("../db/sync/events")
 
   describe("backend sync db", () => {
     beforeEach(async () => {
@@ -483,6 +485,75 @@ if (!process.env.DATABASE_URL) {
       `
       expect(deletedRows[0]).toEqual({ tile_deleted: true, thought_deleted: true })
     })
+
+    test("sync event revisions use an uncached sequence", async () => {
+      const [sequence] = await sql<{ cache_size: number | string }[]>`
+        SELECT seqcache AS cache_size FROM pg_sequence
+        WHERE seqrelid = pg_get_serial_sequence('sync_events', 'revision')::regclass
+      `
+      expect(Number(sequence?.cache_size)).toBe(1)
+    })
+
+    for (const outcome of ["commit", "rollback"] as const) {
+      for (const scoped of [false, true]) {
+        test(`${scoped ? "canvas" : "global"} pull cannot skip a blocked publication after ${outcome}`, async () => {
+          const canvasId = await createCanvas(syncDb, USER_A)
+          const [canvas] = await sql<Canvas[]>`SELECT * FROM canvases WHERE id = ${canvasId}`
+          const since = await syncDb.latestRevision(USER_A)
+          const pullCanvasId = scoped ? canvasId : undefined
+          const inserted = Promise.withResolvers<{ pid: number; revision: number }>()
+          const release = Promise.withResolvers<void>()
+          const first = sql.begin(async (transaction) => {
+            // Hold a real publication transaction open after it allocates its revision.
+            await transaction`SELECT pg_advisory_xact_lock(hashtextextended(${`sync-events:${USER_A}`}, 0))`
+            const [connection] = await transaction<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`
+            const [event] = await transaction<{ revision: number | string }[]>`
+              INSERT INTO sync_events (user_id, canvas_id, entity_type, entity_id, op_id, action, data)
+              VALUES (${USER_A}, ${canvasId}, 'canvas', ${canvasId}, 'publication-first', 'upsert', '{}')
+              RETURNING revision
+            `
+            inserted.resolve({ pid: connection!.pid, revision: Number(event!.revision) })
+            await release.promise
+            if (outcome === "rollback") throw new Error("Publication rolled back")
+          })
+          void first.catch(inserted.reject)
+          let second: Promise<number | null> | undefined
+          try {
+            const held = await inserted.promise
+            second = logEvent(USER_A, "canvas", "upsert", "publication-second", canvas!, null, { ...canvas! })
+            void second.catch(() => {})
+            await Promise.race([
+              waitForBlockedMutation(sql, [held.pid]),
+              second.then(() => { throw new Error("Later publication committed before the earlier transaction ended") }),
+            ])
+
+            // A different user may publish a higher global revision without
+            // advancing this user's cursor past its uncommitted event.
+            const otherRevision = await logEvent(USER_B, "tag", "delete", "publication-other-user", null, null, {})
+            expect(otherRevision).toBeGreaterThan(held.revision)
+            const during = await syncDb.pull(USER_A, since, pullCanvasId)
+            expect(during.events).toEqual([])
+            expect(during.latest_revision).toBe(since)
+            expect(await syncDb.latestRevision(USER_A)).toBe(since)
+
+            release.resolve()
+            if (outcome === "rollback") await expect(first).rejects.toThrow("Publication rolled back")
+            else await first
+            const secondRevision = await second
+            expect(secondRevision).toBeGreaterThan(held.revision)
+            const after = await syncDb.pull(USER_A, during.latest_revision, pullCanvasId)
+            expect(after.events.map((event) => event.op_id)).toEqual(
+              outcome === "commit" ? ["publication-first", "publication-second"] : ["publication-second"],
+            )
+            expect(after.latest_revision).toBe(secondRevision!)
+            expect((await syncDb.pull(USER_A, after.latest_revision, pullCanvasId)).events).toEqual([])
+          } finally {
+            release.resolve()
+            await Promise.allSettled([first, ...(second ? [second] : [])])
+          }
+        })
+      }
+    }
 
     test("snapshot and pull expose normalized revisioned changes", async () => {
       const canvasId = await createCanvas(syncDb, USER_A)

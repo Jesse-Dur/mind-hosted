@@ -29,10 +29,16 @@ changes; it is not the pass/fail gate for application behavior.
 - Snapshots await their revision anchor before reading entity data; a concurrent canvas change omitted by the snapshot remains available to the next pull.
 - New-user snapshots initialize a default canvas and return a numeric zero revision when no sync events exist.
 - Pull responses expose normalized numeric revisions and include entity events.
+- Sync event publication waits for an earlier same-user transaction to commit or roll back before allocating its revision; global and canvas pulls cannot skip the blocked events.
+- Rollback gaps do not stall pulls, other users can publish independently, and the event sequence retains `CACHE 1`.
 
 ## Browser Tag Checks
 
 Shared-browser checks against the running backend cover tag creation, renaming, and deletion through the UI. Concurrent authenticated pushes use server-only and client-only identities in both request orders; server snapshots, pulled local caches, and the History panel preserve the rename chain and unrelated thought labels. The temporary tag and canvas are removed after the checks, and the original canvas is restored.
+
+## Browser Publication Checks
+
+Authenticated shared-browser checks hold an earlier PostgreSQL publication open while two temporary tag updates are pushed. Both requests wait, global and canvas pull cursors stay below the held revision, and snapshots can expose the updated tags without advancing past their unpublished events. Releasing the transaction makes all three events available in revision order to both pulls. The frontend cache receives the updates, and a repeat pull does not replay the test events. Cleanup removes the temporary tags from the server and cache; reloading restores the workspace with an empty outbox.
 
 ## Browser Sync Motion Checks
 

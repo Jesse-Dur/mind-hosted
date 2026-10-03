@@ -78,6 +78,10 @@ The sync engine prioritises the active canvas:
 
 The multi-device model is sequential rather than realtime collaborative editing. A device pushes revisioned changes to the server, and another device pulls those revisions later. For v1, conflict handling is intentionally simple: pending local changes are preserved over stale server lists, and same-field conflicts resolve by the latest accepted server operation.
 
+Sync event publication uses a short transaction with a per-user advisory lock across backend instances. Each publisher acquires the lock before allocating a revision and holds it through commit, so a pull cannot advance past an event that later commits with a lower revision for that user. Different users can publish concurrently. Revision gaps from rollbacks are allowed; the `sync_events` sequence must retain its default `CACHE 1` setting. Entity mutations and event publication still commit separately.
+
+When upgrading an existing installation to serialized publication, stop and drain the old backend writers before starting the updated backend. Clients that already missed events need fresh snapshots for their cached canvases; snapshot reconciliation preserves pending local work and the outbox.
+
 AI processing still requires network access to Groq. AI writes are restricted to thoughts and go through the same backend sync mutation path internally, so AI-created, updated, deleted, and moved thoughts emit `sync_events` and are picked up by normal pull flows.
 
 The public app data API is intentionally narrow:

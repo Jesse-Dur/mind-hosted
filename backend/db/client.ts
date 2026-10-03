@@ -96,6 +96,7 @@ await sql.unsafe(`
     ON history(user_id, op_id) WHERE op_id IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS sync_events (
+    -- Commit-ordered publication relies on the sequence's default CACHE 1.
     revision BIGSERIAL PRIMARY KEY,
     user_id TEXT NOT NULL,
     canvas_id BIGINT,
