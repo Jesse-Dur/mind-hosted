@@ -50,11 +50,16 @@ Mobile thought entry checks use a temporary phone-width focused tile in the shar
 
 Mobile tab gesture checks use touch pointer events: a swipe scrolls without reordering or switching canvases, a stationary 350 ms hold arms reordering, and cancellation clears the pending hold. Holding and releasing opens tab actions. Mouse movement still starts reordering immediately.
 
+Preference recovery checks mount the real App in an isolated browser harness with simulated authentication, storage, and server responses. Same-account sign-in after cached startup uploads pending local settings and resumes later saves without another workspace boot or reset. With no pending edits, it applies the server profile.
+
 ## Current Frontend Coverage
 
 - Completed upserts keep separate durable operations and flush in order for each entity, preserving their History actions.
 - Delayed snapshots preserve remote deletions, their Past entries, and newer confirmed baselines for pending local edits.
 - Past identity matching distinguishes tiles from thoughts even when their numeric IDs overlap.
+- Device preference hydration preserves settings edited while its server request is in flight.
+- Re-enabling preference sync after cached hydration preserves and uploads pending local settings, then saves later edits automatically.
+- Uncached startup waits for a successful server snapshot and can retry after sign-in or reconnect.
 - Sync status reads stop at an account change and cannot repopulate the next account's History.
 - Account resets clear private cross-canvas drag previews.
 - Confirmed canvas moves, parent deletions, and tag changes update child baselines so discard cannot restore obsolete parents or labels.

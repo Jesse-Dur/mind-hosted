@@ -19,6 +19,7 @@ import { readStoredCanvasFontSize } from "./storage"
 import { writeBillingPlansCache, writeBillingUsageCache, writeHistoryCache } from "../sync/queryCache"
 import { DEFAULT_CANVAS_FONT_SIZE, MAX_CANVAS_FONT_SIZE, MIN_CANVAS_FONT_SIZE } from "../utils/canvasFontSize"
 import type { BillingPlans, BillingUsage } from "../types"
+import { hydrateDevicePreferences, normalizeDevicePreferences, saveDevicePreferences } from "../preferences/devicePreferences"
 import { invalidateSyncAccount, prepareSyncAccount } from "../sync/accountScope"
 
 function requestUrl(path: string | Request) {
@@ -57,6 +58,78 @@ function billingPlans(overrides: Partial<BillingPlans> = {}): BillingPlans {
 
 beforeEach(async () => {
   await resetFrontendState()
+})
+
+test("preference hydration preserves edits made while the server profile is loading", async () => {
+  const previousNavigator = globalThis.navigator
+  const previousWindow = globalThis.window
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { onLine: true } })
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    ...previousWindow, innerWidth: 1200, matchMedia: () => ({ matches: false }),
+  } })
+  let respond!: (response: Response) => void
+  globalThis.fetch = () => new Promise<Response>((resolve) => { respond = resolve })
+  let applied = normalizeDevicePreferences({})
+  try {
+    const hydration = hydrateDevicePreferences((preferences) => { applied = preferences }, true)
+    while (!respond) await new Promise((resolve) => setTimeout(resolve, 0))
+    const edited = { ...applied, mobilePortraitSplit: 0.6 }
+    saveDevicePreferences(edited)
+    applied = edited
+    respond(new Response(JSON.stringify({ source: "device", preferences: { mobilePortraitSplit: 0.2 } })))
+    await hydration
+    expect(applied.mobilePortraitSplit).toBe(0.6)
+  } finally {
+    await hydrateDevicePreferences(() => {}, false)
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator })
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow })
+  }
+})
+
+test("preference sync resumes after cached hydration and preserves pending local settings", async () => {
+  const previousNavigator = globalThis.navigator
+  const previousWindow = globalThis.window
+  const previousFetch = globalThis.fetch
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { onLine: true } })
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    ...previousWindow, innerWidth: 1200, matchMedia: () => ({ matches: false }),
+  } })
+  const writes: Array<Record<string, unknown>> = []
+  let reads = 0
+  globalThis.fetch = async (_path, options) => {
+    if (options?.method === "PUT") {
+      writes.push(JSON.parse(String(options.body)).preferences)
+      return new Response("{}")
+    }
+    reads += 1
+    return new Response(JSON.stringify({ source: "device", preferences: { mobilePortraitSplit: 0.2 } }))
+  }
+  let applied = normalizeDevicePreferences({})
+  const apply = (preferences: typeof applied) => { applied = preferences }
+  try {
+    await hydrateDevicePreferences(apply, false)
+    const edited = { ...applied, mobilePortraitSplit: 0.6 }
+    saveDevicePreferences(edited)
+    expect(reads).toBe(0)
+    expect(writes).toEqual([])
+
+    await hydrateDevicePreferences(apply, true)
+    expect(reads).toBe(1)
+    expect(applied).toEqual(edited)
+    expect(writes).toEqual([edited])
+
+    const laterEdit = { ...edited, mobilePortraitSplit: 0.55 }
+    saveDevicePreferences(laterEdit)
+    for (let attempt = 0; attempt < 100 && writes.length < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    expect(writes).toEqual([edited, laterEdit])
+  } finally {
+    await hydrateDevicePreferences(() => {}, false)
+    globalThis.fetch = previousFetch
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator })
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow })
+  }
 })
 
 test("an old-account sync status read cannot repopulate a reset store", async () => {
@@ -275,8 +348,9 @@ describe("frontend store optimistic updates", () => {
     expect(await boot).toEqual({ activeCanvasId: 10, hasUsableCache: false })
   })
 
-  test("an unauthorized uncached startup is not ready and can retry after sign-in", async () => {
-    setGetToken(async () => null)
+  test.each(["unauthorized", "offline"] as const)("an %s uncached startup is not ready and can retry", async (failure) => {
+    if (failure === "unauthorized") setGetToken(async () => null)
+    else globalThis.fetch = async () => { throw new Error("Offline") }
     expect(await bootstrapCriticalWorkspace()).toBeNull()
     expect(useStore.getState().canvases).toEqual([])
 

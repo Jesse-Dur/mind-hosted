@@ -159,6 +159,8 @@ function installOnlineFlush() {
 
 export function saveDevicePreferences(preferences: DevicePreferences) {
   const normalized = normalizeDevicePreferences(preferences)
+  // A profile loaded before this edit must not replace the user's newer settings.
+  profileGeneration += 1
   writeLocal(normalized, true)
   if (!remoteEnabled) return
   if (saveTimer) clearTimeout(saveTimer)

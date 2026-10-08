@@ -8,6 +8,7 @@ import { PlansModal } from "./components/PlansModal"
 import { ReauthenticationOverlay } from "./components/ReauthenticationOverlay"
 import { Spotlight } from "./components/Spotlight"
 import { ResponsiveWorkspace } from "./layout/ResponsiveWorkspace"
+import { hydrateDevicePreferences } from "./preferences/devicePreferences"
 import { PwaUpdatePrompt } from "./pwa/serviceWorker"
 import { useStore, setGetToken } from "./store"
 import { clearReauthRequired } from "./auth/reauthSignal"
@@ -91,6 +92,7 @@ export default function App() {
     // Resume sync immediately without resetting its content or render readiness.
     if (bootUserRef.current === effectiveUserId) {
       if (isSignedIn) {
+        void hydrateDevicePreferences(useStore.getState().applyDevicePreferences, true).catch(console.error)
         void syncNow().catch(console.error)
         startDeferredWorkspaceWarmup(useStore.getState().activeCanvasId, true)
       }
@@ -126,7 +128,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [effectiveUserId, isSignedIn, resetStore, syncNow])
+  }, [effectiveUserId, isSignedIn, online, resetStore, syncNow])
 
   useEffect(() => {
     if (!effectiveUserId && (isLoaded || !online)) setLoaded(true)
