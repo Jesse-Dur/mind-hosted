@@ -50,7 +50,7 @@ Mobile thought entry checks use a temporary phone-width focused tile in the shar
 
 Mobile tab gesture checks use touch pointer events: a swipe scrolls without reordering or switching canvases, a stationary 350 ms hold arms reordering, and cancellation clears the pending hold. Holding and releasing opens tab actions. Mouse movement still starts reordering immediately.
 
-Mobile editing checks use isolated tile and thought data with captured writes. Escape restores the original title or thought text without saving; Enter and ordinary blur save changed text.
+Mobile editing checks use isolated tile and thought data with captured writes. Escape restores the original title or thought text without saving; Enter and ordinary blur save changed text. A scrollable tag menu ignores touch pointer movement followed by cancellation, accepts mouse clicks and touch-style taps, and closes when its backdrop is pressed.
 
 Desktop thought editing checks use isolated data with captured writes. Escape restores the original text and exits editing without saving. Enter and clicking outside the editor each save the changed text once.
 

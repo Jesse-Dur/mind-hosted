@@ -49,7 +49,7 @@ export function TagMenu({ thought, x, y, onClose, onUpdate }: Props) {
         {tags.map((tag) => {
           const active = thought.tags.includes(tag.name)
           return (
-            <div key={tag.id} onPointerDown={(e) => { e.stopPropagation(); toggle(tag.name) }}
+            <div key={tag.id} onClick={(e) => { e.stopPropagation(); toggle(tag.name) }}
               style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", cursor: "pointer", fontSize: 13, background: active ? tag.color + "11" : "transparent", transition: "background 0.1s ease" }}
               onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLDivElement).style.background = "#f5f5f5" }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = active ? tag.color + "11" : "transparent" }}
