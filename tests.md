@@ -80,6 +80,7 @@ Preference recovery checks mount the real App in an isolated browser harness wit
 - Flush skips unresolved temporary dependencies without network calls.
 - Network failures preserve operations with retry metadata.
 - Reconnecting bypasses pending network retry delays, including a failure still in flight, without retrying rejected or local-only operations.
+- Reconnect owns its retry/auth reset and the following fresh flush, so an overlapping upload cannot consume the retry or restore stale backoff. Persistent authentication failures pause without retry loops.
 - Token retrieval failures and temporarily missing tokens recover on later sync attempts, even if authentication recovers after the reconnect event. Reconnect rechecks a previously latched auth failure; repeated server 401 responses still pause sync.
 - History uses matching action badges for local and server entries and expands only meaningful details, including full text when summaries are shortened.
 - Stale `flushing` records retry and clear after server acknowledgement.

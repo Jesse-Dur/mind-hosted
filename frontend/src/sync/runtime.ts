@@ -1,4 +1,4 @@
-import { cancelScheduledFlush, flushSyncQueue, scheduleFlush, waitForSyncIdle } from "./flush"
+import { cancelScheduledFlush, flushSyncQueue, scheduleFlush } from "./flush"
 import { syncDb } from "./localDb"
 import { pullSync } from "./pull"
 import { createRemoteStoreBatch } from "./storeBridge"
@@ -10,18 +10,19 @@ let activeCanvasId: number | null = null
 let started = false
 const onOnline = () => runSyncAccountTask(async (scope) => {
   await runSyncWork(async () => {
-    // Let an in-flight failure record its backoff before clearing it on reconnect.
-    await waitForSyncIdle()
-    assertSyncAccountScopeCurrent(scope)
-    clearReauthRequired()
-    await syncDb.transaction("rw", syncDb.outbox, async () => {
-      await syncDb.outbox.where("status").equals("pending")
-        .and((record) => record.attemptCount > 0)
-        .modify({ nextAttemptAt: 0 })
+    await flushSyncQueue(async () => {
+      // Claim the next flush before clearing state so an overlapping attempt
+      // cannot restore auth/backoff or consume this reconnect's retry.
+      assertSyncAccountScopeCurrent(scope)
+      clearReauthRequired()
+      await syncDb.transaction("rw", syncDb.outbox, async () => {
+        await syncDb.outbox.where("status").equals("pending")
+          .and((record) => record.attemptCount > 0)
+          .modify({ nextAttemptAt: 0 })
+        assertSyncAccountScopeCurrent(scope)
+      })
       assertSyncAccountScopeCurrent(scope)
     })
-    assertSyncAccountScopeCurrent(scope)
-    await flushSyncQueue()
   })
 }).catch(console.error)
 const onVisibilityChange = () => {

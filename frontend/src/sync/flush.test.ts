@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test"
+import { beforeEach, describe, expect, spyOn, test } from "bun:test"
 import type { SyncPushOperation, SyncPushResponse } from "./types"
 import { isReauthRequired, notifyReauthRequired } from "../auth/reauthSignal"
 import {
@@ -27,8 +27,6 @@ async function reconnect() {
     startSyncRuntime()
     if (!online) throw new Error("Missing online listener")
     await online()
-    // The test harness does not run window timers; run the scheduled flush too.
-    await flushSyncQueue()
   } finally {
     stopSyncRuntime()
     window.addEventListener = addEventListener
@@ -186,6 +184,77 @@ describe("frontend sync flush", () => {
 
     expect(calls).toBe(2)
     expect(await syncDb.outbox.count()).toBe(0)
+  })
+
+  test("a competing flush cannot consume reconnect while retry state is being reset", async () => {
+    const { enqueueUpsert } = await import("./outbox")
+    await enqueueUpsert("thought", thought())
+    await enqueueUpsert("thought", thought({ id: 31, client_id: "backed-off" }))
+    const backedOff = (await syncDb.outbox.toArray()).find((record) => record.clientId === "backed-off")!
+    await syncDb.outbox.update(backedOff.opId, { attemptCount: 1, nextAttemptAt: Date.now() + 60000 })
+
+    const resetting = Promise.withResolvers<void>()
+    const allowReset = Promise.withResolvers<void>()
+    const resetFinished = Promise.withResolvers<void>()
+    const allowAuthFailure = Promise.withResolvers<void>()
+    const transaction = syncDb.transaction.bind(syncDb) as (...args: unknown[]) => Promise<unknown>
+    let didReset = false
+    const transactionSpy = spyOn(syncDb, "transaction").mockImplementation((async (...args: unknown[]) => {
+      if (args[1] !== syncDb.outbox) return transaction(...args)
+      resetting.resolve()
+      await allowReset.promise
+      const result = await transaction(...args)
+      didReset = true
+      resetFinished.resolve()
+      return result
+    }) as typeof syncDb.transaction)
+    setGetToken(async () => {
+      // An attempt that started before reconnect's reset cannot obtain a token.
+      if (!didReset) {
+        await allowAuthFailure.promise
+        throw new TypeError("Token recovery is still in flight")
+      }
+      return "test-token"
+    })
+    fetchResponder = (op) => ({ results: [{ ...op, ok: true, revision: 1, entity: thought({ id: op.server_id!, client_id: op.client_id! }) }] })
+    try {
+      const reconnected = reconnect()
+      await resetting.promise
+      const competing = flushSyncQueue()
+      // Give the competing attempt time to reach token retrieval in the old race.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      allowReset.resolve()
+      await resetFinished.promise
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      allowAuthFailure.resolve()
+      await Promise.all([competing, reconnected])
+
+      expect(fetchCalls).toHaveLength(2)
+      expect(await syncDb.outbox.count()).toBe(0)
+    } finally {
+      allowReset.resolve()
+      allowAuthFailure.resolve()
+      transactionSpy.mockRestore()
+    }
+  })
+
+  test("reconnect pauses once when authentication remains unavailable", async () => {
+    const { enqueueUpsert } = await import("./outbox")
+    await enqueueUpsert("thought", thought())
+    let tokenCalls = 0
+    setGetToken(async () => {
+      tokenCalls += 1
+      throw new TypeError("Token recovery is still in flight")
+    })
+
+    await reconnect()
+
+    expect(tokenCalls).toBe(1)
+    expect(fetchCalls).toHaveLength(0)
+    const pending = (await syncDb.outbox.toArray())[0]!
+    expect(pending.status).toBe("pending")
+    expect(pending.attemptCount).toBe(0)
+    expect(pending.error).toBeUndefined()
   })
 
   test("new canvas and tile string IDs are numeric for queued children and moves", async () => {

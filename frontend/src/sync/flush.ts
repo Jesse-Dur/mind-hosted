@@ -276,15 +276,25 @@ async function runFlushSyncQueue(scope: SyncAccountScope | null) {
   }
 }
 
-export function flushSyncQueue() {
-  if (currentFlush) return currentFlush
+export function flushSyncQueue(prepare?: () => Promise<void>): Promise<void> {
+  if (currentFlush) {
+    // Reconnect must reset retry/auth state after an earlier attempt settles,
+    // then drain a fresh snapshot rather than consume that attempt's result.
+    return prepare ? currentFlush.then(() => flushSyncQueue(prepare)) : currentFlush
+  }
   currentFlush = runSyncAccountTask(async (scope) => {
+    const flush = async () => {
+      assertSyncAccountScopeCurrent(scope)
+      await prepare?.()
+      assertSyncAccountScopeCurrent(scope)
+      await runFlushSyncQueue(scope)
+    }
     const locks = browserLockManager()
     // The outbox lives in IndexedDB, so multiple app tabs can see it. A browser
     // lock keeps one tab responsible for pushing at a time when the API exists.
     const lockName = scope ? `${SYNC_FLUSH_LOCK}:${scope.userId}` : SYNC_FLUSH_LOCK
-    if (locks) await locks.request(lockName, () => runFlushSyncQueue(scope))
-    else await runFlushSyncQueue(scope)
+    if (locks) await locks.request(lockName, flush)
+    else await flush()
   }).finally(() => { currentFlush = null })
   return currentFlush
 }
