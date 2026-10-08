@@ -54,6 +54,8 @@ Mobile editing checks use isolated tile and thought data with captured writes. E
 
 Desktop thought editing checks use isolated data with captured writes. Escape restores the original text and exits editing without saving. Enter and clicking outside the editor each save the changed text once.
 
+Desktop drag and resize checks use the real hook with in-memory writes. Rejected drops, cross-canvas no-ops, missing canvas rectangles, and rejected resizes restore transitions. Successful releases flush final geometry before transitions resume. Delayed completions cannot end a newer gesture. Checks also cover remounting, a click after a pending write, and Canvas-style delayed tile props.
+
 Preference recovery checks mount the real App in an isolated browser harness with simulated authentication, storage, and server responses. Same-account sign-in after cached startup uploads pending local settings and resumes later saves without another workspace boot or reset. With no pending edits, it applies the server profile.
 
 ## Current Frontend Coverage
