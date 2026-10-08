@@ -58,11 +58,16 @@ Desktop drag and resize checks use the real hook with in-memory writes. Rejected
 
 Spotlight checks use the real component with an isolated database. Workspace deletion, creation, and moves update search while it stays open; background Past refresh and restoration update Past results.
 
+History browser checks use an isolated database and captured server refreshes. Scrolling loads 450 saved entries in pages while keeping two older sync issues accessible. A burst of 50 acknowledgements produces one server History refresh. Loading a server entry outside the local page promptly attaches its local operation metadata.
+
 Preference recovery checks mount the real App in an isolated browser harness with simulated authentication, storage, and server responses. Same-account sign-in after cached startup uploads pending local settings and resumes later saves without another workspace boot or reset. With no pending edits, it applies the server profile.
 
 ## Current Frontend Coverage
 
 - Completed upserts keep separate durable operations and flush in order for each entity, preserving their History actions.
+- Local History reads start with a bounded page, retain old pending/error/device-only entries, and load every retained entry on demand. Hidden acknowledgement markers remain durable without filling visible pages.
+- Paging upgrades index existing visible activity without deleting hidden markers. Status notifications are batched, and an update arriving during a read receives a follow-up refresh.
+- Visible acknowledgements outside loaded pages refresh History even when another operation on the same entity needs attention. Hidden operations and previous account generations do not advance the refresh marker.
 - Account preparation blocks new sync work while waiting for a database lock or open, drains old scoped and unscoped tasks, and prevents superseded preparation from replacing a newer account's database.
 - PWA cleanup message failures are logged without deleting caches; a later message can retry cleanup.
 - Delayed snapshots preserve remote deletions, their Past entries, and newer confirmed baselines for pending local edits.

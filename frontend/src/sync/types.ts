@@ -64,6 +64,7 @@ export type SyncActivityRecord = {
   createdAt: number
   updatedAt: number
   hidden?: boolean
+  historyCreatedAt?: number
 }
 
 export type MetadataRecord = {

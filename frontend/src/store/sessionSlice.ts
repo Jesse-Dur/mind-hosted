@@ -2,6 +2,7 @@ import { initialBillingState } from "./billingSlice"
 import type { SessionSlice, StoreSlice } from "./types"
 import { advanceLoadGeneration } from "./loadGeneration"
 import { endCrossCanvasDrag } from "../utils/crossCanvasDrag"
+import { SYNC_ACTIVITY_PAGE_SIZE } from "../sync/status"
 
 export const createSessionSlice: StoreSlice<SessionSlice> = (set, get) => ({
   resetStore: () => {
@@ -28,6 +29,10 @@ export const createSessionSlice: StoreSlice<SessionSlice> = (set, get) => ({
       syncPendingCount: 0,
       syncEntityStatuses: new Map(),
       syncActivity: [],
+      syncActivityLimit: SYNC_ACTIVITY_PAGE_SIZE,
+      syncActivityHasMore: false,
+      syncActivityLoadingMore: false,
+      syncLastAcknowledgedAt: 0,
       highlightedId: null,
       recentLocalTileChangeIds: new Map(),
       remoteChangedTileIds: new Set(),

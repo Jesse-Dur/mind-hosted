@@ -7,6 +7,7 @@ import { buildHistoryFeed } from "../utils/historyFeed"
 import { historyDetailRows, historySummaryParts } from "../utils/historyPresentation"
 import type { HistoryEvent } from "../types"
 import type { SyncActivityRecord } from "../sync/types"
+import { isStaleSyncAccountError } from "../sync/accountScope"
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -108,13 +109,18 @@ export function HistoryPanel() {
     loadMoreHistory,
     refreshHistory,
     syncActivity,
+    syncLastAcknowledgedAt,
+    syncActivityHasMore,
+    syncActivityLoadingMore,
+    syncActivityLimit,
+    loadMoreSyncActivity,
+    refreshSyncStatuses,
   } = useStore()
   const syncIssues = syncActivity.filter((activity) => activity.state === "error" || activity.state === "local_only")
   const hasSyncIssues = syncIssues.length > 0
   const showingIssues = issuesOnly && hasSyncIssues
   const feed = buildHistoryFeed(events, syncActivity, showingIssues)
-  const loadMoreEventId = events[Math.max(events.length - 25, 0)]?.id
-  const latestSyncedAt = syncActivity.reduce((latest, activity) => activity.state === "synced" ? Math.max(latest, activity.updatedAt) : latest, 0)
+  const latestSyncedAt = syncActivity.reduce((latest, activity) => activity.state === "synced" ? Math.max(latest, activity.updatedAt) : latest, syncLastAcknowledgedAt)
   const lastHistoryRefresh = useRef(latestSyncedAt)
 
   useEffect(() => {
@@ -122,20 +128,40 @@ export function HistoryPanel() {
   }, [hasSyncIssues, issuesOnly])
 
   useEffect(() => {
+    // Match newly loaded server History with local operations outside the
+    // current activity page, including after restoring cached History.
+    void refreshSyncStatuses().catch((error) => {
+      if (!isStaleSyncAccountError(error)) console.error(error)
+    })
+  }, [events, refreshSyncStatuses])
+
+  useEffect(() => {
     if (latestSyncedAt <= lastHistoryRefresh.current) return
-    lastHistoryRefresh.current = latestSyncedAt
-    void refreshHistory()
+    // A flush can acknowledge many rows. Refresh server History once the burst
+    // settles, including acknowledgements outside the loaded local pages.
+    const timer = window.setTimeout(() => {
+      lastHistoryRefresh.current = latestSyncedAt
+      void refreshHistory()
+    }, 250)
+    return () => window.clearTimeout(timer)
   }, [latestSyncedAt, refreshHistory])
 
   const loadMoreMarker = useCallback((node: HTMLDivElement | null) => {
     observer.current?.disconnect()
-    if (!node || historyLoadingMore || !historyHasMore || !historyNextCursor) return
+    if (!node || historyLoadingMore || syncActivityLoadingMore
+      || !(syncActivityHasMore || historyHasMore && historyNextCursor)) return
 
     observer.current = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting) void loadMoreHistory()
+      if (!entries[0]?.isIntersecting) return
+      void Promise.all([
+        historyHasMore && historyNextCursor ? loadMoreHistory() : Promise.resolve(),
+        syncActivityHasMore ? loadMoreSyncActivity() : Promise.resolve(),
+      ]).catch(console.error)
     }, { rootMargin: "120px 0px" })
     observer.current.observe(node)
-  }, [historyHasMore, historyLoadingMore, historyNextCursor, loadMoreHistory])
+  }, [historyHasMore, historyLoadingMore, historyNextCursor, loadMoreHistory, syncActivityHasMore, syncActivityLoadingMore, syncActivityLimit, loadMoreSyncActivity])
+
+  useEffect(() => () => observer.current?.disconnect(), [])
 
   return (
     <div style={{ flex: 1, overflowY: "auto" }}>
@@ -156,7 +182,6 @@ export function HistoryPanel() {
         return (
           <div
             key={item.key}
-            ref={!showingIssues && e.id === loadMoreEventId ? loadMoreMarker : undefined}
             style={{
               borderBottom: "1px solid #f5f5f5",
               padding: "8px 0",
@@ -183,6 +208,7 @@ export function HistoryPanel() {
           </div>
         )
       })}
+      <div ref={!showingIssues ? loadMoreMarker : undefined} aria-hidden="true" style={{ height: 1, flexShrink: 0 }} />
     </div>
   )
 }

@@ -123,9 +123,14 @@ export interface SyncSlice {
   syncPendingCount: number
   syncEntityStatuses: Map<string, SyncEntityStatus>
   syncActivity: SyncActivityRecord[]
+  syncActivityLimit: number
+  syncLastAcknowledgedAt: number
+  syncActivityHasMore: boolean
+  syncActivityLoadingMore: boolean
   startSyncRuntime: () => Promise<void>
   syncNow: () => Promise<void>
   refreshSyncStatuses: () => Promise<void>
+  loadMoreSyncActivity: () => Promise<void>
   retrySyncOperation: (opId: string) => Promise<void>
   keepSyncOperationLocal: (opId: string) => Promise<void>
   discardSyncOperation: (opId: string) => Promise<void>

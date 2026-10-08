@@ -193,7 +193,7 @@ async function applyPushResult(record: OutboxRecord, resultEntity: SyncEntity | 
   await syncDb.outbox.delete(record.opId)
   const activity = await syncDb.syncActivity.get(record.opId)
   if (activity) await syncDb.syncActivity.put({ ...activity, state: "synced", error: null, updatedAt: Date.now() })
-  markSyncAcknowledged(record.entityType, record.clientId)
+  markSyncAcknowledged(record.entityType, record.clientId, record.recordHistory !== false)
 }
 
 async function flushRecord(record: OutboxRecord, scope: SyncAccountScope | null) {

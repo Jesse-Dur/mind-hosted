@@ -65,6 +65,7 @@ export function activityFromOutbox(record: OutboxRecord, existing?: SyncActivity
     createdAt: existing?.createdAt ?? record.createdAt,
     updatedAt: record.updatedAt,
     hidden: record.recordHistory === false,
+    historyCreatedAt: record.recordHistory === false ? undefined : record.createdAt,
   }
 }
 

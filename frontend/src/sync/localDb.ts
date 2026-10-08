@@ -52,6 +52,13 @@ export class MindSyncDb extends Dexie {
       const missing = operations.flatMap((operation, index) => existing[index] ? [] : [activityFromOutbox(operation)])
       if (missing.length > 0) await activity.bulkPut(missing)
     })
+    this.version(6).stores({
+      syncActivity: "opId, entityType, clientId, state, createdAt, updatedAt, historyCreatedAt",
+    }).upgrade(async (transaction) => {
+      await transaction.table<SyncActivityRecord, string>("syncActivity").toCollection().modify((record) => {
+        if (!record.hidden) record.historyCreatedAt = record.createdAt
+      })
+    })
   }
 }
 

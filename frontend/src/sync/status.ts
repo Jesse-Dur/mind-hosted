@@ -1,10 +1,11 @@
 import { syncDb } from "./localDb"
 import type { OutboxRecord, SyncActivityRecord, SyncEntityStatus, SyncEntityType } from "./types"
-import { activityFromOutbox } from "./activity"
+import { currentSyncAccountScope, isSyncAccountScopeCurrent, type SyncAccountScope } from "./accountScope"
 
 const SYNCED_VISIBLE_MS = 3000
 const listeners = new Set<() => void>()
 const recentlySynced = new Map<string, number>()
+let lastAcknowledged: { scope: SyncAccountScope; at: number } | null = null
 
 export function syncEntityKey(entityType: SyncEntityType, clientId: string) {
   return `${entityType}:${clientId}`
@@ -19,9 +20,19 @@ export function notifySyncStatusChanged() {
   for (const listener of listeners) listener()
 }
 
-export function markSyncAcknowledged(entityType: SyncEntityType, clientId: string) {
+export function lastSyncAcknowledgedAt() {
+  return lastAcknowledged && lastAcknowledged.scope === currentSyncAccountScope()
+    && isSyncAccountScopeCurrent(lastAcknowledged.scope) ? lastAcknowledged.at : 0
+}
+
+export function markSyncAcknowledged(entityType: SyncEntityType, clientId: string, recordHistory = true) {
   const key = syncEntityKey(entityType, clientId)
-  const expiresAt = Date.now() + SYNCED_VISIBLE_MS
+  const now = Date.now()
+  const expiresAt = now + SYNCED_VISIBLE_MS
+  const scope = currentSyncAccountScope()
+  // Entity attention states can hide the brief synced badge. History still
+  // needs to refresh for a visible acknowledgement outside its loaded pages.
+  if (recordHistory && scope && isSyncAccountScopeCurrent(scope)) lastAcknowledged = { scope, at: now }
   recentlySynced.set(key, expiresAt)
   notifySyncStatusChanged()
   window.setTimeout(() => {
@@ -84,13 +95,25 @@ export async function readSyncStatuses() {
   return statuses
 }
 
-export async function readSyncActivity(): Promise<SyncActivityRecord[]> {
-  await syncDb.transaction("rw", syncDb.outbox, syncDb.syncActivity, async () => {
-    const operations = await syncDb.outbox.toArray()
-    const existing = await syncDb.syncActivity.bulkGet(operations.map((operation) => operation.opId))
-    const missing = operations.flatMap((operation, index) => existing[index] ? [] : [activityFromOutbox(operation)])
-    if (missing.length > 0) await syncDb.syncActivity.bulkPut(missing)
+export const SYNC_ACTIVITY_PAGE_SIZE = 200
+
+export async function readSyncActivityPage(limit = SYNC_ACTIVITY_PAGE_SIZE, historyOpIds: string[] = []) {
+  // Hidden acknowledgement markers have no historyCreatedAt index entry. Keep
+  // them durable without scanning them to fill each visible History page.
+  return syncDb.transaction("r", syncDb.syncActivity, async () => {
+    const [recent, unresolved, linked] = await Promise.all([
+      syncDb.syncActivity.orderBy("historyCreatedAt").reverse().limit(limit + 1).toArray(),
+      syncDb.syncActivity.where("state").anyOf(["pending", "error", "local_only"]).toArray(),
+      syncDb.syncActivity.bulkGet(historyOpIds),
+    ])
+    const records = new Map<string, SyncActivityRecord>()
+    for (const record of [...recent.slice(0, limit), ...unresolved, ...linked]) {
+      if (record && !record.hidden) records.set(record.opId, record)
+    }
+    return { activity: [...records.values()], hasMore: recent.length > limit }
   })
-  const activity = await syncDb.syncActivity.orderBy("updatedAt").reverse().toArray()
-  return activity.filter((record) => !record.hidden)
+}
+
+export async function readSyncActivity(): Promise<SyncActivityRecord[]> {
+  return (await readSyncActivityPage()).activity
 }
