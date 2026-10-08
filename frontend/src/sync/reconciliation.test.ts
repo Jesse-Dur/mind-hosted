@@ -12,7 +12,7 @@ import { upsertEntityRecord } from "./entities"
 import type { SyncPullEvent, SyncPushOperation } from "./types"
 import { findMobileGestureTile } from "../utils/mobileTileGesture"
 import { optimisticIdentityKey } from "../utils/optimisticIdentity"
-import { beginCrossCanvasDrag, endCrossCanvasDrag } from "../utils/crossCanvasDrag"
+import { beginCrossCanvasDrag, endCrossCanvasDrag, getCrossCanvasDrag } from "../utils/crossCanvasDrag"
 import { MobileOverview } from "../layout/mobile/MobileOverview"
 import { readPastEntitiesCache } from "./pastCache"
 
@@ -24,6 +24,12 @@ const event = (revision: number, x: number, opId = `remote-${revision}`, action:
 })
 
 beforeEach(resetFrontendState)
+
+test("an account reset clears private cross-canvas drag previews", () => {
+  beginCrossCanvasDrag({ kind: "thought", thought: thought({ content: "Previous account" }), sourceTileId: 20, sourceCanvasId: 10, targetTileId: 20, targetIndex: 0, clientX: 50, clientY: 50, enteredCanvasId: null })
+  useStore.getState().resetStore()
+  expect(getCrossCanvasDrag()).toBeNull()
+})
 
 test("a delayed snapshot cannot restore a tile deleted by a newer pull", async () => {
   await cacheServerEntity("tile", tile(), false)

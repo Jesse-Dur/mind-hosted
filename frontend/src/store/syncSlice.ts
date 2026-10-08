@@ -4,6 +4,7 @@ import { startSyncRuntime, syncInBackground } from "../sync/engine"
 import { syncDb } from "../sync/localDb"
 import { discardSyncOperation, keepSyncOperationLocal, retrySyncOperation } from "../sync/resolution"
 import { readSyncActivity, readSyncStatuses, subscribeSyncStatus } from "../sync/status"
+import { assertSyncAccountScopeCurrent, isStaleSyncAccountError, runSyncAccountTask } from "../sync/accountScope"
 
 let statusSubscribed = false
 
@@ -11,50 +12,53 @@ async function pendingCount() {
   return syncDb.outbox.where("status").anyOf(["pending", "flushing", "error", "local_only"]).count()
 }
 
-export const createSyncSlice: StoreSlice<SyncSlice> = (set) => ({
+export const createSyncSlice: StoreSlice<SyncSlice> = (set, get) => ({
   syncPendingCount: 0,
   syncEntityStatuses: new Map(),
   syncActivity: [],
 
-  refreshSyncStatuses: async () => {
-    const [statuses, activity] = await Promise.all([readSyncStatuses(), readSyncActivity()])
-    set({ syncEntityStatuses: statuses, syncActivity: activity, syncPendingCount: await pendingCount() })
-  },
+  refreshSyncStatuses: () => runSyncAccountTask(async (scope) => {
+    const [statuses, activity, count] = await Promise.all([readSyncStatuses(), readSyncActivity(), pendingCount()])
+    assertSyncAccountScopeCurrent(scope)
+    set({ syncEntityStatuses: statuses, syncActivity: activity, syncPendingCount: count })
+  }),
 
   startSyncRuntime: async () => {
     startSyncRuntime()
     if (!statusSubscribed) {
       statusSubscribed = true
       subscribeSyncStatus(() => {
-        void Promise.all([readSyncStatuses(), readSyncActivity(), pendingCount()]).then(([statuses, activity, count]) => set({ syncEntityStatuses: statuses, syncActivity: activity, syncPendingCount: count }))
+        void get().refreshSyncStatuses().catch((error) => {
+          if (!isStaleSyncAccountError(error)) console.error(error)
+        })
       })
     }
-    const [statuses, activity] = await Promise.all([readSyncStatuses(), readSyncActivity()])
-    set({ syncEntityStatuses: statuses, syncActivity: activity, syncPendingCount: await pendingCount() })
+    await get().refreshSyncStatuses()
   },
 
-  syncNow: async () => {
+  syncNow: () => runSyncAccountTask(async (scope) => {
     await syncInBackground()
-    const [statuses, activity] = await Promise.all([readSyncStatuses(), readSyncActivity()])
-    set({ syncEntityStatuses: statuses, syncActivity: activity, syncPendingCount: await pendingCount() })
-  },
+    assertSyncAccountScopeCurrent(scope)
+    await get().refreshSyncStatuses()
+  }),
 
-  retrySyncOperation: async (opId) => {
+  retrySyncOperation: (opId) => runSyncAccountTask(async (scope) => {
     await retrySyncOperation(opId)
+    assertSyncAccountScopeCurrent(scope)
     await syncInBackground()
-    const [statuses, activity] = await Promise.all([readSyncStatuses(), readSyncActivity()])
-    set({ syncEntityStatuses: statuses, syncActivity: activity, syncPendingCount: await pendingCount() })
-  },
+    assertSyncAccountScopeCurrent(scope)
+    await get().refreshSyncStatuses()
+  }),
 
-  keepSyncOperationLocal: async (opId) => {
+  keepSyncOperationLocal: (opId) => runSyncAccountTask(async (scope) => {
     await keepSyncOperationLocal(opId)
-    const [statuses, activity] = await Promise.all([readSyncStatuses(), readSyncActivity()])
-    set({ syncEntityStatuses: statuses, syncActivity: activity, syncPendingCount: await pendingCount() })
-  },
+    assertSyncAccountScopeCurrent(scope)
+    await get().refreshSyncStatuses()
+  }),
 
-  discardSyncOperation: async (opId) => {
+  discardSyncOperation: (opId) => runSyncAccountTask(async (scope) => {
     await discardSyncOperation(opId)
-    const [statuses, activity] = await Promise.all([readSyncStatuses(), readSyncActivity()])
-    set({ syncEntityStatuses: statuses, syncActivity: activity, syncPendingCount: await pendingCount() })
-  },
+    assertSyncAccountScopeCurrent(scope)
+    await get().refreshSyncStatuses()
+  }),
 })

@@ -1,9 +1,11 @@
 import { initialBillingState } from "./billingSlice"
 import type { SessionSlice, StoreSlice } from "./types"
 import { advanceLoadGeneration } from "./loadGeneration"
+import { endCrossCanvasDrag } from "../utils/crossCanvasDrag"
 
 export const createSessionSlice: StoreSlice<SessionSlice> = (set, get) => ({
   resetStore: () => {
+    endCrossCanvasDrag()
     advanceLoadGeneration()
     get().resetBillingState()
     set({

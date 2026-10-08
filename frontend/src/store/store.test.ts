@@ -1,5 +1,5 @@
 // This file verifies the store contracts and the startup paths that rely on them.
-import { beforeEach, describe, expect, test } from "bun:test"
+import { beforeEach, describe, expect, spyOn, test } from "bun:test"
 import {
   canvas,
   clearReauthRequired,
@@ -19,6 +19,7 @@ import { readStoredCanvasFontSize } from "./storage"
 import { writeBillingPlansCache, writeBillingUsageCache, writeHistoryCache } from "../sync/queryCache"
 import { DEFAULT_CANVAS_FONT_SIZE, MAX_CANVAS_FONT_SIZE, MIN_CANVAS_FONT_SIZE } from "../utils/canvasFontSize"
 import type { BillingPlans, BillingUsage } from "../types"
+import { invalidateSyncAccount, prepareSyncAccount } from "../sync/accountScope"
 
 function requestUrl(path: string | Request) {
   return typeof path === "string" ? path : path.url
@@ -56,6 +57,42 @@ function billingPlans(overrides: Partial<BillingPlans> = {}): BillingPlans {
 
 beforeEach(async () => {
   await resetFrontendState()
+})
+
+test("an old-account sync status read cannot repopulate a reset store", async () => {
+  await prepareSyncAccount("status-account-a")
+  await syncDb.syncActivity.put({
+    opId: "private-action", entityType: "thought", clientId: "private-thought", action: "upsert",
+    state: "error", summary: "Account A private content", error: "Rejected", createdAt: 1, updatedAt: 1,
+  })
+  const collection = syncDb.syncActivity.orderBy("updatedAt").reverse()
+  const read = collection.toArray.bind(collection)
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  let entered!: () => void
+  const reading = new Promise<void>((resolve) => { entered = resolve })
+  const order = spyOn(syncDb.syncActivity, "orderBy").mockReturnValue(collection)
+  const delayed = spyOn(collection, "toArray").mockImplementation(async () => {
+    const rows = await read()
+    entered()
+    await gate
+    return rows
+  })
+  try {
+    const refresh = useStore.getState().refreshSyncStatuses()
+    void refresh.catch(() => {})
+    await reading
+    invalidateSyncAccount()
+    useStore.getState().resetStore()
+    release()
+    await expect(refresh).rejects.toThrow("Sync account changed")
+    expect(useStore.getState().syncActivity).toEqual([])
+  } finally {
+    release()
+    delayed.mockRestore()
+    order.mockRestore()
+    invalidateSyncAccount()
+  }
 })
 
 describe("canvas font size preference", () => {

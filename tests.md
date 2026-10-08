@@ -55,6 +55,8 @@ Mobile tab gesture checks use touch pointer events: a swipe scrolls without reor
 - Completed upserts keep separate durable operations and flush in order for each entity, preserving their History actions.
 - Delayed snapshots preserve remote deletions, their Past entries, and newer confirmed baselines for pending local edits.
 - Past identity matching distinguishes tiles from thoughts even when their numeric IDs overlap.
+- Sync status reads stop at an account change and cannot repopulate the next account's History.
+- Account resets clear private cross-canvas drag previews.
 - Confirmed canvas moves, parent deletions, and tag changes update child baselines so discard cannot restore obsolete parents or labels.
 - Temporary create followed by delete stays hidden locally while both completed actions flush in order for History.
 - Operations with temporary parents wait until the parent has a server id.
