@@ -61,6 +61,7 @@ Preference recovery checks mount the real App in an isolated browser harness wit
 ## Current Frontend Coverage
 
 - Completed upserts keep separate durable operations and flush in order for each entity, preserving their History actions.
+- Account preparation blocks new sync work while waiting for a database lock or open, drains old scoped and unscoped tasks, and prevents superseded preparation from replacing a newer account's database.
 - PWA cleanup message failures are logged without deleting caches; a later message can retry cleanup.
 - Delayed snapshots preserve remote deletions, their Past entries, and newer confirmed baselines for pending local edits.
 - Past identity matching distinguishes tiles from thoughts even when their numeric IDs overlap.

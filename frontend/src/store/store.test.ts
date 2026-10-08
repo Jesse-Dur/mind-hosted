@@ -1,5 +1,5 @@
 // This file verifies the store contracts and the startup paths that rely on them.
-import { beforeEach, describe, expect, spyOn, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import {
   canvas,
   clearReauthRequired,
@@ -20,7 +20,14 @@ import { writeBillingPlansCache, writeBillingUsageCache, writeHistoryCache } fro
 import { DEFAULT_CANVAS_FONT_SIZE, MAX_CANVAS_FONT_SIZE, MIN_CANVAS_FONT_SIZE } from "../utils/canvasFontSize"
 import type { BillingPlans, BillingUsage } from "../types"
 import { hydrateDevicePreferences, normalizeDevicePreferences, saveDevicePreferences } from "../preferences/devicePreferences"
-import { invalidateSyncAccount, prepareSyncAccount } from "../sync/accountScope"
+import { invalidateSyncAccount, prepareSyncAccount, quiesceSyncAccount } from "../sync/accountScope"
+
+const stalledFetches: Array<() => void> = []
+function stallFetch() {
+  return new Promise<Response>((resolve) => {
+    stalledFetches.push(() => resolve(new Response(JSON.stringify({ events: [], latest_revision: 0, results: [] }))))
+  })
+}
 
 function requestUrl(path: string | Request) {
   return typeof path === "string" ? path : path.url
@@ -58,6 +65,15 @@ function billingPlans(overrides: Partial<BillingPlans> = {}): BillingPlans {
 
 beforeEach(async () => {
   await resetFrontendState()
+})
+
+afterEach(async () => {
+  // Restore tests deliberately leave background network work in flight. Settle
+  // those fixtures so the next account transition can drain tracked tasks.
+  const idle = quiesceSyncAccount()
+  for (const finish of stalledFetches.splice(0)) finish()
+  await idle
+  invalidateSyncAccount()
 })
 
 test("preference hydration preserves edits made while the server profile is loading", async () => {
@@ -193,7 +209,7 @@ describe("frontend store optimistic updates", () => {
     const globals = globalThis as unknown as {
       fetch: (path: string, init?: RequestInit) => Promise<Response>
     }
-    globals.fetch = () => new Promise<Response>(() => {})
+    globals.fetch = stallFetch
     await syncDb.entities.bulkPut([
       entityRecord({
         entityType: "canvas",
@@ -247,7 +263,7 @@ describe("frontend store optimistic updates", () => {
     const globals = globalThis as unknown as {
       fetch: (path: string, init?: RequestInit) => Promise<Response>
     }
-    globals.fetch = () => new Promise<Response>(() => {})
+    globals.fetch = stallFetch
 
     await syncDb.entities.bulkPut([
       entityRecord({
@@ -370,7 +386,7 @@ describe("frontend store optimistic updates", () => {
     const globals = globalThis as unknown as {
       fetch: (path: string, init?: RequestInit) => Promise<Response>
     }
-    globals.fetch = () => new Promise<Response>(() => {})
+    globals.fetch = stallFetch
 
     await useStore.getState().startSyncRuntime()
 
@@ -906,7 +922,7 @@ describe("frontend store optimistic updates", () => {
     const globals = globalThis as unknown as {
       fetch: (path: string, init?: RequestInit) => Promise<Response>
     }
-    globals.fetch = () => new Promise<Response>(() => {})
+    globals.fetch = stallFetch
 
     const firstTile = tile({ id: 20, canvas_id: 10, title: "First canvas tile" })
     const secondTile = tile({ id: 21, canvas_id: 11, title: "Second canvas tile" })

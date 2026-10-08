@@ -1,7 +1,7 @@
 import Dexie, { type Table } from "dexie"
 import type { LocalEntityRecord, MetadataRecord, OutboxRecord, SyncActivityRecord } from "./types"
 import type { QueryCacheRecord } from "./queryCacheTypes"
-import { invalidateSyncAccount, prepareSyncAccount } from "./accountScope"
+import { currentSyncAccountScope, invalidateSyncAccount, isSyncAccountScopeCurrent, prepareSyncAccount } from "./accountScope"
 import { activityFromOutbox } from "./activity"
 
 const LEGACY_DB_NAME = "mind-sync"
@@ -95,9 +95,9 @@ async function copyLegacyDatabase(legacy: MindSyncDb, target: MindSyncDb, userId
   })
 }
 
-async function configureAccountDatabaseUnlocked(userId: string) {
+async function configureAccountDatabaseUnlocked(userId: string, assertCurrent: () => void) {
   const name = accountDbName(userId)
-  await prepareSyncAccount(userId)
+  assertCurrent()
   if (syncDb.name === name && syncDb.isOpen()) return syncDb
 
   const target = new MindSyncDb(name)
@@ -119,13 +119,13 @@ async function configureAccountDatabaseUnlocked(userId: string) {
       ])
     }
 
+    assertCurrent()
     syncDb.close()
     syncDb = target
     activeSyncUserId = userId
     return syncDb
   } catch (error) {
     target.close()
-    invalidateSyncAccount()
     throw error
   }
 }
@@ -135,10 +135,13 @@ export let syncDb = new MindSyncDb()
 
 export async function configureAccountDatabase(userId: string) {
   if (!userId) throw new Error("Cannot configure local storage without an authenticated user")
+  const scope = currentSyncAccountScope()
+  if (scope?.userId === userId && isSyncAccountScopeCurrent(scope) && activeSyncUserId === userId && syncDb.isOpen()) return syncDb
   const locks = browserLockManager()
-  return locks
-    ? locks.request(ACCOUNT_MIGRATION_LOCK, () => configureAccountDatabaseUnlocked(userId))
-    : configureAccountDatabaseUnlocked(userId)
+  await prepareSyncAccount(userId, (assertCurrent) => locks
+    ? locks.request(ACCOUNT_MIGRATION_LOCK, async () => { await configureAccountDatabaseUnlocked(userId, assertCurrent) })
+    : configureAccountDatabaseUnlocked(userId, assertCurrent).then(() => undefined))
+  return syncDb
 }
 
 export function getActiveSyncUserId() {

@@ -16,6 +16,7 @@ import { cachedOfflineUserId, rememberAuthenticatedUser } from "./auth/offlineId
 import { bootstrapCriticalWorkspace, startDeferredWorkspaceWarmup } from "./startup/workspaceStartup"
 import { closeAccountDatabase } from "./sync/localDb"
 import { stopSyncRuntime } from "./sync/engine"
+import { currentSyncAccountScope, suspendSyncAccount } from "./sync/accountScope"
 import { useOnline } from "./utils/connectivity"
 
 export default function App() {
@@ -52,7 +53,12 @@ export default function App() {
     setPlansOpen(false)
   }
 
-  useEffect(() => { setGetToken(getToken) }, [getToken])
+  useEffect(() => {
+    // Fence old workspace requests before Clerk's new account token can be used,
+    // including the time spent waiting for a queued boot or database lock.
+    if (currentSyncAccountScope()?.userId !== (effectiveUserId ?? undefined)) suspendSyncAccount()
+    setGetToken(getToken)
+  }, [getToken, effectiveUserId])
 
   useEffect(() => {
     if (!isSignedIn || !userId) return

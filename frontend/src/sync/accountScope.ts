@@ -18,6 +18,7 @@ export class StaleSyncAccountError extends Error {
 
 let generation = 0
 let activeScope: (SyncAccountScope & { controller: AbortController }) | null = null
+let preparingAccount = false
 const tasks = new Set<TrackedTask>()
 
 export function currentSyncAccountScope(): SyncAccountScope | null {
@@ -25,6 +26,7 @@ export function currentSyncAccountScope(): SyncAccountScope | null {
 }
 
 export function isSyncAccountScopeCurrent(scope: SyncAccountScope | null | undefined) {
+  if (preparingAccount) return false
   if (!scope) return activeScope === null
   return activeScope?.generation === scope.generation && activeScope.userId === scope.userId && !scope.signal.aborted
 }
@@ -55,22 +57,38 @@ async function waitForPriorGenerations(targetGeneration: number) {
   }
 }
 
-export async function prepareSyncAccount(userId: string) {
-  if (activeScope?.userId === userId && !activeScope.signal.aborted) return activeScope
+export async function prepareSyncAccount(userId: string, prepareStorage?: (assertCurrent: () => void) => Promise<void>) {
+  if (!prepareStorage && !preparingAccount && activeScope?.userId === userId && !activeScope.signal.aborted) return activeScope
+  preparingAccount = true
   abortActiveScope(false)
   const nextGeneration = generation
+  const assertCurrent = () => {
+    if (generation !== nextGeneration) throw new StaleSyncAccountError()
+  }
   await waitForPriorGenerations(nextGeneration)
-  if (generation !== nextGeneration) throw new StaleSyncAccountError()
+  assertCurrent()
+  await prepareStorage?.(assertCurrent)
+  assertCurrent()
   const controller = new AbortController()
   activeScope = { userId, generation: nextGeneration, signal: controller.signal, controller }
+  preparingAccount = false
   return activeScope
 }
 
+// Close the old account's request window before a caller publishes new auth.
+// Storage preparation will reopen work only after its matching handle is ready.
+export function suspendSyncAccount() {
+  preparingAccount = true
+  return abortActiveScope(false)
+}
+
 export function invalidateSyncAccount() {
+  preparingAccount = false
   return abortActiveScope()
 }
 
 export async function quiesceSyncAccount() {
+  preparingAccount = true
   abortActiveScope(false)
   const quiesceGeneration = generation
   await waitForPriorGenerations(quiesceGeneration)
@@ -79,9 +97,14 @@ export async function quiesceSyncAccount() {
 
 export function runSyncAccountTask<T>(work: (scope: SyncAccountScope | null) => Promise<T>): Promise<T> {
   const scope = currentSyncAccountScope()
-  const promise = Promise.resolve().then(() => work(scope))
-  if (!scope) return promise
-  const tracked: TrackedTask = { generation: scope.generation, promise }
+  if (!isSyncAccountScopeCurrent(scope)) return Promise.reject(new StaleSyncAccountError())
+  const taskGeneration = generation
+  const promise = Promise.resolve().then(() => {
+    if (taskGeneration !== generation) throw new StaleSyncAccountError()
+    assertSyncAccountScopeCurrent(scope)
+    return work(scope)
+  })
+  const tracked: TrackedTask = { generation: taskGeneration, promise }
   tasks.add(tracked)
   void promise.finally(() => tasks.delete(tracked)).catch(() => undefined)
   return promise

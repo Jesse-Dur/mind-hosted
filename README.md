@@ -65,7 +65,7 @@ The sync engine prioritises the active canvas:
 - The active canvas is pulled and reconciled before inactive canvases.
 - Background canvas hydration is sequential and stops when the active canvas changes, so the newly selected tab gets priority.
 - Local creates, edits, moves, resizes, reorders, and deletes are written to the outbox and flushed later if the connection drops.
-- IndexedDB is partitioned by Clerk user. Existing unpartitioned data is claimed once by the signed-in account, and signed-out account caches cannot be opened by another account.
+- IndexedDB is partitioned by Clerk user. Existing unpartitioned data is claimed once by the signed-in account, and signed-out account caches cannot be opened by another account. Account switches pause sync before changing authentication and resume after the matching local database is ready.
 - Small entity spinners show queued local saves and fade after acknowledgement; soft red attention markers flag failures, while an outlined orange dot identifies intentionally device-only changes. The durable status history and resolution actions are available in History.
 - Temporary failures to obtain an authentication token pause uploads without blocking later attempts. Reconnecting rechecks authentication, so queued changes can resume without a manual retry.
 - Pending uploads, including temporary network failures, appear as “Syncing” without error text. Reconnecting bypasses their retry delay; rejected and intentionally device-only changes still require their existing resolution actions.
