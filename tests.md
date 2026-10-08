@@ -69,6 +69,7 @@ Preference recovery checks mount the real App in an isolated browser harness wit
 - Paging upgrades index existing visible activity without deleting hidden markers. Status notifications are batched, and an update arriving during a read receives a follow-up refresh.
 - Visible acknowledgements outside loaded pages refresh History even when another operation on the same entity needs attention. Hidden operations and previous account generations do not advance the refresh marker.
 - Account preparation blocks new sync work while waiting for a database lock or open, drains old scoped and unscoped tasks, and prevents superseded preparation from replacing a newer account's database.
+- Startup retries back off to 15 seconds, announce retrying only after the first retry fails, and stop after success or cancellation. A database-open failure keeps sync fenced until setup succeeds on retry.
 - PWA cleanup message failures are logged without deleting caches; a later message can retry cleanup.
 - Delayed snapshots preserve remote deletions, their Past entries, and newer confirmed baselines for pending local edits.
 - Past identity matching distinguishes tiles from thoughts even when their numeric IDs overlap.

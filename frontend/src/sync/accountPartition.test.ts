@@ -291,4 +291,27 @@ describe("per-account IndexedDB partitioning", () => {
       expect(currentSyncAccountScope()?.userId).toBe("account-newer-opening")
     } finally { release(); await staleOpening.catch(() => {}); open.mockRestore() }
   })
+  test("a failed database opening keeps work fenced and a setup retry restores the matching account", async () => {
+    await localDb.configureAccountDatabase("account-a")
+    const originalOpen = localDb.MindSyncDb.prototype.open
+    let failed = false
+    const open = spyOn(localDb.MindSyncDb.prototype, "open").mockImplementation(function () {
+      if (this.name === localDb.localDbNames.account("account-b") && !failed) {
+        failed = true
+        throw new Error("Temporary database-open failure")
+      }
+      return originalOpen.call(this)
+    })
+    try {
+      await expect(localDb.configureAccountDatabase("account-b")).rejects.toThrow("Temporary database-open failure")
+      expect(localDb.getActiveSyncUserId()).toBe("account-a")
+      await expect(runSyncAccountTask(async () => {})).rejects.toThrow("Sync account changed")
+      await localDb.configureAccountDatabase("account-b")
+      expect(localDb.getActiveSyncUserId()).toBe("account-b")
+      expect(await runSyncAccountTask(async scope => scope?.userId)).toBe("account-b")
+    } finally {
+      open.mockRestore()
+    }
+  })
+
 })

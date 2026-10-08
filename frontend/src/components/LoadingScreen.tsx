@@ -2,9 +2,17 @@ import { useEffect, useRef } from "react"
 
 // minimum time the loading screen is shown in ms
 const MIN_MS = 200
+export const LOADING_RETRY_MESSAGE = "Loading failed, automatically retrying"
 
-export function LoadingScreen({ loaded }: { loaded: boolean }) {
+export function LoadingScreen({ loaded, retrying = false }: { loaded: boolean; retrying?: boolean }) {
   const mountTime = useRef(Date.now())
+
+  useEffect(() => {
+    const message = document.getElementById("splash-retry-message")
+    if (!message) return
+    message.textContent = retrying ? LOADING_RETRY_MESSAGE : ""
+    message.hidden = !retrying
+  }, [retrying])
 
   useEffect(() => {
     if (!loaded) return

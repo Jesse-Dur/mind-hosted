@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { SignInButton, useAuth } from "@clerk/clerk-react"
 import { CreationLimitNotice } from "./components/CreationLimitNotice"
-import { LoadingScreen } from "./components/LoadingScreen"
+import { LoadingScreen, LOADING_RETRY_MESSAGE } from "./components/LoadingScreen"
 import { OverageNotice } from "./components/OverageNotice"
 import { PlansModal } from "./components/PlansModal"
 import { ReauthenticationOverlay } from "./components/ReauthenticationOverlay"
@@ -14,6 +14,7 @@ import { useStore, setGetToken } from "./store"
 import { clearReauthRequired } from "./auth/reauthSignal"
 import { cachedOfflineUserId, rememberAuthenticatedUser } from "./auth/offlineIdentity"
 import { bootstrapCriticalWorkspace, startDeferredWorkspaceWarmup } from "./startup/workspaceStartup"
+import { startWorkspaceBootRetry } from "./startup/workspaceBootRetry"
 import { closeAccountDatabase } from "./sync/localDb"
 import { stopSyncRuntime } from "./sync/engine"
 import { currentSyncAccountScope, suspendSyncAccount } from "./sync/accountScope"
@@ -35,11 +36,13 @@ export default function App() {
   const [loaded, setLoaded] = useState(false)
   const [workspaceRendered, setWorkspaceRendered] = useState(false)
   const [workspaceUserId, setWorkspaceUserId] = useState<string | null>(null)
+  const [bootRetryUserId, setBootRetryUserId] = useState<string | null>(null)
   const [plansOpen, setPlansOpen] = useState(() => window.location.hash === "#plans")
   const bootUserRef = useRef<string | null>(null)
   const requestedBootUserRef = useRef<string | null>(null)
   const bootQueueRef = useRef<Promise<void>>(Promise.resolve())
   const markWorkspaceRendered = useCallback(() => setWorkspaceRendered(true), [])
+  const bootRetrying = Boolean(effectiveUserId && bootRetryUserId === effectiveUserId && !loaded)
 
   function closeSpotlight() {
     setSpotlightOpen(false)
@@ -89,6 +92,7 @@ export default function App() {
 
   useEffect(() => {
     requestedBootUserRef.current = effectiveUserId
+    setBootRetryUserId(null)
     if (!effectiveUserId) {
       bootUserRef.current = null
       setWorkspaceUserId(null)
@@ -123,16 +127,27 @@ export default function App() {
         }
         return
       }
-      if (!result) return
+      if (!result) {
+        // An expired session without a cache waits for sign-in. A signed-in
+        // workspace that failed to load can recover on the next startup attempt.
+        if (isSignedIn) throw new Error("Workspace could not be loaded")
+        return
+      }
       bootUserRef.current = effectiveUserId
       setLoaded(true)
       setWorkspaceUserId(effectiveUserId)
       if (isSignedIn) startDeferredWorkspaceWarmup(result.activeCanvasId, result.hasUsableCache)
     }
 
-    bootQueueRef.current = bootQueueRef.current.catch(console.error).then(boot).catch(console.error)
+    const stopRetrying = startWorkspaceBootRetry(() => {
+      const attempt = bootQueueRef.current.then(boot)
+      // Keep the queue available for a retry or a newly selected account.
+      bootQueueRef.current = attempt.catch(() => undefined)
+      return attempt
+    }, () => setBootRetryUserId(effectiveUserId))
     return () => {
       cancelled = true
+      stopRetrying()
     }
   }, [effectiveUserId, isSignedIn, online, resetStore, syncNow])
 
@@ -190,7 +205,7 @@ export default function App() {
         </div>
       )}
 
-      <LoadingScreen loaded={reauthenticationRequired || (loaded && (!canOpenWorkspace || workspaceRendered))} />
+      <LoadingScreen loaded={reauthenticationRequired || (loaded && (!canOpenWorkspace || workspaceRendered))} retrying={bootRetrying} />
       {canOpenWorkspace && workspaceUserId === effectiveUserId && (
         <>
         <OverageNotice tabsVisible={tabsVisible} />
@@ -202,7 +217,12 @@ export default function App() {
       )}
       {canOpenWorkspace && workspaceUserId !== effectiveUserId && (
         <div aria-label="Loading account" style={{ position: "fixed", inset: 0, display: "grid", placeItems: "center", background: "#f5f5f5" }}>
-          <img src="/favicon.svg" width={64} height={64} alt="" style={{ opacity: .48 }} />
+          <div style={{ position: "relative", width: 64, height: 64 }}>
+            <img src="/favicon.svg" width={64} height={64} alt="" style={{ opacity: .48 }} />
+            {bootRetrying && <p role="status" style={{ position: "absolute", top: "calc(100% + 22px)", left: "50%", transform: "translateX(-50%)", width: "max-content", maxWidth: "90vw", textAlign: "center", color: "#777", fontSize: 13, lineHeight: 1.5 }}>
+              {LOADING_RETRY_MESSAGE}
+            </p>}
+          </div>
         </div>
       )}
       {reauthenticationRequired && <ReauthenticationOverlay hasLocalData={workspaceUserId === effectiveUserId} />}

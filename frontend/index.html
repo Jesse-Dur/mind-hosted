@@ -62,6 +62,11 @@
         z-index: 1;
         animation: _pulse 1.2s ease-in-out infinite alternate;
       }
+      #splash-retry-message {
+        position: absolute; top: calc(100% + 22px); left: 50%;
+        transform: translateX(-50%); width: max-content; max-width: 90vw;
+        color: #777; font-size: 13px; line-height: 1.5; text-align: center;
+      }
       @media (max-width: 720px) {
         #splash-ring {
           width: clamp(88px, 24vmin, 118px);
@@ -148,6 +153,7 @@
             </g>
           </g>
         </svg>
+        <p id="splash-retry-message" role="status" hidden></p>
       </div>
     </div>
     <div id="root"></div>
