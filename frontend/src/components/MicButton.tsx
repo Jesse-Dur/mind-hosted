@@ -15,7 +15,8 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 export function MicButton({ micState, onMicClick }: Props) {
   const online = useOnline()
   const isActive = micState !== "idle"
-  const tooltipLabel = !online ? "Voice input requires an internet connection" : micState === "recording" ? "Stop recording" : "Voice input"
+  const offlineBlocked = !online && micState !== "recording"
+  const tooltipLabel = micState === "recording" ? "Stop recording" : offlineBlocked ? "Voice input requires an internet connection" : "Voice input"
 
   return (
     <Tooltip label={tooltipLabel} placement="top">
@@ -28,20 +29,20 @@ export function MicButton({ micState, onMicClick }: Props) {
 
         <button
           onClick={(e) => { e.stopPropagation(); onMicClick() }}
-          disabled={!online || micState === "transcribing" || micState === "loading"}
+          disabled={offlineBlocked || micState === "transcribing" || micState === "loading"}
           aria-label={tooltipLabel}
-          aria-disabled={!online || undefined}
-          title={!online ? "Connect to the internet to use voice input" : undefined}
+          aria-disabled={offlineBlocked || undefined}
+          title={offlineBlocked ? "Connect to the internet to use voice input" : undefined}
           style={{
             position: "absolute", inset: 0,
             width: SIZE, height: SIZE, borderRadius: "50%",
             border: "none",
-            cursor: !online ? "not-allowed" : isActive ? (micState === "recording" ? "pointer" : "default") : "pointer",
+            cursor: offlineBlocked ? "not-allowed" : isActive ? (micState === "recording" ? "pointer" : "default") : "pointer",
             background: micState === "recording" ? "#ef4444" : "transparent",
             display: "flex", alignItems: "center", justifyContent: "center",
             transition: "background 0.2s ease",
             animation: micState === "recording" ? "micPulse 1s ease-in-out infinite" : undefined,
-            opacity: online ? 1 : 0.38,
+            opacity: offlineBlocked ? 0.38 : 1,
           }}
           onMouseEnter={(e) => { if (micState === "idle") e.currentTarget.style.background = "#f0f0f0" }}
           onMouseLeave={(e) => { if (micState === "idle") e.currentTarget.style.background = "transparent" }}

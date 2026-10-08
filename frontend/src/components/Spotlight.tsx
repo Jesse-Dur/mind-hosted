@@ -85,7 +85,10 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
       }
     }
     function onMicShortcut() {
-      if (!online) return
+      if (!online) {
+        if (micState === "recording") handleMic()
+        return
+      }
       if (micState === "idle") {
         handleMic()
       } else if (micState === "recording") {
