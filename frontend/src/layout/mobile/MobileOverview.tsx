@@ -4,8 +4,9 @@ import { useStore } from "../../store"
 import { beginCrossCanvasDrag, endCrossCanvasDrag, getCrossCanvasDrag, moveCrossCanvasDrag, subscribeCrossCanvasDrag } from "../../utils/crossCanvasDrag"
 import { suppressNativeSelection } from "../../utils/mobileGestureSelection"
 import { shouldDismissMobileToast } from "../../utils/mobileSwipeDismiss"
-import { findMobileGestureTile, getMobileTileDropPoint, getMobileTileResize } from "../../utils/mobileTileGesture"
+import { findMobileGestureTile, getMobileTileDropPoint, getMobileTileResize, mobileGestureCanvasId } from "../../utils/mobileTileGesture"
 import { optimisticIdentityKey } from "../../utils/optimisticIdentity"
+import { canvasIdentityKey } from "../../utils/canvasIdentity"
 import { MobileThoughtList, ThoughtPreviewBar } from "./MobileThoughtList"
 import type { Thought, Tile } from "../../types"
 
@@ -17,11 +18,12 @@ const snap = (value: number) => Math.round(value / GRID) * GRID
 type TileFrame = Pick<Tile, "x" | "y" | "width" | "height">
 type OverviewDragFeedback = { thoughtDragging: boolean; targetTileId: number | null; tileDraggingKey: string | null }
 type Interaction = { kind: "drag" | "resize"; tileKey: string }
-type Undo = { tileKey: string; beforeCanvasId: number | null; before: TileFrame }
+type Undo = { tileKey: string; beforeCanvasId: number | null; beforeCanvasKey: string | null; before: TileFrame }
 type TileGesture = {
   mode: "pending" | "dragging" | "resizing"
   tile: Tile
   sourceCanvasId: number | null
+  sourceCanvasKey: string | null
   primaryId: number
   secondaryId: number | null
   startX: number
@@ -186,7 +188,7 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
       kind: "tile",
       tile: currentTile,
       thoughts: tileThoughts,
-      sourceCanvasId: gesture.sourceCanvasId,
+      sourceCanvasId: mobileGestureCanvasId(gesture.sourceCanvasId, gesture.sourceCanvasKey, state.canvases),
       grabOffsetX: gesture.grabOffsetX,
       grabOffsetY: gesture.grabOffsetY,
       clientX: gesture.lastX,
@@ -228,6 +230,7 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
     setTileDraft(null)
 
     const state = useStore.getState()
+    const sourceCanvasId = mobileGestureCanvasId(gesture.sourceCanvasId, gesture.sourceCanvasKey, state.canvases)
     const tileKey = optimisticIdentityKey(gesture.tile, "tile")
     const currentTile = findMobileGestureTile(tileKey, state.tiles, state.tileCache)
 
@@ -235,14 +238,14 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
     if (gesture.mode === "dragging") {
       if (session?.kind === "tile") endCrossCanvasDrag()
       if (cancelled || !gesture.moved || !finalDraft) {
-        if (cancelled && gesture.sourceCanvasId !== null && useStore.getState().activeCanvasId !== gesture.sourceCanvasId) setActiveCanvas(gesture.sourceCanvasId)
+        if (cancelled && sourceCanvasId !== null && state.activeCanvasId !== sourceCanvasId) setActiveCanvas(sourceCanvasId)
         return
       }
       if (!currentTile) return
-      const targetCanvasId = session?.kind === "tile" ? session.enteredCanvasId ?? gesture.sourceCanvasId : gesture.sourceCanvasId
+      const targetCanvasId = session?.kind === "tile" ? session.enteredCanvasId ?? sourceCanvasId : sourceCanvasId
       setDroppedTile({ tileKey, x: finalDraft.x, y: finalDraft.y })
-      setUndo({ tileKey, beforeCanvasId: gesture.sourceCanvasId, before: { x: gesture.tile.x, y: gesture.tile.y, width: gesture.tile.width, height: gesture.tile.height } })
-      if (targetCanvasId !== null && targetCanvasId !== gesture.sourceCanvasId) {
+      setUndo({ tileKey, beforeCanvasId: sourceCanvasId, beforeCanvasKey: gesture.sourceCanvasKey, before: { x: gesture.tile.x, y: gesture.tile.y, width: gesture.tile.width, height: gesture.tile.height } })
+      if (targetCanvasId !== null && targetCanvasId !== sourceCanvasId) {
         void moveTileToCanvas(currentTile.id, targetCanvasId, finalDraft.x, finalDraft.y)
       } else {
         void updateTile(currentTile.id, { x: finalDraft.x, y: finalDraft.y })
@@ -254,13 +257,13 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
     if (cancelled || !finalDraft || !currentTile) return
     const changed = finalDraft.x !== gesture.tile.x || finalDraft.y !== gesture.tile.y || finalDraft.width !== gesture.tile.width || finalDraft.height !== gesture.tile.height
     if (!changed) return
-    setUndo({ tileKey, beforeCanvasId: gesture.sourceCanvasId, before: { x: gesture.tile.x, y: gesture.tile.y, width: gesture.tile.width, height: gesture.tile.height } })
+    setUndo({ tileKey, beforeCanvasId: sourceCanvasId, beforeCanvasKey: gesture.sourceCanvasKey, before: { x: gesture.tile.x, y: gesture.tile.y, width: gesture.tile.width, height: gesture.tile.height } })
     setDroppedTile({ tileKey, x: finalDraft.x, y: finalDraft.y })
     void updateTile(currentTile.id, { x: finalDraft.x, y: finalDraft.y, width: finalDraft.width, height: finalDraft.height })
   }
 
   function beginTileGesture(event: ReactPointerEvent<HTMLDivElement>, tile: Tile) {
-    if (event.button !== 0) return
+    if (event.button !== 0 || getCrossCanvasDrag()?.kind === "thought") return
     event.stopPropagation()
     event.preventDefault()
     if (gestureRef.current) return
@@ -271,10 +274,12 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
     const rect = canvasRef.current?.getBoundingClientRect()
     const pointX = rect ? (event.clientX - rect.left) / Math.max(.01, scaleRef.current) : tile.x
     const pointY = rect ? (event.clientY - rect.top) / Math.max(.01, scaleRef.current) : tile.y
+    const sourceCanvas = useStore.getState().canvases.find((canvas) => canvas.id === (tile.canvas_id ?? activeCanvasId))
     const gesture: TileGesture = {
       mode: "pending",
       tile,
       sourceCanvasId: tile.canvas_id ?? activeCanvasId,
+      sourceCanvasKey: sourceCanvas ? canvasIdentityKey(sourceCanvas) : null,
       primaryId: event.pointerId,
       secondaryId: null,
       startX: event.clientX,
@@ -372,8 +377,9 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
     const state = useStore.getState()
     const current = findMobileGestureTile(undo.tileKey, state.tiles, state.tileCache)
     if (!current) { setUndo(null); return }
-    if (undo.beforeCanvasId !== null && current.canvas_id !== undo.beforeCanvasId) {
-      void state.moveTileToCanvas(current.id, undo.beforeCanvasId, undo.before.x, undo.before.y)
+    const beforeCanvasId = mobileGestureCanvasId(undo.beforeCanvasId, undo.beforeCanvasKey, state.canvases)
+    if (beforeCanvasId !== null && current.canvas_id !== beforeCanvasId) {
+      void state.moveTileToCanvas(current.id, beforeCanvasId, undo.before.x, undo.before.y)
     } else {
       void state.updateTile(current.id, undo.before)
     }

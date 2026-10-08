@@ -67,7 +67,9 @@ Preference recovery checks mount the real App in an isolated browser harness wit
 - Operations with temporary parents wait until the parent has a server id.
 - Server-id adoption rewrites cached children and pending payloads.
 - Tile moves, cross-canvas drops, resizing, and Undo survive creation sync before, during, and after the gesture commit. Adoption preserves the dropped frame even when its local entity write finishes before its outbox row.
+- Tile gestures and Undo resolve their source canvas after its temporary ID is adopted.
 - Rendering the mobile overview after server-ID adoption keeps the dragged tile's original hidden while other tiles remain visible.
+- Mobile thought drag references adopt thought, tile, and canvas IDs without duplicating the focused preview. Browser gesture checks confirm that the drop uses the current ID and ignores another pointer's release.
 - Flush skips unresolved temporary dependencies without network calls.
 - Network failures preserve operations with retry metadata.
 - Reconnecting bypasses pending network retry delays, including a failure still in flight, without retrying rejected or local-only operations.

@@ -1,9 +1,17 @@
 import { describe, expect, test } from "bun:test"
-import { findMobileGestureTile, getMobileTileDropPoint, getMobileTileResize } from "./mobileTileGesture"
+import { findMobileGestureTile, getMobileTileDropPoint, getMobileTileResize, mobileGestureCanvasId } from "./mobileTileGesture"
 import { optimisticIdentityKey } from "./optimisticIdentity"
-import type { Tile } from "../types"
+import { canvasIdentityKey } from "./canvasIdentity"
+import type { Canvas, Tile } from "../types"
 
 describe("mobile tile gestures", () => {
+  test("drop, cancellation, and Undo resolve a newly created canvas after server-ID adoption", () => {
+    const pending: Canvas = { id: -10, client_id: "source-canvas", name: "New canvas", is_favourite: false, sort_order: 0, created_at: "2026-01-01" }
+    const key = canvasIdentityKey(pending)
+    expect(mobileGestureCanvasId(pending.id, key, [pending])).toBe(-10)
+    expect(mobileGestureCanvasId(pending.id, key, [{ ...pending, id: 10 }])).toBe(10)
+  })
+
   test("resolves the gesture's tile after server-ID adoption and a canvas switch", () => {
     const pending: Tile = { id: -20, client_id: "moving", canvas_id: 10, title: "New tile", x: 48, y: 48, width: 240, height: 192, importance: 1, visible: true, created_at: "2026-01-01" }
     const key = optimisticIdentityKey(pending, "tile")

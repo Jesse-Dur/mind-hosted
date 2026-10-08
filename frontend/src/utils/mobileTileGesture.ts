@@ -1,10 +1,15 @@
-import type { Tile } from "../types"
+import type { Canvas, Tile } from "../types"
 import { optimisticIdentityKey } from "./optimisticIdentity"
+import { canvasIdentityKey } from "./canvasIdentity"
 
 const GRID = 24
 
 const snap = (value: number) => Math.round(value / GRID) * GRID
 const floorToGrid = (value: number) => Math.floor(value / GRID) * GRID
+
+export function mobileGestureCanvasId(canvasId: number | null, canvasKey: string | null, canvases: Canvas[]) {
+  return canvases.find((canvas) => canvasIdentityKey(canvas) === canvasKey)?.id ?? canvasId
+}
 
 export function findMobileGestureTile(tileKey: string, tiles: Tile[], tileCache: Map<number, Tile[]>) {
   const matches = (tile: Tile) => optimisticIdentityKey(tile, "tile") === tileKey

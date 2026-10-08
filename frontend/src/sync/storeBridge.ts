@@ -6,6 +6,7 @@ import { readEntityRevision } from "./entityRevision"
 import { syncDb } from "./localDb"
 import { currentSyncAccountScope, isSyncAccountScopeCurrent } from "./accountScope"
 import { writeStoredActiveCanvasId } from "../store/storage"
+import { adoptCrossCanvasDragId } from "../utils/crossCanvasDrag"
 import type { LocalEntityRecord, SyncEntity, SyncEntityType, SyncPayload } from "./types"
 
 type GetState = () => AppStore
@@ -153,6 +154,7 @@ export function adoptServerEntity(entityType: SyncEntityType, record: LocalEntit
       tags: state.tags.map((item) => item.id === tempId ? tag : item),
     }
   })
+  adoptCrossCanvasDragId(entityType, tempId, entity.id)
 }
 
 export function applyRemoteEntity(entityType: SyncEntityType, entity: SyncEntity, options: ApplyRemoteEntityOptions = {}, update: SetState | null = setState) {

@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from "bun:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { canvas, entityKey, resetFrontendState, syncDb, tag, thought, tile, useStore } from "../test/syncTestHarness"
+import { canvas, entityKey, entityRecord, resetFrontendState, syncDb, tag, thought, tile, useStore } from "../test/syncTestHarness"
 import { cacheServerEntity, cacheSyncSnapshot, removeLocalThoughtTag } from "./cache"
 import { captureEntityWriteGeneration } from "./entityWriteFence"
 import { enqueueDelete, enqueueUpsert } from "./outbox"
@@ -14,6 +14,8 @@ import { findMobileGestureTile } from "../utils/mobileTileGesture"
 import { optimisticIdentityKey } from "../utils/optimisticIdentity"
 import { beginCrossCanvasDrag, endCrossCanvasDrag, getCrossCanvasDrag } from "../utils/crossCanvasDrag"
 import { MobileOverview } from "../layout/mobile/MobileOverview"
+import { MobileFocusedTile } from "../layout/mobile/MobileFocusedTile"
+import { adoptServerEntity } from "./storeBridge"
 import { readPastEntitiesCache } from "./pastCache"
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } })
@@ -115,6 +117,29 @@ test.each(["tile", "canvas"] as const)("discard cannot restore a thought deleted
   expect((await syncDb.entities.get(entityKey("thought", "thought-client")))?.confirmedData).toBeNull()
   await discardSyncOperation((await syncDb.outbox.toArray())[0]!.opId)
   expect(await syncDb.entities.get(entityKey("thought", "thought-client"))).toBeUndefined()
+})
+
+test("mobile thought drag adopts thought and parent IDs without duplicating the preview", async () => {
+  const sourceCanvas = canvas({ id: -10 })
+  const sourceTile = tile({ id: -20, canvas_id: -10 })
+  const moving = thought({ id: -30, tile_id: -20 })
+  useStore.setState({ activeCanvasId: -10, canvases: [sourceCanvas], tiles: [sourceTile], thoughts: [moving] })
+  beginCrossCanvasDrag({ kind: "thought", thought: moving, sourceTileId: -20, sourceCanvasId: -10, targetTileId: -20, targetIndex: 0, clientX: 50, clientY: 50, enteredCanvasId: -10 })
+  try {
+    adoptServerEntity("thought", entityRecord({ entityType: "thought", tempId: -30, data: moving }), thought({ tile_id: -20 }))
+    adoptServerEntity("tile", entityRecord({ entityType: "tile", tempId: -20, data: sourceTile }), tile({ canvas_id: -10 }))
+    adoptServerEntity("canvas", entityRecord({ entityType: "canvas", tempId: -10, data: sourceCanvas }), canvas())
+    expect(getCrossCanvasDrag()).toMatchObject({ thought: { id: 30, tile_id: 20 }, sourceTileId: 20, targetTileId: 20, sourceCanvasId: 10, enteredCanvasId: 10 })
+
+    const initial = useStore.getInitialState()
+    const original = { ...initial }
+    try {
+      Object.assign(initial, useStore.getState())
+      const html = renderToStaticMarkup(createElement(MobileFocusedTile, { tile: useStore.getState().tiles[0]!, thoughts: useStore.getState().thoughts, onFocusTarget: () => {} }))
+      expect(html.match(/data-mobile-thought-id="30"/g)).toHaveLength(1)
+      expect(html).not.toContain('data-mobile-thought-id="-30"')
+    } finally { Object.assign(initial, original) }
+  } finally { endCrossCanvasDrag() }
 })
 
 test("mobile overview keeps the original tile hidden when creation sync changes its ID during a drag", async () => {

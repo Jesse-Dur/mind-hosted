@@ -105,8 +105,9 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
   }
 
   function beginDrag(event: React.PointerEvent) {
-    if (editing || event.button !== 0) return
+    if (editing || event.button !== 0 || getCrossCanvasDrag()) return
     event.preventDefault()
+    const pointerId = event.pointerId
     const sourceCanvasId = activeCanvasId
     const sourceTileId = thought.tile_id
     let previewedTarget = `${sourceCanvasId ?? "none"}:${sourceTileId}`
@@ -119,6 +120,9 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
     beginCrossCanvasDrag({ kind: "thought", thought, sourceTileId, sourceCanvasId, targetTileId: sourceTileId, targetIndex: Math.max(0, sourceThoughts.findIndex((item) => item.id === thought.id)), clientX: event.clientX, clientY: event.clientY, enteredCanvasId: null })
 
     const move = (pointerEvent: PointerEvent) => {
+      if (pointerEvent.pointerId !== pointerId) return
+      const session = getCrossCanvasDrag()
+      if (session?.kind !== "thought") return
       moveCrossCanvasDrag(pointerEvent.clientX, pointerEvent.clientY)
       const target = document.elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)?.closest<HTMLElement>("[data-mobile-tile-id]")
       const id = Number(target?.dataset.mobileTileId)
@@ -133,7 +137,7 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
           return { id: Number(row.dataset.mobileThoughtId), top: rect.top, bottom: rect.bottom }
         })
         .filter((row) => Number.isFinite(row.id))
-      setThoughtDragTarget(id, thoughtList ? mobileThoughtInsertionIndex(rows, thought.id, pointerEvent.clientY) : null)
+      setThoughtDragTarget(id, thoughtList ? mobileThoughtInsertionIndex(rows, session.thought.id, pointerEvent.clientY) : null)
       const targetCanvasId = useStore.getState().activeCanvasId
       const targetKey = `${targetCanvasId ?? "none"}:${id}`
       if (targetKey !== previewedTarget) {
@@ -142,12 +146,17 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
       }
     }
     const finish = (pointerEvent: PointerEvent, cancelled: boolean) => {
-      window.removeEventListener("pointermove", move)
-      window.removeEventListener("pointerup", up)
-      window.removeEventListener("pointercancel", cancel)
+      if (pointerEvent.pointerId !== pointerId) return
       const session = getCrossCanvasDrag()
-      const targetTileId = session?.kind === "thought" ? session.targetTileId : null
-      const targetIndex = session?.kind === "thought" ? session.targetIndex : null
+      if (session?.kind !== "thought") {
+        setDragging(false)
+        return
+      }
+      const thoughtId = session.thought.id
+      const sourceTileId = session.sourceTileId
+      const sourceCanvasId = session.sourceCanvasId
+      const targetTileId = session.targetTileId
+      const targetIndex = session.targetIndex
       const targetCanvasId = useStore.getState().activeCanvasId
       endCrossCanvasDrag()
       dragEndedAt.current = Date.now()
@@ -157,9 +166,9 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
           .filter((item) => item.tile_id === targetTileId)
           .sort((a, b) => a.sort_order - b.sort_order)
         const currentIds = targetThoughts.map((item) => item.id)
-        const orderedIds = mobileThoughtOrderIds(currentIds, thought.id, targetIndex ?? currentIds.filter((id) => id !== thought.id).length)
+        const orderedIds = mobileThoughtOrderIds(currentIds, thoughtId, targetIndex ?? currentIds.filter((id) => id !== thoughtId).length)
         if (targetTileId !== sourceTileId || targetCanvasId !== sourceCanvasId || !sameThoughtOrder(orderedIds, currentIds)) {
-          void moveThoughtToTile(thought.id, targetTileId, { sourceCanvasId, targetCanvasId, orderedIds })
+          void moveThoughtToTile(thoughtId, targetTileId, { sourceCanvasId, targetCanvasId, orderedIds })
         }
         onFocusTarget(targetTileId, targetCanvasId)
       } else {
@@ -170,9 +179,19 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
     }
     const up = (pointerEvent: PointerEvent) => finish(pointerEvent, false)
     const cancel = (pointerEvent: PointerEvent) => finish(pointerEvent, true)
+    const cleanup = () => {
+      window.removeEventListener("pointermove", move)
+      window.removeEventListener("pointerup", up)
+      window.removeEventListener("pointercancel", cancel)
+      unsubscribe()
+      setDragging(false)
+    }
+    // A canvas switch may unmount this row while the drag continues. End the
+    // listeners with the shared session, including when an account reset ends it.
+    const unsubscribe = subscribeCrossCanvasDrag((session) => { if (session?.kind !== "thought") cleanup() })
     window.addEventListener("pointermove", move, { passive: false })
-    window.addEventListener("pointerup", up, { once: true })
-    window.addEventListener("pointercancel", cancel, { once: true })
+    window.addEventListener("pointerup", up)
+    window.addEventListener("pointercancel", cancel)
   }
 
   function beginTagLongPress(event: React.PointerEvent<HTMLDivElement>) {
