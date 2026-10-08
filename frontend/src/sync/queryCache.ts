@@ -55,7 +55,8 @@ export async function readPastEntitiesCache() {
 }
 
 function entityIdentityTokens(entity: Tile | Thought) {
-  return [`server:${entity.id}`, ...(entity.client_id ? [`client:${entity.client_id}`] : [])]
+  const type = "tile_id" in entity ? "thought" : "tile"
+  return [`${type}:server:${entity.id}`, ...(entity.client_id ? [`${type}:client:${entity.client_id}`] : [])]
 }
 
 function hasEntityIdentity(identities: Set<string>, entity: Tile | Thought) {

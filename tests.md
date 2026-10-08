@@ -52,8 +52,11 @@ Mobile tab gesture checks use touch pointer events: a swipe scrolls without reor
 
 ## Current Frontend Coverage
 
-- Repeated queued upserts keep one durable operation with the latest payload.
-- Temporary create followed by delete removes local state before flush.
+- Completed upserts keep separate durable operations and flush in order for each entity, preserving their History actions.
+- Delayed snapshots preserve remote deletions, their Past entries, and newer confirmed baselines for pending local edits.
+- Past identity matching distinguishes tiles from thoughts even when their numeric IDs overlap.
+- Confirmed canvas moves, parent deletions, and tag changes update child baselines so discard cannot restore obsolete parents or labels.
+- Temporary create followed by delete stays hidden locally while both completed actions flush in order for History.
 - Operations with temporary parents wait until the parent has a server id.
 - Server-id adoption rewrites cached children and pending payloads.
 - Tile moves, cross-canvas drops, resizing, and Undo survive creation sync before, during, and after the gesture commit. Adoption preserves the dropped frame even when its local entity write finishes before its outbox row.

@@ -2,7 +2,8 @@ import { beforeEach, expect, test } from "bun:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { canvas, entityKey, resetFrontendState, syncDb, tag, thought, tile, useStore } from "../test/syncTestHarness"
-import { cacheServerEntity } from "./cache"
+import { cacheServerEntity, cacheSyncSnapshot, removeLocalThoughtTag } from "./cache"
+import { captureEntityWriteGeneration } from "./entityWriteFence"
 import { enqueueDelete, enqueueUpsert } from "./outbox"
 import { flushSyncQueue } from "./flush"
 import { pullSync } from "./pull"
@@ -13,6 +14,7 @@ import { findMobileGestureTile } from "../utils/mobileTileGesture"
 import { optimisticIdentityKey } from "../utils/optimisticIdentity"
 import { beginCrossCanvasDrag, endCrossCanvasDrag } from "../utils/crossCanvasDrag"
 import { MobileOverview } from "../layout/mobile/MobileOverview"
+import { readPastEntitiesCache } from "./pastCache"
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } })
 const localTile = () => syncDb.entities.get(entityKey("tile", "tile-client"))
@@ -22,6 +24,92 @@ const event = (revision: number, x: number, opId = `remote-${revision}`, action:
 })
 
 beforeEach(resetFrontendState)
+
+test("a delayed snapshot cannot restore a tile deleted by a newer pull", async () => {
+  await cacheServerEntity("tile", tile(), false)
+  const generation = captureEntityWriteGeneration()
+  globalThis.fetch = async () => json({ events: [event(2, 0, "remote-delete", "delete")], latest_revision: 2 })
+  await pullSync()
+  expect(await localTile()).toBeUndefined()
+
+  await cacheSyncSnapshot({ revision: 1, active_canvas_id: 10, canvases: [canvas()], tags: [], tiles: [tile()], thoughts: [] }, generation)
+  expect(await localTile()).toBeUndefined()
+  expect((await readPastEntitiesCache()).pastTiles.map((item) => item.id)).toEqual([20])
+})
+
+test("a delayed snapshot cannot replace a pending edit's newer confirmed baseline", async () => {
+  await cacheServerEntity("tile", tile({ x: 0 }), false)
+  await enqueueUpsert("tile", tile({ x: 240 }))
+  const generation = captureEntityWriteGeneration()
+  globalThis.fetch = async () => json({ events: [event(2, 480)], latest_revision: 2 })
+  await pullSync()
+
+  await cacheSyncSnapshot({ revision: 1, active_canvas_id: 10, canvases: [canvas()], tags: [], tiles: [tile({ x: 0 })], thoughts: [] }, generation)
+  expect((await localTile())?.data).toMatchObject({ x: 240 })
+  expect((await localTile())?.confirmedData).toMatchObject({ x: 480 })
+})
+
+test.each([false, true])("a remote canvas move protects the child tile's confirmed parent (pending: %s)", async (pending) => {
+  await cacheServerEntity("canvas", canvas(), false)
+  await cacheServerEntity("canvas", canvas({ id: 11, client_id: "target-canvas" }), false)
+  await cacheServerEntity("tile", tile(), false)
+  if (pending) await enqueueUpsert("tile", tile({ title: "Local edit" }))
+  const generation = captureEntityWriteGeneration()
+  globalThis.fetch = async () => json({ events: [{ ...event(2, 0, "delete-canvas", "delete"), entity_type: "canvas", entity_id: 10, client_id: "canvas-client", data: { id: 10, targetCanvasId: 11 } }], latest_revision: 2 })
+  await pullSync()
+  await cacheSyncSnapshot({ revision: 1, active_canvas_id: 10, canvases: [canvas()], tags: [], tiles: [tile()], thoughts: [] }, generation)
+  expect((await localTile())?.confirmedData).toMatchObject({ canvas_id: 11 })
+  if (pending) await discardSyncOperation((await syncDb.outbox.toArray())[0]!.opId)
+  expect((await localTile())?.data).toMatchObject({ canvas_id: 11 })
+})
+
+test.each(["rename", "delete"] as const)("a remote tag %s updates the thought's discard baseline", async (action) => {
+  const tagged = thought({ tags: ["old"] })
+  const definition = tag({ name: "old" })
+  await cacheServerEntity("tile", tile(), false)
+  await cacheServerEntity("thought", tagged, false)
+  await cacheServerEntity("tag", definition, false)
+  await enqueueUpsert("thought", thought({ content: "Local edit", tags: [] }))
+  const generation = captureEntityWriteGeneration()
+  globalThis.fetch = async () => json({ events: [{ ...event(2, 0, "remote-tag"), entity_type: "tag", entity_id: definition.id, client_id: definition.client_id, action: action === "delete" ? "delete" : "upsert", data: { ...definition, name: action === "delete" ? "old" : "new" } }], latest_revision: 2 })
+  await pullSync()
+  await cacheSyncSnapshot({ revision: 1, active_canvas_id: 10, canvases: [canvas()], tags: [definition], tiles: [tile()], thoughts: [tagged] }, generation)
+  await discardSyncOperation((await syncDb.outbox.toArray())[0]!.opId)
+  expect((await syncDb.entities.get(entityKey("thought", "thought-client")))?.data).toMatchObject({ tags: action === "delete" ? [] : ["new"] })
+})
+
+test("a tag deletion changes the thought's confirmed baseline only after acknowledgement", async () => {
+  const definition = tag({ name: "old" })
+  await cacheServerEntity("thought", thought({ tags: ["old"] }), false)
+  await cacheServerEntity("tag", definition, false)
+  await enqueueUpsert("thought", thought({ content: "Rejected edit", tags: ["old"] }))
+  await removeLocalThoughtTag("old")
+  const record = () => syncDb.entities.get(entityKey("thought", "thought-client"))
+  expect((await record())?.confirmedData).toMatchObject({ tags: ["old"] })
+  await enqueueDelete("tag", definition)
+  globalThis.fetch = async (_path, init) => {
+    const op = JSON.parse(init!.body as string).operations[0] as SyncPushOperation
+    return json({ results: [{ ok: op.entity_type === "tag", server_id: definition.id, revision: 2, error: "Rejected" }] })
+  }
+  await flushSyncQueue()
+  expect((await record())?.confirmedData).toMatchObject({ tags: [] })
+  await discardSyncOperation((await syncDb.outbox.toArray())[0]!.opId)
+  expect((await record())?.data).toMatchObject({ tags: [] })
+})
+
+test.each(["tile", "canvas"] as const)("discard cannot restore a thought deleted with its remote %s", async (parent) => {
+  await cacheServerEntity("canvas", canvas(), false)
+  await cacheServerEntity("tile", tile(), false)
+  await cacheServerEntity("thought", thought(), false)
+  await enqueueUpsert("thought", thought({ content: "Local edit" }))
+  const generation = captureEntityWriteGeneration()
+  globalThis.fetch = async () => json({ events: [{ ...event(2, 0, "delete-parent", "delete"), entity_type: parent, entity_id: parent === "tile" ? 20 : 10, client_id: `${parent}-client`, data: { id: parent === "tile" ? 20 : 10 } }], latest_revision: 2 })
+  await pullSync()
+  await cacheSyncSnapshot({ revision: 1, active_canvas_id: 10, canvases: [canvas()], tags: [], tiles: [tile()], thoughts: [thought()] }, generation)
+  expect((await syncDb.entities.get(entityKey("thought", "thought-client")))?.confirmedData).toBeNull()
+  await discardSyncOperation((await syncDb.outbox.toArray())[0]!.opId)
+  expect(await syncDb.entities.get(entityKey("thought", "thought-client"))).toBeUndefined()
+})
 
 test("mobile overview keeps the original tile hidden when creation sync changes its ID during a drag", async () => {
   const moving = tile({ id: -20, stableKey: "moving-tile" })

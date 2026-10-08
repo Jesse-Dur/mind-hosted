@@ -1,8 +1,8 @@
 import { getApi } from "../store/apiAuth"
 import { isApiUnauthorizedError } from "../api/errors"
-import { cacheServerEntity } from "./cache"
+import { cacheServerEntity, confirmDeletedContents, moveLocalCanvasContents, removeLocalThoughtTag, renameCachedThoughtTags } from "./cache"
 import { adoptLocalReferences, resolvePayload } from "./dependencies"
-import { entityFromPayload } from "./entityPayload"
+import { entityFromPayload, positiveIntegerField } from "./entityPayload"
 import { getEntityRecord } from "./entities"
 import { entityKey } from "./ids"
 import { syncDb } from "./localDb"
@@ -117,6 +117,22 @@ async function applyPushResult(record: OutboxRecord, resultEntity: SyncEntity | 
     await updatePendingServerIds(record, serverId)
   }
   const newerRemote = revision !== null && await readEntityRevision(record.entityType, serverId) > revision
+  if (!newerRemote) {
+    if (record.action === "delete" && record.entityType === "canvas") {
+      const target = positiveIntegerField(record.payload.targetCanvasId)
+      if (target !== null) await moveLocalCanvasContents(serverId, target)
+      else await confirmDeletedContents("canvas", serverId)
+    }
+    if (record.action === "delete" && record.entityType === "tile") await confirmDeletedContents("tile", serverId)
+    if (record.action === "delete" && record.entityType === "tag") {
+      const tagName = localRecord?.confirmedData && "name" in localRecord.confirmedData
+        ? localRecord.confirmedData.name : record.beforeData && "name" in record.beforeData ? record.beforeData.name : record.payload.name
+      if (typeof tagName === "string") await removeLocalThoughtTag(tagName, true)
+    }
+    if (record.entityType === "tag" && pending && localRecord?.confirmedData && "name" in localRecord.confirmedData && resultEntity && "name" in resultEntity) {
+      await renameCachedThoughtTags(localRecord.confirmedData.name, resultEntity.name, undefined, true)
+    }
+  }
   if (newerRemote) {
     // A pull can complete while the push response is in flight. Its confirmed
     // state wins once the last optimistic operation is acknowledged.

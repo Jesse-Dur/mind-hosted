@@ -239,6 +239,10 @@ describe("frontend sync flush", () => {
 
     await flushSyncQueue()
 
+    // Timers are disabled in this harness. Run the follow-up flush scheduled
+    // by the parent acknowledgement if equal timestamps put the delete first.
+    await flushSyncQueue()
+
     expect(fetchCalls.map(({ operation }) => operation.action)).toEqual(["upsert", "delete"])
     expect(fetchCalls[1]?.operation.payload.targetCanvasId).toBe(10)
     expect(await syncDb.outbox.count()).toBe(0)

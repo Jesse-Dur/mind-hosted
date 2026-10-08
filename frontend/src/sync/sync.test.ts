@@ -26,6 +26,18 @@ beforeEach(async () => {
 })
 
 describe("frontend sync outbox", () => {
+  test("Past keeps deleted thoughts whose IDs match live or restored tiles", async () => {
+    const deleted = thought({ id: 20 })
+    await cachePastEntity("thought", deleted)
+    await syncDb.entities.put(entityRecord({
+      entityType: "tile", clientId: "tile-client", serverId: 20, tempId: null, canvasId: 10,
+      status: "clean", data: tile(),
+    }))
+    expect((await readPastEntitiesCache()).pastThoughts).toEqual([deleted])
+    await cacheServerEntity("tile", tile(), false)
+    expect((await readPastEntitiesCache()).pastThoughts).toEqual([deleted])
+  })
+
   test("repeated completed upserts preserve each action in order", async () => {
     await enqueueUpsert("tile", tile({ title: "Draft", width: 280 }))
     await enqueueUpsert("tile", tile({ title: "Final", width: 420 }))
