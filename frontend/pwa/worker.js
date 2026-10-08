@@ -116,7 +116,7 @@ self.addEventListener("activate", event => event.waitUntil(withCacheLock(async (
 self.addEventListener("message", event => {
   const data = event.data;
   if (data?.type === "CLEANUP_CACHES") {
-    event.waitUntil(withCacheLock(cleanupCaches));
+    event.waitUntil(withCacheLock(cleanupCaches).catch(console.error));
     return;
   }
   if (!data || !["CACHE_URLS", "PREPARE_UPDATE", "SKIP_WAITING"].includes(data.type)) return;

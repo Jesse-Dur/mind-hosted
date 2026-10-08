@@ -61,6 +61,7 @@ Preference recovery checks mount the real App in an isolated browser harness wit
 ## Current Frontend Coverage
 
 - Completed upserts keep separate durable operations and flush in order for each entity, preserving their History actions.
+- PWA cleanup message failures are logged without deleting caches; a later message can retry cleanup.
 - Delayed snapshots preserve remote deletions, their Past entries, and newer confirmed baselines for pending local edits.
 - Past identity matching distinguishes tiles from thoughts even when their numeric IDs overlap.
 - Device preference hydration preserves settings edited while its server request is in flight.

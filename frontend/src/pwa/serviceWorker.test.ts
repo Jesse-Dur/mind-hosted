@@ -29,11 +29,17 @@ async function build(label: string) {
 
 function harness({ locksAvailable = true } = {}) {
   const cachesByName = new Map<string, Map<string, Response>>()
+  let cacheOpenError: Error | null = null
   const key = (value: string | Request) => new URL(typeof value === "string" ? value : value.url, origin).href
   const caches = {
     keys: async () => [...cachesByName.keys()],
     delete: async (name: string) => cachesByName.delete(name),
     open: async (name: string) => {
+      if (cacheOpenError) {
+        const error = cacheOpenError
+        cacheOpenError = null
+        throw error
+      }
       if (!cachesByName.has(name)) cachesByName.set(name, new Map())
       const entries = cachesByName.get(name)!
       return {
@@ -52,6 +58,7 @@ function harness({ locksAvailable = true } = {}) {
   let blocked = ""
   let files = new Map<string, string>()
   const requests: string[] = []
+  const errors: unknown[][] = []
   const heldRequests = new Map<string, Promise<void>>()
   const clients = new Map<string, { id: string; url: string; cache: string | null; responds: boolean; onQuery?: () => void }>()
   const registration: { installing: object | null; waiting: object | null } = { installing: null, waiting: null }
@@ -75,7 +82,8 @@ function harness({ locksAvailable = true } = {}) {
     const handlers = new Map<string, (event: any) => void>()
     let activated = false
     const context = vm.createContext({
-      URL, Response, Request, crypto, caches, MessageChannel, setTimeout, clearTimeout, console, fetch: fetchResource,
+      URL, Response, Request, crypto, caches, MessageChannel, setTimeout, clearTimeout,
+      console: { ...console, error: (...args: unknown[]) => errors.push(args) }, fetch: fetchResource,
       self: {
         location: { origin }, registration, navigator: { locks: locksAvailable ? locks : undefined },
         clients: {
@@ -133,7 +141,8 @@ function harness({ locksAvailable = true } = {}) {
     }
   }
   return {
-    worker, requests,
+    worker, requests, errors,
+    failNextCacheOpen: (error: Error) => { cacheOpenError = error },
     cacheNames: () => caches.keys(),
     cache: caches.open,
     hold: (path: string) => {
@@ -177,6 +186,20 @@ async function activateRelease(browser: ReturnType<typeof harness>, release: typ
 async function buildCaches(browser: ReturnType<typeof harness>) {
   return (await browser.cacheNames()).filter(name => name.startsWith("mind-shell-"))
 }
+
+test("cleanup messages log cache failures and allow a later retry", async () => {
+  const browser = harness()
+  await activateRelease(browser, releaseA)
+  const current = await activateRelease(browser, releaseB)
+  const names = await browser.cacheNames()
+  const error = new Error("Cache storage unavailable")
+  browser.failNextCacheOpen(error)
+  await current.cleanup()
+  expect(browser.errors).toEqual([[error]])
+  expect(await browser.cacheNames()).toEqual(names)
+  await current.cleanup()
+  expect(browser.errors).toHaveLength(1)
+})
 
 test.each(["mobile", "desktop"])("repeated %s updates keep the last two activated builds, independent of hash order", async (layout) => {
   const browser = harness()
