@@ -60,6 +60,8 @@ Spotlight checks use the real component with an isolated database. Workspace del
 
 History browser checks use an isolated database and captured server refreshes. Scrolling loads 450 saved entries in pages while keeping two older sync issues accessible. A burst of 50 acknowledgements produces one server History refresh. Loading a server entry outside the local page promptly attaches its local operation metadata.
 
+Isolated History panel checks verify that pagination starts with 25 displayed events remaining and preserves scroll position after a page loads. The bottom spinner stays visible while either the server or local page is loading, then disappears when the new events arrive, including at a narrow panel width.
+
 Preference recovery checks mount the real App in an isolated browser harness with simulated authentication, storage, and server responses. Same-account sign-in after cached startup uploads pending local settings and resumes later saves without another workspace boot or reset. With no pending edits, it applies the server profile.
 
 ## Current Frontend Coverage

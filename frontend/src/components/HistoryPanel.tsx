@@ -1,7 +1,8 @@
 // This file owns the history list only; startup and data warmup happen in the central coordinator.
-import { useEffect, useState, useRef, useCallback } from "react"
+import { Fragment, useEffect, useState, useRef, useCallback } from "react"
 import { useStore } from "../store"
 import { SyncStatusDot } from "./SyncStatusDot"
+import { SavingSpinner } from "./SavingSpinner"
 import { syncStateColor } from "../sync/statusPresentation"
 import { buildHistoryFeed } from "../utils/historyFeed"
 import { historyDetailRows, historySummaryParts } from "../utils/historyPresentation"
@@ -120,6 +121,7 @@ export function HistoryPanel() {
   const hasSyncIssues = syncIssues.length > 0
   const showingIssues = issuesOnly && hasSyncIssues
   const feed = buildHistoryFeed(events, syncActivity, showingIssues)
+  const loadMoreMarkerIndex = Math.max(0, feed.length - 25)
   const latestSyncedAt = syncActivity.reduce((latest, activity) => activity.state === "synced" ? Math.max(latest, activity.updatedAt) : latest, syncLastAcknowledgedAt)
   const lastHistoryRefresh = useRef(latestSyncedAt)
 
@@ -157,7 +159,7 @@ export function HistoryPanel() {
         historyHasMore && historyNextCursor ? loadMoreHistory() : Promise.resolve(),
         syncActivityHasMore ? loadMoreSyncActivity() : Promise.resolve(),
       ]).catch(console.error)
-    }, { rootMargin: "120px 0px" })
+    })
     observer.current.observe(node)
   }, [historyHasMore, historyLoadingMore, historyNextCursor, loadMoreHistory, syncActivityHasMore, syncActivityLoadingMore, syncActivityLimit, loadMoreSyncActivity])
 
@@ -170,8 +172,11 @@ export function HistoryPanel() {
         {hasSyncIssues && <button type="button" onClick={() => setIssuesOnly((value) => !value)} style={{ border: "1px solid #e0e0e0", background: showingIssues ? "#1a1a1a" : "#fff", color: showingIssues ? "#fff" : "#777", borderRadius: 99, padding: "4px 8px", fontSize: 10.5, cursor: "pointer" }}>Sync issues</button>}
       </div>
       {feed.length === 0 && <p style={{ fontSize: 12, color: "#ccc", paddingTop: 10 }}>{showingIssues ? "No sync issues" : "No history yet"}</p>}
-      {feed.map((item) => {
-        if (item.kind === "activity") return <SyncActivityRow key={item.key} activity={item.activity} />
+      {feed.map((item, index) => {
+        const marker = index === loadMoreMarkerIndex && !showingIssues
+          ? <div ref={loadMoreMarker} aria-hidden="true" style={{ height: 1, flexShrink: 0 }} />
+          : null
+        if (item.kind === "activity") return <Fragment key={item.key}>{marker}<SyncActivityRow activity={item.activity} /></Fragment>
         const e = item.event
         const detail = detailRecord(e)
         const isExpanded = expanded === e.id
@@ -180,8 +185,9 @@ export function HistoryPanel() {
         const canExpand = rows.length > 0 || (isAI && typeof detail.input === "string" && detail.input.trim().length > 0)
 
         return (
+          <Fragment key={item.key}>
+          {marker}
           <div
-            key={item.key}
             style={{
               borderBottom: "1px solid #f5f5f5",
               padding: "8px 0",
@@ -206,9 +212,15 @@ export function HistoryPanel() {
             </div>
             {canExpand && <ExpandDetail isAI={isAI} rows={rows} detail={detail} visible={isExpanded} />}
           </div>
+          </Fragment>
         )
       })}
-      <div ref={!showingIssues ? loadMoreMarker : undefined} aria-hidden="true" style={{ height: 1, flexShrink: 0 }} />
+      {feed.length === 0 && <div ref={!showingIssues ? loadMoreMarker : undefined} aria-hidden="true" style={{ height: 1, flexShrink: 0 }} />}
+      {!showingIssues && (historyLoadingMore || syncActivityLoadingMore) && (
+        <div role="status" aria-label="Loading more history" style={{ display: "flex", justifyContent: "center", padding: "12px 0" }}>
+          <SavingSpinner />
+        </div>
+      )}
     </div>
   )
 }
