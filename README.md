@@ -23,7 +23,7 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 - **Freeform canvas** — drag to draw tiles anywhere on a canvas that scales to your screen
 - **Thoughts** — dot-point notes inside tiles, draggable to reorder or move between tiles
 - **Tags** — colour-coded tags with an expanding pill UI, searchable via Spotlight
-- **Spotlight** (`Cmd+K`) — fuzzy search across tiles, thoughts, and tags. Type `#tag` to filter by tag, `>` to send to AI, or `t` to create a new tile
+- **Spotlight** (`Cmd+K`) — fuzzy search across tiles, thoughts, and tags. Workspace and Past results stay current while search is open. Type `#tag` to filter by tag, `>` to send to AI, or `t` to create a new tile
 - **AI processing** — type a thought in natural language, the AI classifies it, splits compound inputs, applies tags, and files it in the right tile. Can also update, delete, and move existing thoughts
 - **History** — local and synced actions share the same badges. Expand appears only for additional information, such as before/after values, positions, tags, full text, or AI input and actions.
 - **Sidebar** — Tags, History, and Settings panels

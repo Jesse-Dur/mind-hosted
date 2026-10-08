@@ -1,4 +1,5 @@
 import { Command } from "cmdk"
+import { liveQuery } from "dexie"
 import { useState, useEffect, useRef } from "react"
 import { useAuth } from "@clerk/clerk-react"
 import { useStore } from "../store"
@@ -11,6 +12,7 @@ import { useOnline } from "../utils/connectivity"
 import { usePhysicalKeyboard } from "../utils/physicalKeyboard"
 import { cachedWorkspaceForSearch } from "../sync/cache"
 import { readPastEntitiesCache } from "../sync/pastCache"
+import { assertSyncAccountScopeCurrent, currentSyncAccountScope, isSyncAccountScopeCurrent, runSyncAccountTask } from "../sync/accountScope"
 
 function uniqueEntities<Entity extends Tile | Thought>(entities: Entity[]) {
   const byIdentity = new Map<string, Entity>()
@@ -108,15 +110,23 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
   }, [micState, cancelRecording, stopForEditing, stopAndTranscribe, handleMic, onClose, processAiInput, online])
 
   useEffect(() => {
-    let cancelled = false
-    void Promise.all([cachedWorkspaceForSearch(), readPastEntitiesCache()]).then(([workspace, past]) => {
-      if (cancelled) return
-      setLocalWorkspaceTiles(workspace.tiles)
-      setLocalWorkspaceThoughts(workspace.thoughts)
-      setPastTiles(past.pastTiles)
-      setPastThoughts(past.pastThoughts)
-    }).catch(console.error)
-    return () => { cancelled = true }
+    const scope = currentSyncAccountScope()
+    const subscription = liveQuery(() => runSyncAccountTask(async () => {
+      assertSyncAccountScopeCurrent(scope)
+      const result = await Promise.all([cachedWorkspaceForSearch(), readPastEntitiesCache()])
+      assertSyncAccountScopeCurrent(scope)
+      return result
+    })).subscribe({
+      next: ([workspace, past]) => {
+        if (!isSyncAccountScopeCurrent(scope)) return
+        setLocalWorkspaceTiles(workspace.tiles)
+        setLocalWorkspaceThoughts(workspace.thoughts)
+        setPastTiles(past.pastTiles)
+        setPastThoughts(past.pastThoughts)
+      },
+      error: (error) => { if (isSyncAccountScopeCurrent(scope)) console.error(error) },
+    })
+    return () => subscription.unsubscribe()
   }, [])
 
   function togglePast() {
