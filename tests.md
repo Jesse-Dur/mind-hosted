@@ -69,6 +69,7 @@ Mobile tab gesture checks use touch pointer events: a swipe scrolls without reor
 - Stale `flushing` records retry and clear after server acknowledgement.
 - Server acknowledgement of a temporary parent rewrites pending child payloads.
 - Snapshot reconciliation deletes clean missing records while preserving dirty ones.
+- Snapshot client-ID adoption leaves unchanged legacy tiles and thoughts unmarked, while payload changes still produce change markers.
 - Server tag rename rewrites cached thought tag labels.
 - Pull preserves pending local changes over stale remote upserts.
 - Pull applies remote tile creates to cache, store, metadata, and animation state.

@@ -50,7 +50,7 @@ async function findLocalServerRecord(entityType: SyncEntityType, serverId: numbe
 
 async function findLocalIncomingRecord(entityType: SyncEntityType, entity: SyncEntity) {
   const clientId = entity.client_id ?? serverClientId(entityType, entity.id)
-  return syncDb.entities.get(entityKey(entityType, clientId)) ?? findLocalServerRecord(entityType, entity.id)
+  return (await syncDb.entities.get(entityKey(entityType, clientId))) ?? findLocalServerRecord(entityType, entity.id)
 }
 
 function payloadChanged(entityType: SyncEntityType, existing: SyncEntity, incoming: SyncEntity) {

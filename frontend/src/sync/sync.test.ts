@@ -250,6 +250,44 @@ describe("local cross-canvas search cache", () => {
 })
 
 describe("frontend sync cache", () => {
+  test("unchanged legacy tiles and thoughts gaining client IDs do not produce change markers", async () => {
+    const legacyTile = tile({ client_id: null })
+    const legacyThought = thought({ client_id: null })
+    await cacheServerEntity("tile", legacyTile, false)
+    await cacheServerEntity("thought", legacyThought, false)
+
+    const changed = await cacheSyncSnapshot({
+      revision: 1,
+      active_canvas_id: 10,
+      canvases: [canvas()],
+      tags: [],
+      tiles: [{ ...legacyTile, client_id: "tile-client" }],
+      thoughts: [{ ...legacyThought, client_id: "thought-client" }],
+    })
+
+    expect(changed).toEqual({ tileIds: [], thoughtIds: [] })
+    expect((await syncDb.entities.where("entityType").equals("tile").toArray()).map((record) => record.clientId)).toEqual(["tile-client"])
+    expect((await syncDb.entities.where("entityType").equals("thought").toArray()).map((record) => record.clientId)).toEqual(["thought-client"])
+  })
+
+  test("changed legacy tiles and thoughts gaining client IDs still produce change markers", async () => {
+    const legacyTile = tile({ client_id: null })
+    const legacyThought = thought({ client_id: null })
+    await cacheServerEntity("tile", legacyTile, false)
+    await cacheServerEntity("thought", legacyThought, false)
+
+    const changed = await cacheSyncSnapshot({
+      revision: 1,
+      active_canvas_id: 10,
+      canvases: [canvas()],
+      tags: [],
+      tiles: [{ ...legacyTile, client_id: "tile-client", title: "Updated tasks" }],
+      thoughts: [{ ...legacyThought, client_id: "thought-client", content: "Updated follow up" }],
+    })
+
+    expect(changed).toEqual({ tileIds: [legacyTile.id], thoughtIds: [legacyThought.id] })
+  })
+
   test("snapshot reconciliation deletes clean missing records and preserves dirty ones", async () => {
     await syncDb.entities.put(entityRecord({
       entityType: "tile",
