@@ -92,6 +92,7 @@ export const { syncDb } = await import("../sync/localDb")
 export const { setGetToken, useStore } = await import("../store")
 export const { clearReauthRequired } = await import("../auth/reauthSignal")
 export const { entityKey } = await import("../sync/ids")
+const { SYNC_ACTIVITY_PAGE_SIZE } = await import("../sync/status")
 
 export const NOW = "2026-01-01T00:00:00.000Z"
 
@@ -177,6 +178,7 @@ export async function resetFrontendState() {
     syncDb.outbox.clear(),
     syncDb.metadata.clear(),
     syncDb.queryCache.clear(),
+    syncDb.syncActivity.clear(),
   ])
   globals.localStorage.clear()
   clearReauthRequired()
@@ -211,7 +213,15 @@ export async function resetFrontendState() {
     recentLocalTileChangeIds: new Map(),
     remoteChangedTileIds: new Set(),
     remoteChangedThoughtIds: new Set(),
+    remoteThoughtRevision: 0,
+    remoteCanvasRevision: 0,
     syncPendingCount: 0,
+    syncEntityStatuses: new Map(),
+    syncActivity: [],
+    syncActivityLimit: SYNC_ACTIVITY_PAGE_SIZE,
+    syncLastAcknowledgedAt: 0,
+    syncActivityHasMore: false,
+    syncActivityLoadingMore: false,
     aiStatus: "idle",
     sidebarOpen: false,
     spotlightOpen: false,

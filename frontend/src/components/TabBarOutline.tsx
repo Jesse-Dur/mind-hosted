@@ -67,10 +67,14 @@ export function TabBarOutline({ containerRef, barH, jutH, shallowH }: {
 
     function measure() {
       const cr = container!.getBoundingClientRect()
-      const juts = Array.from(container!.querySelectorAll("[data-tabbar-jut]")).map((el) => {
+      const juts = Array.from(container!.querySelectorAll("[data-tabbar-jut]")).flatMap((el) => {
         const r = (el as HTMLElement).getBoundingClientRect()
+        const clip = el.closest(".tabbar-scroll")?.getBoundingClientRect()
+        const left = Math.max(r.left, clip?.left ?? cr.left) - cr.left
+        const right = Math.min(r.right, clip?.right ?? cr.right) - cr.left
+        if (right <= left) return []
         const inactive = (el as HTMLElement).dataset.tabbarJut === "inactive"
-        return { left: r.left - cr.left, right: r.right - cr.left, depth: inactive ? shallowH : jutH }
+        return [{ left, right, depth: inactive ? shallowH : jutH }]
       })
       setWidth(cr.width)
       setPath(buildPath(cr.width, barH, juts))
@@ -82,12 +86,12 @@ export function TabBarOutline({ containerRef, barH, jutH, shallowH }: {
     const mo = new MutationObserver(measure)
     mo.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-tabbar-jut"] })
 
-    // rAF poll for 300ms after any DOM change so SVG follows CSS height transitions
+    // Follow the full 140ms fade + 220ms slide as well as local height changes.
     let rafId = 0
     let pollEnd = 0
     let debounceId = 0
     function startPoll() {
-      pollEnd = performance.now() + 300
+      pollEnd = performance.now() + 400
       if (rafId) return
       function tick() {
         measure()
@@ -101,16 +105,23 @@ export function TabBarOutline({ containerRef, barH, jutH, shallowH }: {
       clearTimeout(debounceId)
       debounceId = window.setTimeout(startPoll, 16)
     }
-    const moAnim = new MutationObserver(debouncedPoll)
-    moAnim.observe(container, { childList: true, subtree: true, attributes: true })
+    const moAnim = new MutationObserver((records) => {
+      // Measuring updates this SVG. Those writes must not restart its own poll.
+      if (records.some((record) => {
+        const element = record.target instanceof Element ? record.target : record.target.parentElement
+        return !element?.closest("[data-tabbar-outline]")
+      })) debouncedPoll()
+    })
+    moAnim.observe(container, { childList: true, subtree: true, attributes: true, characterData: true })
+    container.addEventListener("scroll", measure, true)
 
-    return () => { ro.disconnect(); mo.disconnect(); moAnim.disconnect(); cancelAnimationFrame(rafId); clearTimeout(debounceId) }
+    return () => { ro.disconnect(); mo.disconnect(); moAnim.disconnect(); cancelAnimationFrame(rafId); clearTimeout(debounceId); container.removeEventListener("scroll", measure, true) }
   }, [containerRef, barH, jutH, shallowH])
 
   if (!path || !width) return null
 
   return (
-    <svg style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none", zIndex: 1, overflow: "visible" }} width={width} height={jutH + 4}>
+    <svg data-tabbar-outline style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none", zIndex: 1, overflow: "visible" }} width={width} height={jutH + 4}>
       {/* Fill closes the shape back to top so background shows correctly during transitions */}
       <path d={path + ` L ${width} 0 L 0 0 Z`} fill="#ede9fe" stroke="none" />
       <path d={path} fill="none" stroke="#ddd6fe" strokeWidth="1" />

@@ -3,6 +3,12 @@ import type { BillingCreationLimitFeature, BillingFeatureUsage, BillingLimitNoti
 import type { BillingSlice, StoreSlice } from "./types"
 import { readBillingPlansCache, readBillingUsageCache, writeBillingPlansCache, writeBillingUsageCache } from "../sync/queryCache"
 import { billingOverageFromFeatures } from "../billing/resourceThresholds"
+import {
+  assertSyncAccountScopeCurrent,
+  currentSyncAccountScope,
+  runSyncAccountTask,
+  type SyncAccountScope,
+} from "../sync/accountScope"
 
 const DISMISS_DELAY_MS = 10000
 const CREATE_LIMIT_MESSAGES: Record<BillingCreationLimitFeature, string> = {
@@ -11,8 +17,13 @@ const CREATE_LIMIT_MESSAGES: Record<BillingCreationLimitFeature, string> = {
   thoughts: "At limit, delete thoughts before creating more.",
 }
 
-let pendingUsage: Promise<BillingUsage> | null = null
-let pendingPlans: Promise<BillingPlans> | null = null
+type ScopedRequest<T> = {
+  generation: number | null
+  promise: Promise<T>
+}
+
+let pendingUsage: ScopedRequest<BillingUsage> | null = null
+let pendingPlans: ScopedRequest<BillingPlans> | null = null
 let changedFeatureTimer: ReturnType<typeof setTimeout> | null = null
 
 export class BillingAccessError extends Error {
@@ -97,6 +108,14 @@ function clearChangedFeatureTimer() {
   changedFeatureTimer = null
 }
 
+function scopeGeneration(scope: SyncAccountScope | null) {
+  return scope?.generation ?? null
+}
+
+function pendingForScope<T>(request: ScopedRequest<T> | null, scope: SyncAccountScope | null) {
+  return request?.generation === scopeGeneration(scope) ? request.promise : null
+}
+
 function applyUsage(
   set: Parameters<StoreSlice<BillingSlice>>[0],
   previous: BillingUsage | null,
@@ -135,11 +154,12 @@ export function initialBillingState() {
 export const createBillingSlice: StoreSlice<BillingSlice> = (set, get) => ({
   ...initialBillingState(),
 
-  hydrateBillingCache: async () => {
+  hydrateBillingCache: () => runSyncAccountTask(async (scope) => {
     const [billingUsage, billingPlans] = await Promise.all([
       get().billingUsage ? Promise.resolve(get().billingUsage) : readBillingUsageCache(),
       get().billingPlans ? Promise.resolve(get().billingPlans) : readBillingPlansCache(),
     ])
+    assertSyncAccountScopeCurrent(scope)
     const nextState: Partial<BillingSlice> = {}
     if (billingUsage && get().billingUsage === null) nextState.billingUsage = billingUsage
     if (billingPlans && get().billingPlans === null) nextState.billingPlans = billingPlans
@@ -152,15 +172,18 @@ export const createBillingSlice: StoreSlice<BillingSlice> = (set, get) => ({
         billingPlansError: null,
       })
     }
-  },
+  }),
 
   preloadBillingUsage: async () => {
     const cached = get().billingUsage
     if (cached) return cached
-    if (pendingUsage) return pendingUsage
+    const scope = currentSyncAccountScope()
+    const existingRequest = pendingForScope(pendingUsage, scope)
+    if (existingRequest) return existingRequest
 
-    const request = (async () => {
+    const request = runSyncAccountTask(async (taskScope) => {
       const persisted = await readBillingUsageCache()
+      assertSyncAccountScopeCurrent(taskScope)
       if (persisted) {
         set({ billingUsage: persisted, billingUsageError: null, billingUsageLoading: false })
         return persisted
@@ -168,53 +191,67 @@ export const createBillingSlice: StoreSlice<BillingSlice> = (set, get) => ({
 
       set({ billingUsageLoading: true, billingUsageError: null })
       try {
-        const usage = await getApi().billing.usage()
+        const usage = await getApi(taskScope).billing.usage()
+        assertSyncAccountScopeCurrent(taskScope)
         applyUsage(set, get().billingUsage, usage)
-        void writeBillingUsageCache(usage).catch(console.error)
+        await writeBillingUsageCache(usage)
         return usage
       } catch (error) {
+        assertSyncAccountScopeCurrent(taskScope)
         set({ billingUsageError: loadErrorMessage(error, "Unable to load usage") })
         throw error
       } finally {
-        set({ billingUsageLoading: false })
+        if (taskScope?.signal.aborted !== true) set({ billingUsageLoading: false })
       }
-    })().finally(() => {
-      if (pendingUsage === request) pendingUsage = null
     })
-    pendingUsage = request
+    const scopedRequest: ScopedRequest<BillingUsage> = { generation: scopeGeneration(scope), promise: request }
+    pendingUsage = scopedRequest
+    void request.finally(() => {
+      if (pendingUsage === scopedRequest) pendingUsage = null
+    }).catch(() => undefined)
     return request
   },
 
   refreshBillingUsage: async () => {
-    if (pendingUsage) return pendingUsage
+    const scope = currentSyncAccountScope()
+    const existingRequest = pendingForScope(pendingUsage, scope)
+    if (existingRequest) return existingRequest
 
     set({ billingUsageLoading: get().billingUsage === null, billingUsageError: null })
     const previous = get().billingUsage
-    const request = getApi().billing.usage()
-      .then((usage) => {
+    const request = runSyncAccountTask(async (taskScope) => {
+      try {
+        const usage = await getApi(taskScope).billing.usage()
+        assertSyncAccountScopeCurrent(taskScope)
         applyUsage(set, previous, usage)
-        void writeBillingUsageCache(usage).catch(console.error)
+        await writeBillingUsageCache(usage)
         return usage
-      })
-      .catch((error) => {
+      } catch (error) {
+        assertSyncAccountScopeCurrent(taskScope)
         set({ billingUsageError: loadErrorMessage(error, "Unable to load usage") })
         throw error
-      })
-      .finally(() => {
-        if (pendingUsage === request) pendingUsage = null
-        set({ billingUsageLoading: false })
-      })
-    pendingUsage = request
+      } finally {
+        if (taskScope?.signal.aborted !== true) set({ billingUsageLoading: false })
+      }
+    })
+    const scopedRequest: ScopedRequest<BillingUsage> = { generation: scopeGeneration(scope), promise: request }
+    pendingUsage = scopedRequest
+    void request.finally(() => {
+      if (pendingUsage === scopedRequest) pendingUsage = null
+    }).catch(() => undefined)
     return request
   },
 
   preloadBillingPlans: async () => {
     const cached = get().billingPlans
     if (cached) return cached
-    if (pendingPlans) return pendingPlans
+    const scope = currentSyncAccountScope()
+    const existingRequest = pendingForScope(pendingPlans, scope)
+    if (existingRequest) return existingRequest
 
-    const request = (async () => {
+    const request = runSyncAccountTask(async (taskScope) => {
       const persisted = await readBillingPlansCache()
+      assertSyncAccountScopeCurrent(taskScope)
       if (persisted) {
         set({ billingPlans: persisted, billingPlansError: null, billingPlansLoading: false })
         return persisted
@@ -222,49 +259,60 @@ export const createBillingSlice: StoreSlice<BillingSlice> = (set, get) => ({
 
       set({ billingPlansLoading: true, billingPlansError: null })
       try {
-        const plans = await getApi().billing.plans()
+        const plans = await getApi(taskScope).billing.plans()
+        assertSyncAccountScopeCurrent(taskScope)
         set({ billingPlans: plans, billingPlansError: null })
-        void writeBillingPlansCache(plans).catch(console.error)
+        await writeBillingPlansCache(plans)
         return plans
       } catch (error) {
+        assertSyncAccountScopeCurrent(taskScope)
         set({ billingPlansError: loadErrorMessage(error, "Unable to load plans") })
         throw error
       } finally {
-        set({ billingPlansLoading: false })
+        if (taskScope?.signal.aborted !== true) set({ billingPlansLoading: false })
       }
-    })().finally(() => {
-      if (pendingPlans === request) pendingPlans = null
     })
-    pendingPlans = request
+    const scopedRequest: ScopedRequest<BillingPlans> = { generation: scopeGeneration(scope), promise: request }
+    pendingPlans = scopedRequest
+    void request.finally(() => {
+      if (pendingPlans === scopedRequest) pendingPlans = null
+    }).catch(() => undefined)
     return request
   },
 
   refreshBillingPlans: async () => {
-    if (pendingPlans) return pendingPlans
+    const scope = currentSyncAccountScope()
+    const existingRequest = pendingForScope(pendingPlans, scope)
+    if (existingRequest) return existingRequest
 
     set({ billingPlansLoading: get().billingPlans === null, billingPlansError: null })
-    const request = getApi().billing.plans()
-      .then((plans) => {
+    const request = runSyncAccountTask(async (taskScope) => {
+      try {
+        const plans = await getApi(taskScope).billing.plans()
+        assertSyncAccountScopeCurrent(taskScope)
         set({ billingPlans: plans, billingPlansError: null })
-        void writeBillingPlansCache(plans).catch(console.error)
+        await writeBillingPlansCache(plans)
         return plans
-      })
-      .catch((error) => {
+      } catch (error) {
+        assertSyncAccountScopeCurrent(taskScope)
         set({ billingPlansError: loadErrorMessage(error, "Unable to load plans") })
         throw error
-      })
-      .finally(() => {
-        if (pendingPlans === request) pendingPlans = null
-        set({ billingPlansLoading: false })
-      })
-    pendingPlans = request
+      } finally {
+        if (taskScope?.signal.aborted !== true) set({ billingPlansLoading: false })
+      }
+    })
+    const scopedRequest: ScopedRequest<BillingPlans> = { generation: scopeGeneration(scope), promise: request }
+    pendingPlans = scopedRequest
+    void request.finally(() => {
+      if (pendingPlans === scopedRequest) pendingPlans = null
+    }).catch(() => undefined)
     return request
   },
 
-  previewBillingPlanImpact: (planId) => getApi().billing.planImpact(planId),
+  previewBillingPlanImpact: (planId) => runSyncAccountTask((scope) => getApi(scope).billing.planImpact(planId)),
 
   switchBillingPlan: async (planId, confirmedOverLimit = false) => {
-    const result = await getApi().billing.switchPlan(planId, confirmedOverLimit)
+    const result = await runSyncAccountTask((scope) => getApi(scope).billing.switchPlan(planId, confirmedOverLimit))
     if (!result.payment_url) {
       await Promise.all([
         get().refreshBillingUsage(),

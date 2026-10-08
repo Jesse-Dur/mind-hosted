@@ -67,10 +67,15 @@ export async function upsertEntityRecord(entityType: SyncEntityType, entity: Syn
     canvasId: canvasIdOf(entityType, entity),
     status,
     data: { ...entity, client_id: clientId },
+    confirmedData: status === "clean"
+      ? { ...entity, client_id: clientId }
+      : existing?.confirmedData ?? (existing?.status === "clean" ? existing.data : null),
+    syncDisposition: existing?.syncDisposition ?? "normal",
+    lastSyncedAt: status === "clean" ? Date.now() : existing?.lastSyncedAt ?? null,
     updatedAt: Date.now(),
   }
   await syncDb.entities.put(record)
-  return record
+  return { record, beforeData: existing?.data ?? null }
 }
 
 export async function markEntityDeleted(entityType: SyncEntityType, entity: SyncEntity) {

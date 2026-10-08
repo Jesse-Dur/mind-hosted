@@ -13,15 +13,16 @@ export async function applySyncOperation(userId: string, opId: string, entityTyp
   }
 
   const writeHistory = options.writeHistory ?? true
+  const occurredAt = options.occurredAt
   const entity = action === "upsert"
     ? entityType === "canvas"
-      ? await upsertCanvas(userId, clientId, serverId, payload, writeHistory)
+      ? await upsertCanvas(userId, clientId, serverId, payload, writeHistory, opId, occurredAt)
       : entityType === "tile"
-        ? await upsertTile(userId, clientId, serverId, payload, writeHistory)
+        ? await upsertTile(userId, clientId, serverId, payload, writeHistory, opId, occurredAt)
         : entityType === "thought"
-          ? await upsertThought(userId, clientId, serverId, payload, writeHistory)
-          : await upsertTag(userId, clientId, serverId, payload)
-    : await deleteEntity(userId, entityType, serverId, payload as DeletePayload)
+          ? await upsertThought(userId, clientId, serverId, payload, writeHistory, opId, occurredAt)
+          : await upsertTag(userId, clientId, serverId, payload, writeHistory, opId, occurredAt)
+    : await deleteEntity(userId, entityType, serverId, payload as DeletePayload, writeHistory, opId, clientId, occurredAt)
   const finalClientId = clientId ?? entity?.client_id ?? null
   // Identity fields come from the applied mutation, never from the caller's
   // free-form payload, so a malformed delete cannot publish misleading cleanup data.

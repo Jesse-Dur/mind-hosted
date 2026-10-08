@@ -23,12 +23,16 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 - **Freeform canvas** — drag to draw tiles anywhere on a canvas that scales to your screen
 - **Thoughts** — dot-point notes inside tiles, draggable to reorder or move between tiles
 - **Tags** — colour-coded tags with an expanding pill UI, searchable via Spotlight
-- **Spotlight** (`Cmd+K`) — fuzzy search across tiles, thoughts, and tags. Type `#tag` to filter by tag, `>` to send to AI, or `t` to create a new tile
+- **Spotlight** (`Cmd+K`) — fuzzy search across tiles, thoughts, and tags. Workspace and Past results stay current while search is open. Type `#tag` to filter by tag, `>` to send to AI, or `t` to create a new tile
 - **AI processing** — type a thought in natural language, the AI classifies it, splits compound inputs, applies tags, and files it in the right tile. Can also update, delete, and move existing thoughts
-- **History** — full audit log of every action with expand view showing what you said and the actions the LLM took based on that
+- **History** — local and synced actions share the same badges. Older local entries load as you scroll; every entry is retained, and unresolved sync issues stay available. Expand appears only for additional information, such as before/after values, positions, tags, full text, or AI input and actions.
 - **Sidebar** — Tags, History, and Settings panels
 - **Auth** — secure accounts via Clerk, your data is scoped to you
 - **Offline sync** — canvases, tiles, thoughts, and tags are cached locally and local edits are queued when the connection is unreliable
+- **Installable mobile workspace** — the PWA has a phone/tablet split view, canvas overview, direct touch gestures, and cross-canvas thought and tile dragging without an app store
+- **Mobile thought entry** — tap blank space in the focused tile's thought list to focus the add-thought input.
+- **Mobile canvas tabs** — swipe across tabs to scroll. Hold briefly, then move to reorder; hold and release to open tab actions. Tap to switch canvases or double-tap to rename.
+- **Sync transitions** — on desktop and mobile, removed thoughts fade out before the remaining rows slide into place. Incoming thoughts fade in, and mobile overview previews follow the same movement. Canvas tabs also fade and slide when synced additions, removals, reordering, or renames change the tab strip. Reduced-motion preferences are respected.
 
 ---
 
@@ -57,14 +61,28 @@ The sync engine prioritises the active canvas:
 
 - On boot, cached canvases, tiles, thoughts, and tags can render before network requests finish.
 - Server refreshes use `GET /api/sync/snapshot`, scoped to the active canvas where possible, so current-state repair does not need the old entity CRUD routes.
+- After default-canvas initialization, snapshots capture their revision before reading canvases and other entity data. Changes made during those reads remain eligible for the next pull, including changes already visible in the snapshot.
 - The active canvas is pulled and reconciled before inactive canvases.
 - Background canvas hydration is sequential and stops when the active canvas changes, so the newly selected tab gets priority.
 - Local creates, edits, moves, resizes, reorders, and deletes are written to the outbox and flushed later if the connection drops.
-- Remote tile and thought upserts animate only when a pull or snapshot changes this device's cached payload; local optimistic writes stay immediate.
+- IndexedDB is partitioned by Clerk user. Existing unpartitioned data is claimed once by the signed-in account, and signed-out account caches cannot be opened by another account. Account switches pause sync before changing authentication and resume after the matching local database is ready.
+- Workspace startup failures retry automatically with increasing delays capped at 15 seconds. The loading screen stays visible; if the first retry also fails, it shows “Loading failed, automatically retrying” beneath the icon.
+- Small entity spinners show queued local saves and fade after acknowledgement; soft red attention markers flag failures, while an outlined orange dot identifies intentionally device-only changes. The durable status history and resolution actions are available in History.
+- History starts loading its next pages when about 25 displayed events remain below the viewport, with a spinner at the bottom while more events are loading on desktop and mobile.
+- Temporary failures to obtain an authentication token pause uploads without blocking later attempts. Reconnecting rechecks authentication, so queued changes can resume without a manual retry.
+- Pending uploads, including temporary network failures, appear as “Syncing” without error text. Reconnecting bypasses their retry delay; rejected and intentionally device-only changes still require their existing resolution actions.
+- Desktop and mobile publish a sync cycle's accepted changes together. Existing tiles move and resize to their final geometry over 250 ms; content changes, additions, and deletions appear immediately without purple flashes. Reduced-motion preferences disable the geometry animation.
+- Local moves stay immediate while syncing. Assigning a newly created tile or thought its server ID preserves newer local edits. Mobile tile drags, resizes, and Undo continue through that ID change without showing a second tile or resetting the position.
 - Creates use `client_id` idempotency keys so a retried request cannot create duplicates after packet loss.
+- Creation acknowledgements normalize server IDs before linking queued children. Retry now also normalizes parent IDs saved as text by older clients, preserving failed thought creations and moves.
 - Normal writes use `POST /api/sync/push`; incremental multi-device updates use `GET /api/sync/pull`.
+- Tag renames and deletions lock the current tag row before reading its name. Server-ID and client-ID updates share that lock; thought-label propagation and History commit in the same transaction.
 
 The multi-device model is sequential rather than realtime collaborative editing. A device pushes revisioned changes to the server, and another device pulls those revisions later. For v1, conflict handling is intentionally simple: pending local changes are preserved over stale server lists, and same-field conflicts resolve by the latest accepted server operation.
+
+Sync event publication uses a short transaction with a per-user advisory lock across backend instances. Each publisher acquires the lock before allocating a revision and holds it through commit, so a pull cannot advance past an event that later commits with a lower revision for that user. Different users can publish concurrently. Revision gaps from rollbacks are allowed; the `sync_events` sequence must retain its default `CACHE 1` setting. Entity mutations and event publication still commit separately.
+
+When upgrading an existing installation to serialized publication, stop and drain the old backend writers before starting the updated backend. Clients that already missed events need fresh snapshots for their cached canvases; snapshot reconciliation preserves pending local work and the outbox.
 
 AI processing still requires network access to Groq. AI writes are restricted to thoughts and go through the same backend sync mutation path internally, so AI-created, updated, deleted, and moved thoughts emit `sync_events` and are picked up by normal pull flows.
 
@@ -73,7 +91,8 @@ The public app data API is intentionally narrow:
 - `POST /api/sync/push` for browser outbox writes.
 - `GET /api/sync/pull` for revisioned incremental updates.
 - `GET /api/sync/snapshot` for boot, tab switches, background canvas hydration, and cache repair.
-- Feature-specific routes remain for AI, voice transcription, history, and Spotlight's past-item views.
+- Feature-specific routes remain for AI, voice transcription, history, and background refresh of Spotlight's local Past cache.
+- `GET/PUT /api/preferences/device` stores per-installation layout preferences and supplies the newest same-class phone, tablet, or desktop profile to a new device.
 
 ---
 
@@ -115,6 +134,8 @@ This starts both servers concurrently:
 - **Frontend** — `http://localhost:5173` (Vite + React)
 
 Open `http://localhost:5173` in your browser.
+
+The development service worker prefers network responses while online so reloads use current Vite modules, with cached files as an offline fallback. Production uses separate build-specific caches.
 
 ---
 

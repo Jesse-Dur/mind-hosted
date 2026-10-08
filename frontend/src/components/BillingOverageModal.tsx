@@ -14,13 +14,6 @@ function resourceWord(id: BillingOverageItem["id"], value: number) {
   return value === 1 ? words.singular : words.plural
 }
 
-function suspendedText(overage: BillingOverage) {
-  const labels = overage.overages.map((item) => RESOURCE_WORDS[item.id].plural)
-  if (labels.length === 0) return "items"
-  if (labels.length === 1) return labels[0]!
-  return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`
-}
-
 function CanvasDeleteGraphic() {
   return (
     <div style={{ border: "1px solid #e5e5e5", borderRadius: 8, background: "#ffffff", padding: 12 }}>
@@ -68,7 +61,6 @@ type BillingOverageModalProps = {
 }
 
 export function BillingOverageModal({ overage, dismissReady, dismissSeconds, onClose }: BillingOverageModalProps) {
-  const suspended = suspendedText(overage)
   const dismissLabel = dismissReady ? "Dismiss" : `Dismiss in ${dismissSeconds}s`
 
   useEffect(() => {

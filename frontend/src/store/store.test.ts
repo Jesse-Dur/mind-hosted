@@ -1,10 +1,12 @@
 // This file verifies the store contracts and the startup paths that rely on them.
-import { beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import {
   canvas,
+  clearReauthRequired,
   entityKey,
   entityRecord,
   resetFrontendState,
+  setGetToken,
   syncDb,
   tag,
   thought,
@@ -17,6 +19,15 @@ import { readStoredCanvasFontSize } from "./storage"
 import { writeBillingPlansCache, writeBillingUsageCache, writeHistoryCache } from "../sync/queryCache"
 import { DEFAULT_CANVAS_FONT_SIZE, MAX_CANVAS_FONT_SIZE, MIN_CANVAS_FONT_SIZE } from "../utils/canvasFontSize"
 import type { BillingPlans, BillingUsage } from "../types"
+import { hydrateDevicePreferences, normalizeDevicePreferences, saveDevicePreferences } from "../preferences/devicePreferences"
+import { invalidateSyncAccount, prepareSyncAccount, quiesceSyncAccount } from "../sync/accountScope"
+
+const stalledFetches: Array<() => void> = []
+function stallFetch() {
+  return new Promise<Response>((resolve) => {
+    stalledFetches.push(() => resolve(new Response(JSON.stringify({ events: [], latest_revision: 0, results: [] }))))
+  })
+}
 
 function requestUrl(path: string | Request) {
   return typeof path === "string" ? path : path.url
@@ -56,18 +67,138 @@ beforeEach(async () => {
   await resetFrontendState()
 })
 
+afterEach(async () => {
+  // Restore tests deliberately leave background network work in flight. Settle
+  // those fixtures so the next account transition can drain tracked tasks.
+  const idle = quiesceSyncAccount()
+  for (const finish of stalledFetches.splice(0)) finish()
+  await idle
+  invalidateSyncAccount()
+})
+
+test("preference hydration preserves edits made while the server profile is loading", async () => {
+  const previousNavigator = globalThis.navigator
+  const previousWindow = globalThis.window
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { onLine: true } })
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    ...previousWindow, innerWidth: 1200, matchMedia: () => ({ matches: false }),
+  } })
+  let respond!: (response: Response) => void
+  globalThis.fetch = () => new Promise<Response>((resolve) => { respond = resolve })
+  let applied = normalizeDevicePreferences({})
+  try {
+    const hydration = hydrateDevicePreferences((preferences) => { applied = preferences }, true)
+    while (!respond) await new Promise((resolve) => setTimeout(resolve, 0))
+    const edited = { ...applied, mobilePortraitSplit: 0.6 }
+    saveDevicePreferences(edited)
+    applied = edited
+    respond(new Response(JSON.stringify({ source: "device", preferences: { mobilePortraitSplit: 0.2 } })))
+    await hydration
+    expect(applied.mobilePortraitSplit).toBe(0.6)
+  } finally {
+    await hydrateDevicePreferences(() => {}, false)
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator })
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow })
+  }
+})
+
+test("preference sync resumes after cached hydration and preserves pending local settings", async () => {
+  const previousNavigator = globalThis.navigator
+  const previousWindow = globalThis.window
+  const previousFetch = globalThis.fetch
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { onLine: true } })
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    ...previousWindow, innerWidth: 1200, matchMedia: () => ({ matches: false }),
+  } })
+  const writes: Array<Record<string, unknown>> = []
+  let reads = 0
+  globalThis.fetch = async (_path, options) => {
+    if (options?.method === "PUT") {
+      writes.push(JSON.parse(String(options.body)).preferences)
+      return new Response("{}")
+    }
+    reads += 1
+    return new Response(JSON.stringify({ source: "device", preferences: { mobilePortraitSplit: 0.2 } }))
+  }
+  let applied = normalizeDevicePreferences({})
+  const apply = (preferences: typeof applied) => { applied = preferences }
+  try {
+    await hydrateDevicePreferences(apply, false)
+    const edited = { ...applied, mobilePortraitSplit: 0.6 }
+    saveDevicePreferences(edited)
+    expect(reads).toBe(0)
+    expect(writes).toEqual([])
+
+    await hydrateDevicePreferences(apply, true)
+    expect(reads).toBe(1)
+    expect(applied).toEqual(edited)
+    expect(writes).toEqual([edited])
+
+    const laterEdit = { ...edited, mobilePortraitSplit: 0.55 }
+    saveDevicePreferences(laterEdit)
+    for (let attempt = 0; attempt < 100 && writes.length < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    expect(writes).toEqual([edited, laterEdit])
+  } finally {
+    await hydrateDevicePreferences(() => {}, false)
+    globalThis.fetch = previousFetch
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator })
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow })
+  }
+})
+
+test("an old-account sync status read cannot repopulate a reset store", async () => {
+  await prepareSyncAccount("status-account-a")
+  await syncDb.syncActivity.put({
+    opId: "private-action", entityType: "thought", clientId: "private-thought", action: "upsert",
+    state: "error", summary: "Account A private content", error: "Rejected", createdAt: 1, updatedAt: 1,
+  })
+  const collection = syncDb.syncActivity.orderBy("updatedAt").reverse()
+  const read = collection.toArray.bind(collection)
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  let entered!: () => void
+  const reading = new Promise<void>((resolve) => { entered = resolve })
+  const order = spyOn(syncDb.syncActivity, "orderBy").mockReturnValue(collection)
+  const delayed = spyOn(collection, "toArray").mockImplementation(async () => {
+    const rows = await read()
+    entered()
+    await gate
+    return rows
+  })
+  try {
+    const refresh = useStore.getState().refreshSyncStatuses()
+    void refresh.catch(() => {})
+    await reading
+    invalidateSyncAccount()
+    useStore.getState().resetStore()
+    release()
+    await expect(refresh).rejects.toThrow("Sync account changed")
+    expect(useStore.getState().syncActivity).toEqual([])
+  } finally {
+    release()
+    delayed.mockRestore()
+    order.mockRestore()
+    invalidateSyncAccount()
+  }
+})
+
 describe("canvas font size preference", () => {
   test("persists valid values and clamps values outside the supported range", () => {
     useStore.getState().setCanvasFontSize(24)
     expect(useStore.getState().canvasFontSize).toBe(24)
     expect(localStorage.getItem("canvasFontSize")).toBe("24")
+    expect(readStoredCanvasFontSize()).toBe(24)
 
     useStore.getState().setCanvasFontSize(100)
     expect(useStore.getState().canvasFontSize).toBe(MAX_CANVAS_FONT_SIZE)
 
     useStore.getState().setCanvasFontSize(1)
     expect(useStore.getState().canvasFontSize).toBe(MIN_CANVAS_FONT_SIZE)
+    expect(readStoredCanvasFontSize()).toBe(MIN_CANVAS_FONT_SIZE)
 
+    localStorage.clear()
     localStorage.setItem("canvasFontSize", "not-a-size")
     expect(readStoredCanvasFontSize()).toBe(DEFAULT_CANVAS_FONT_SIZE)
   })
@@ -78,7 +209,7 @@ describe("frontend store optimistic updates", () => {
     const globals = globalThis as unknown as {
       fetch: (path: string, init?: RequestInit) => Promise<Response>
     }
-    globals.fetch = () => new Promise<Response>(() => {})
+    globals.fetch = stallFetch
     await syncDb.entities.bulkPut([
       entityRecord({
         entityType: "canvas",
@@ -132,7 +263,7 @@ describe("frontend store optimistic updates", () => {
     const globals = globalThis as unknown as {
       fetch: (path: string, init?: RequestInit) => Promise<Response>
     }
-    globals.fetch = () => new Promise<Response>(() => {})
+    globals.fetch = stallFetch
 
     await syncDb.entities.bulkPut([
       entityRecord({
@@ -183,11 +314,79 @@ describe("frontend store optimistic updates", () => {
     expect(state.thoughts[0]?.content).toBe("Cached thought")
   })
 
+  test("an expired session can restore a cached workspace", async () => {
+    setGetToken(async () => null)
+    await syncDb.entities.put(entityRecord({
+      entityType: "canvas",
+      clientId: "canvas-client",
+      serverId: 10,
+      tempId: null,
+      canvasId: 10,
+      status: "clean",
+      data: canvas({ id: 10, name: "Cached" }),
+    }))
+
+    expect(await bootstrapCriticalWorkspace(undefined, false)).toEqual({ activeCanvasId: 10, hasUsableCache: true })
+    expect(useStore.getState().canvases[0]?.name).toBe("Cached")
+  })
+
+  test("a remembered account without local data waits for sign-in before fetching", async () => {
+    const requests: string[] = []
+    globalThis.fetch = (async (path: string | Request) => {
+      requests.push(requestUrl(path))
+      if (!requestUrl(path).includes("/sync/snapshot")) return Response.json({ events: [], latest_revision: 1 })
+      return Response.json({ revision: 1, active_canvas_id: 10, canvases: [canvas()], tags: [], tiles: [tile()], thoughts: [thought()] })
+    }) as typeof fetch
+
+    expect(await bootstrapCriticalWorkspace(undefined, false)).toBeNull()
+    expect(requests).toEqual([])
+    expect(useStore.getState().canvases).toEqual([])
+
+    const result = await bootstrapCriticalWorkspace(undefined, true)
+    expect(result).toEqual({ activeCanvasId: 10, hasUsableCache: false })
+    expect(requests.some((path) => path.includes("/sync/snapshot"))).toBe(true)
+    expect(useStore.getState().thoughts[0]?.content).toBe(thought().content)
+  })
+
+  test("an uncached startup stays pending until its server snapshot finishes", async () => {
+    let releaseSnapshot!: (response: Response) => void
+    globalThis.fetch = (async (path: string | Request) => {
+      if (!requestUrl(path).includes("/sync/snapshot")) return Response.json({ events: [], latest_revision: 1 })
+      return new Promise<Response>((resolve) => { releaseSnapshot = resolve })
+    }) as typeof fetch
+    let finished = false
+    const boot = bootstrapCriticalWorkspace().then((result) => { finished = true; return result })
+    while (!releaseSnapshot) await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(finished).toBe(false)
+    expect(useStore.getState().canvases).toEqual([])
+    releaseSnapshot(Response.json({ revision: 1, active_canvas_id: 10, canvases: [canvas()], tags: [], tiles: [], thoughts: [] }))
+    expect(await boot).toEqual({ activeCanvasId: 10, hasUsableCache: false })
+  })
+
+  test.each(["unauthorized", "offline"] as const)("an %s uncached startup is not ready and can retry", async (failure) => {
+    if (failure === "unauthorized") setGetToken(async () => null)
+    else globalThis.fetch = async () => { throw new Error("Offline") }
+    expect(await bootstrapCriticalWorkspace()).toBeNull()
+    expect(useStore.getState().canvases).toEqual([])
+
+    setGetToken(async () => "renewed-token")
+    clearReauthRequired()
+    globalThis.fetch = (async (path: string | Request) => {
+      if (!requestUrl(path).includes("/sync/snapshot")) return Response.json({ events: [], latest_revision: 1 })
+      return Response.json({ revision: 1, active_canvas_id: 10, canvases: [canvas()], tags: [], tiles: [tile()], thoughts: [thought()] })
+    }) as typeof fetch
+
+    expect(await bootstrapCriticalWorkspace()).toEqual({ activeCanvasId: 10, hasUsableCache: false })
+    expect(useStore.getState().tiles[0]?.title).toBe(tile().title)
+    expect(useStore.getState().thoughts[0]?.content).toBe(thought().content)
+  })
+
   test("sync runtime starts without waiting for network", async () => {
     const globals = globalThis as unknown as {
       fetch: (path: string, init?: RequestInit) => Promise<Response>
     }
-    globals.fetch = () => new Promise<Response>(() => {})
+    globals.fetch = stallFetch
 
     await useStore.getState().startSyncRuntime()
 
@@ -723,7 +922,7 @@ describe("frontend store optimistic updates", () => {
     const globals = globalThis as unknown as {
       fetch: (path: string, init?: RequestInit) => Promise<Response>
     }
-    globals.fetch = () => new Promise<Response>(() => {})
+    globals.fetch = stallFetch
 
     const firstTile = tile({ id: 20, canvas_id: 10, title: "First canvas tile" })
     const secondTile = tile({ id: 21, canvas_id: 11, title: "Second canvas tile" })
@@ -847,7 +1046,7 @@ describe("frontend store optimistic updates", () => {
     expect(thoughtRecord?.payload).toMatchObject({ tile_id: tempTileId, content: "Write tests" })
   })
 
-  test("rapid tile create then move coalesces to the final canvas position", async () => {
+  test("rapid tile create then move preserves both actions and the final canvas position", async () => {
     useStore.setState({
       canvases: [canvas({ id: 10 }), canvas({ id: 11, name: "Later" })],
       activeCanvasId: 10,
@@ -874,8 +1073,10 @@ describe("frontend store optimistic updates", () => {
     const records = await syncDb.outbox.where("clientId").equals(optimisticTile.client_id ?? "").toArray()
     const state = useStore.getState()
 
-    expect(records).toHaveLength(1)
-    expect(records[0]?.payload).toMatchObject({ canvas_id: 11, x: 300, y: 400 })
+    const orderedRecords = [...records].sort((left, right) => left.createdAt - right.createdAt)
+    expect(orderedRecords).toHaveLength(2)
+    expect(orderedRecords[0]?.payload).toMatchObject({ canvas_id: 10, x: 0, y: 0 })
+    expect(orderedRecords[1]?.payload).toMatchObject({ canvas_id: 11, x: 300, y: 400 })
     expect(state.tiles).toHaveLength(0)
     expect(state.tileCache.get(11)?.[0]).toMatchObject({ id: optimisticTile.id, canvas_id: 11 })
   })
@@ -1138,7 +1339,9 @@ describe("frontend store optimistic updates", () => {
     await useStore.getState().moveThoughtToTile(31, 20, { targetCanvasId: 10, orderedIds: [31, 30, 32] })
 
     const records = await syncDb.outbox.toArray()
-    const orderByClientId = new Map(records.map((record) => [record.clientId, record.payload.sort_order]))
+    const orderByClientId = new Map([...records]
+      .sort((left, right) => left.createdAt - right.createdAt)
+      .map((record) => [record.clientId, record.payload.sort_order]))
     const finalOrder = [...useStore.getState().thoughts]
       .sort((left, right) => left.sort_order - right.sort_order)
       .map((item) => [item.id, item.sort_order])
@@ -1147,6 +1350,7 @@ describe("frontend store optimistic updates", () => {
     expect(orderByClientId.get("thought-31")).toBe(0)
     expect(orderByClientId.get("thought-30")).toBe(1)
     expect(orderByClientId.get("thought-32")).toBe(2)
+    expect((await syncDb.syncActivity.toArray()).filter((activity) => !activity.hidden)).toHaveLength(2)
   })
 
   test("temporary tile with temporary thoughts can be deleted before flush", async () => {
@@ -1175,8 +1379,12 @@ describe("frontend store optimistic updates", () => {
 
     expect(useStore.getState().tiles).toHaveLength(0)
     expect(useStore.getState().thoughts).toHaveLength(0)
-    expect(await syncDb.outbox.toArray()).toHaveLength(0)
-    expect(await syncDb.entities.toArray()).toHaveLength(0)
+    const operations = await syncDb.outbox.toArray()
+    expect(operations).toHaveLength(4)
+    expect(operations.filter((operation) => operation.action === "upsert")).toHaveLength(2)
+    expect(operations.filter((operation) => operation.action === "delete")).toHaveLength(2)
+    expect(operations.find((operation) => operation.entityType === "thought" && operation.action === "delete")?.recordHistory).toBe(false)
+    expect((await syncDb.entities.toArray()).every((record) => record.status === "deleted")).toBe(true)
   })
 
   test("deleting a canvas with moveContents moves known children and queues server work", async () => {
