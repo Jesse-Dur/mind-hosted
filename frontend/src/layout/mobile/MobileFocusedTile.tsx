@@ -42,8 +42,8 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
         .filter((thought): thought is Thought => Boolean(thought))
     : tileThoughts
 
-  function commitTitle() {
-    const next = title.trim() || tile!.title
+  function commitTitle(value: string) {
+    const next = value.trim() || tile!.title
     setTitle(next)
     if (next !== tile!.title) void updateTile(tile!.id, { title: next })
   }
@@ -60,7 +60,7 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
   return (
     <section data-mobile-tile-id={tile.id} style={{ height: "100%", background: thoughtDropTarget ? "#faf7ff" : "#fff", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: thoughtDropTarget ? "inset 0 0 0 3px rgba(124,58,237,.42)" : "inset 0 0 0 0 rgba(124,58,237,0)", transition: "background-color 160ms ease, box-shadow 160ms ease" }}>
       <div style={{ height: 46, flexShrink: 0, display: "flex", alignItems: "center", borderBottom: "1px solid #e9e9e9", padding: "0 10px", gap: 8 }}>
-        <input value={title} onChange={(event) => setTitle(event.target.value)} onBlur={commitTitle} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { setTitle(tile.title); event.currentTarget.blur() } }} aria-label="Tile title" style={{ flex: 1, minWidth: 0, border: 0, outline: 0, background: "transparent", fontSize: canvasFontSize + 2, fontWeight: 700, color: "#171717" }} />
+        <input value={title} onChange={(event) => setTitle(event.target.value)} onBlur={(event) => commitTitle(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { event.currentTarget.value = tile.title; setTitle(tile.title); event.currentTarget.blur() } }} aria-label="Tile title" style={{ flex: 1, minWidth: 0, border: 0, outline: 0, background: "transparent", fontSize: canvasFontSize + 2, fontWeight: 700, color: "#171717" }} />
         <SyncStatusDot entities={[{ entityType: "tile", id: tile.id, clientId: tile.client_id }, ...tileThoughts.map((thought) => ({ entityType: "thought" as const, id: thought.id, clientId: thought.client_id }))]} />
         <button onClick={() => setConfirmDelete(true)} aria-label="Delete tile" style={smallButton}>×</button>
       </div>
@@ -238,7 +238,7 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
   return (
     <div data-mobile-thought-id={thought.id} style={{ position: "relative", display: "flex", alignItems: "center", gap: 7, padding: "8px 7px", minHeight: 38, boxSizing: "border-box", background: dragging ? "#f5f3ff" : "#fafafa", border: `1px solid ${dragging ? "#a78bfa" : "#e9e9e9"}`, borderRadius: 8, opacity: dragging ? .38 : 1, touchAction: "pan-y", transition: "opacity 150ms ease, border-color 150ms ease, transform 150ms ease", transform: dragging ? "scale(.985)" : "scale(1)" }} onPointerDown={beginTagLongPress} onPointerMove={movePending} onPointerUp={cancelLongPress} onPointerCancel={cancelLongPress} onContextMenu={(event) => event.preventDefault()}>
       <button onPointerDown={(event) => { event.stopPropagation(); beginDrag(event) }} aria-label={`Move thought${canvasName ? ` from ${canvasName}` : ""}`} style={{ width: 27, height: 27, flexShrink: 0, border: 0, background: "transparent", color: "#bbb", fontSize: 14, lineHeight: 1, touchAction: "none", display: "grid", placeItems: "center", userSelect: "none", WebkitUserSelect: "none" }}>⠿</button>
-      <span ref={textRef} contentEditable={editing || undefined} suppressContentEditableWarning onPointerDown={beginTextEditing} onClick={(event) => event.stopPropagation()} onBlur={(event) => saveEditing(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur() } if (event.key === "Escape") { cancelEditing(); event.currentTarget.blur() } }} style={{ flex: 1, minWidth: 0, fontSize: canvasFontSize + 1, lineHeight: 1.45, color: "#222", outline: 0, cursor: "text", userSelect: "text" }}>{content}</span>
+      <span ref={textRef} contentEditable={editing || undefined} suppressContentEditableWarning onPointerDown={beginTextEditing} onClick={(event) => event.stopPropagation()} onBlur={(event) => saveEditing(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur() } if (event.key === "Escape") { event.currentTarget.textContent = thought.content; cancelEditing(); event.currentTarget.blur() } }} style={{ flex: 1, minWidth: 0, fontSize: canvasFontSize + 1, lineHeight: 1.45, color: "#222", outline: 0, cursor: "text", userSelect: "text" }}>{content}</span>
       <div style={{ height: 28, display: "flex", alignItems: "center", flexShrink: 0, alignSelf: "center" }}>
         <ThoughtTags tags={localTags} expandOnHover={false} />
         <span onPointerDown={(event) => event.stopPropagation()} style={{ width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} /></span>

@@ -105,7 +105,11 @@ export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver
             onBlur={(e) => saveEditing(e.currentTarget.textContent ?? "")}
             onKeyDown={(e) => {
               if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur() }
-              if (e.key === "Escape") { e.currentTarget.blur(); cancelEditing() }
+              if (e.key === "Escape") {
+                e.currentTarget.textContent = thought.content
+                cancelEditing()
+                e.currentTarget.blur()
+              }
             }}
             onMouseDown={(e) => { e.stopPropagation(); setIntent(); startEditing(); requestAnimationFrame(() => spanRef.current?.focus()) }}
             style={{ color: "#1a1a1a", outline: "none", cursor: "text", userSelect: "text", fontSize: "inherit", lineHeight: "inherit" }}

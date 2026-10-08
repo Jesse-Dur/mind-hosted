@@ -50,6 +50,10 @@ Mobile thought entry checks use a temporary phone-width focused tile in the shar
 
 Mobile tab gesture checks use touch pointer events: a swipe scrolls without reordering or switching canvases, a stationary 350 ms hold arms reordering, and cancellation clears the pending hold. Holding and releasing opens tab actions. Mouse movement still starts reordering immediately.
 
+Mobile editing checks use isolated tile and thought data with captured writes. Escape restores the original title or thought text without saving; Enter and ordinary blur save changed text.
+
+Desktop thought editing checks use isolated data with captured writes. Escape restores the original text and exits editing without saving. Enter and clicking outside the editor each save the changed text once.
+
 Preference recovery checks mount the real App in an isolated browser harness with simulated authentication, storage, and server responses. Same-account sign-in after cached startup uploads pending local settings and resumes later saves without another workspace boot or reset. With no pending edits, it applies the server profile.
 
 ## Current Frontend Coverage
