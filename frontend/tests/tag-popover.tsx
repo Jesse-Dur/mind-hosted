@@ -92,6 +92,11 @@ async function runTagPopoverChecks() {
     check(`${side}: travels before expanding`, samples.some((s) => s.width > 9 && s.width < last.width - 1 && Math.abs(s.y - first.y) > 1))
     const bounds = panel()!.getBoundingClientRect()
     check(`${side}: stays in viewport`, bounds.x >= 7.9 && bounds.y >= 7.9 && bounds.right <= innerWidth - 7.9 && bounds.bottom <= innerHeight - 7.9)
+    const mobile = innerWidth <= 900
+    check(`${side}: removal controls fit the layout`, [...panel()!.querySelectorAll("button")].every((button) => {
+      const rect = button.getBoundingClientRect()
+      return mobile ? rect.width >= 44 && rect.height >= 44 : rect.width === 20 && rect.height === 20
+    }))
     const after = anchor.parentElement!.getBoundingClientRect()
     check(`${side}: thought does not move`, before.x === after.x && before.y === after.y && before.width === after.width && before.height === after.height)
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))

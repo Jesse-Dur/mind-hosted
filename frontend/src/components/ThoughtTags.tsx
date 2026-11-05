@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useStore } from "../store"
+import { useMobileWorkspace } from "../layout/useWorkspaceLayout"
 import { CloseButton } from "./CloseButton"
 import { TagDot } from "./TagPill"
 
@@ -19,7 +20,6 @@ type Offset = {
 }
 
 const PANEL_GAP = 7
-const ITEM_HEIGHT = 22
 const EDGE_PADDING = 8
 const MOVE_MS = 220
 const STAGGER_MS = 35
@@ -31,6 +31,13 @@ function clamp(value: number, minimum: number, maximum: number) {
 }
 
 export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true }: { tags: string[]; onRemove?: (tag: string) => void; expandOnHover?: boolean }) {
+  const mobile = useMobileWorkspace()
+  const itemHeight = mobile ? 44 : 22
+  const removeSize = mobile ? 44 : 20
+  const labelSize = mobile ? 14 : 10
+  const labelPadding = mobile ? 12 : 7
+  const labelGap = mobile ? 8 : 4
+  const panelPadding = mobile ? 10 : 8
   const [removal, setRemoval] = useState<{ tag: string; tags: string[] } | null>(null)
   // Save immediately; only retain the old rows for their exit animation. Leaving
   // the canvas during that animation must not cancel the user's tag removal.
@@ -344,7 +351,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
             zIndex: 1000,
             display: "flex",
             flexDirection: "column",
-            padding: 8,
+            padding: panelPadding,
             maxWidth: "calc(100vw - 16px)",
             maxHeight: "calc(100dvh - 16px)",
             boxSizing: "border-box",
@@ -373,7 +380,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
             }}
           />
           {/* Returning pills must not hover themselves open as they cross the cursor. */}
-          <div ref={scrollRef} style={{ pointerEvents: closing ? "none" : undefined, padding: 1, margin: -1, transform: closing && exitScroll > 0 ? `translateY(${-exitScroll}px)` : undefined, maxHeight: "calc(100dvh - 32px)", overflowY: settled ? "auto" : "visible", overscrollBehavior: "contain" }}>
+          <div ref={scrollRef} style={{ pointerEvents: closing ? "none" : undefined, padding: 1, margin: -1, transform: closing && exitScroll > 0 ? `translateY(${-exitScroll}px)` : undefined, maxHeight: `calc(100dvh - ${16 + panelPadding * 2}px)`, overflowY: settled ? "auto" : "visible", overscrollBehavior: "contain" }}>
             {tags.map((tag, index) => {
               const color = knownTags.find((item) => item.name === tag)?.color ?? "#888"
               const offset = prepared ? offsets[tag]! : { x: 0, y: 0, width: 8 }
@@ -386,19 +393,19 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
                   style={{
                     position: "relative",
                     zIndex: 1,
-                    height: removing ? 0 : ITEM_HEIGHT,
+                    height: removing ? 0 : itemHeight,
                     width: "max-content",
                     maxWidth: "100%",
                     flexShrink: 0,
-                    marginBottom: removing || index === tags.length - 1 ? 0 : 4,
+                    marginBottom: removing || index === tags.length - 1 ? 0 : labelGap,
                     opacity: removing ? 0 : 1,
                     transform: removing ? "scale(0.9)" : "scale(1)",
                     transition: reducedMotion ? "none" : `height ${REMOVE_MS}ms ease, margin-bottom ${REMOVE_MS}ms ease, opacity ${REMOVE_MS}ms ease, transform ${REMOVE_MS}ms ease`,
                   }}
                 >
-                  <div aria-hidden style={{ display: "flex", alignItems: "center", height: ITEM_HEIGHT, paddingLeft: 7, visibility: "hidden" }}>
-                    <span style={{ fontSize: 10, fontWeight: 600, whiteSpace: "nowrap", paddingRight: 4 }}>{tag}</span>
-                    {onRemove && <span style={{ width: 20, height: 20, flexShrink: 0 }} />}
+                  <div aria-hidden style={{ display: "flex", alignItems: "center", height: itemHeight, paddingLeft: labelPadding, visibility: "hidden" }}>
+                    <span style={{ fontSize: labelSize, fontWeight: 600, whiteSpace: "nowrap", paddingRight: labelGap }}>{tag}</span>
+                    {onRemove && <span style={{ width: removeSize, height: removeSize, flexShrink: 0 }} />}
                   </div>
                   <div
                     data-tag-pill={tag}
@@ -410,7 +417,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
                       alignItems: "center",
                       justifyContent: "flex-start",
                       width: expanded ? offset.width : 8,
-                      height: expanded ? ITEM_HEIGHT : 8,
+                      height: expanded ? itemHeight : 8,
                       borderRadius: 99,
                       background: expanded ? `${color}22` : color,
                       outline: expanded ? `1px solid ${color}55` : "1px solid transparent",
@@ -421,13 +428,13 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
                       transitionDelay: `${delay}ms`,
                     }}
                   >
-                    <span style={{ color, fontSize: 10, fontWeight: 600, lineHeight: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, paddingLeft: 7, paddingRight: 4, opacity: expanded ? 1 : 0, transition: reducedMotion ? "none" : "opacity 110ms ease", transitionDelay: expanded && !reducedMotion ? `${delay + 80}ms` : "0ms" }}>
+                    <span style={{ color, fontSize: labelSize, fontWeight: 600, lineHeight: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, paddingLeft: labelPadding, paddingRight: labelGap, opacity: expanded ? 1 : 0, transition: reducedMotion ? "none" : "opacity 110ms ease", transitionDelay: expanded && !reducedMotion ? `${delay + 80}ms` : "0ms" }}>
                       {tag}
                     </span>
                     {onRemove && <span style={{ flexShrink: 0, opacity: expanded ? 1 : 0, transition: reducedMotion ? "none" : "opacity 100ms ease", transitionDelay: expanded && !reducedMotion ? `${delay + 105}ms` : "0ms" }}>
                       <CloseButton
-                        size={20}
-                        iconSize={6}
+                        size={removeSize}
+                        iconSize={mobile ? 12 : 6}
                         ariaLabel={`Remove ${tag} tag`}
                         onClick={(event) => {
                           event.preventDefault()
