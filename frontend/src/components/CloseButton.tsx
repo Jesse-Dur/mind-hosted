@@ -10,6 +10,7 @@ export function CloseButton({ onClick, size = 18, iconSize = 8, ariaLabel }: Pro
     <button
       aria-label={ariaLabel}
       onClick={onClick}
+      onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       onMouseEnter={(e) => (e.currentTarget.style.background = "#ebebeb")}
       onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}

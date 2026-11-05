@@ -58,6 +58,8 @@ Mobile tab gesture checks use touch pointer events: a swipe scrolls without reor
 
 Mobile editing checks use isolated tile and thought data with captured writes. Escape restores the original title or thought text without saving; Enter and ordinary blur save changed text. A scrollable tag menu ignores touch pointer movement followed by cancellation, accepts mouse clicks and touch-style taps, and closes when its backdrop is pressed.
 
+Mobile tile and thought delete controls use the desktop SVG cross, centered at 12 pixels within the existing 28-pixel buttons. Isolated component checks at narrow desktop and phone widths verify centering, touch-hold isolation from parent gestures, confirmation before deletion, cancellation without writes, and one deletion per confirmation. Safari desktop rendering still needs a Safari check.
+
 Desktop thought editing checks use isolated data with captured writes. Escape restores the original text and exits editing without saving. Enter and clicking outside the editor each save the changed text once.
 
 Desktop drag and resize checks use the real hook with in-memory writes. Rejected drops, cross-canvas no-ops, missing canvas rectangles, and rejected resizes restore transitions. Successful releases flush final geometry before transitions resume. Delayed completions cannot end a newer gesture. Checks also cover remounting, a click after a pending write, and Canvas-style delayed tile props.
