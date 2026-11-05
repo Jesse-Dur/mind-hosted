@@ -372,7 +372,8 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
               pointerEvents: "none",
             }}
           />
-          <div ref={scrollRef} style={{ padding: 1, margin: -1, transform: closing && exitScroll > 0 ? `translateY(${-exitScroll}px)` : undefined, maxHeight: "calc(100dvh - 32px)", overflowY: settled ? "auto" : "visible", overscrollBehavior: "contain" }}>
+          {/* Returning pills must not hover themselves open as they cross the cursor. */}
+          <div ref={scrollRef} style={{ pointerEvents: closing ? "none" : undefined, padding: 1, margin: -1, transform: closing && exitScroll > 0 ? `translateY(${-exitScroll}px)` : undefined, maxHeight: "calc(100dvh - 32px)", overflowY: settled ? "auto" : "visible", overscrollBehavior: "contain" }}>
             {tags.map((tag, index) => {
               const color = knownTags.find((item) => item.name === tag)?.color ?? "#888"
               const offset = prepared ? offsets[tag]! : { x: 0, y: 0, width: 8 }

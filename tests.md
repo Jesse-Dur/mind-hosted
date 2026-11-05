@@ -38,6 +38,8 @@ The isolated popover fixture at `/tests/tag-popover.html` uses the real tag comp
 
 The 48 checks sample animation frames to verify source-dot alignment, actual travel, stable thought layout, viewport placement, and the return to source dots without a second fade. They also cover touch opening, outside-tap dismissal, rapid reopening, keyboard focus, immediate tag removal, stable panel width, and removing the final tag. `?long` and `?many` provide manual checks for truncation and scrolling. Reduced-motion checks verify immediate labelled pills with no active animations. Phone viewport and synthetic touch checks do not replace testing on a physical phone.
 
+Desktop hover closing also needs native pointer hit testing. Hover the center cluster, call `window.armTagPopoverHoverClose("center")`, then move the real pointer to the returned coordinates in the gap between the cluster and panel. All five results in `window.tagPopoverHoverCloseResult` must pass. Repeat with `"bottom"` for a panel that opens above its source. Returning pills ignore pointer hits during contraction, so they cannot repeatedly reopen the panel while passing under a stationary cursor. The source cluster and panel remain hover targets for deliberate reopening.
+
 Shared-browser checks against the running backend cover tag creation, renaming, and deletion through the UI. Concurrent authenticated pushes use server-only and client-only identities in both request orders; server snapshots, pulled local caches, and the History panel preserve the rename chain and unrelated thought labels. The temporary tag and canvas are removed after the checks, and the original canvas is restored.
 
 ## Browser Publication Checks

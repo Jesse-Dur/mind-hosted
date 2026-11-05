@@ -46,6 +46,8 @@ declare global {
   interface Window {
     __tagRemovals: string[]
     runTagPopoverChecks: typeof runTagPopoverChecks
+    armTagPopoverHoverClose: typeof armTagPopoverHoverClose
+    tagPopoverHoverCloseResult: { test: string; passed: boolean }[] | null
   }
 }
 
@@ -150,3 +152,48 @@ async function runTagPopoverChecks() {
   return results
 }
 window.runTagPopoverChecks = runTagPopoverChecks
+
+// Synthetic pointer events do not update browser hit testing. Arm this check
+// while hovering a cluster, then move the real pointer to the returned gap.
+// Returning pills cross that gap and must not reopen the panel under the mouse.
+function armTagPopoverHoverClose(side = "center") {
+  const anchor = document.querySelector<HTMLElement>(`[data-row="${side}"] [role="button"]`)!
+  const panel = document.getElementById(anchor.getAttribute("aria-controls")!)!
+  if (!panel) throw new Error("Hover the requested tag cluster before arming this check")
+  const anchorRect = anchor.getBoundingClientRect()
+  const panelRect = panel.getBoundingClientRect()
+  const source = anchor.firstElementChild!.getBoundingClientRect()
+  window.tagPopoverHoverCloseResult = null
+  anchor.addEventListener("pointerleave", (event) => {
+    let closingSeen = false
+    let reopened = false
+    let intercepted = false
+    let returned: DOMRect | null = null
+    const start = performance.now()
+    function tick() {
+      const closing = (panel.firstElementChild as HTMLElement).style.opacity === "0"
+      if (closingSeen && !closing) reopened = true
+      closingSeen ||= closing
+      const pill = panel.querySelector<HTMLElement>("[data-tag-pill]")!
+      if (document.contains(panel)) returned = pill.getBoundingClientRect()
+      if (closing) {
+        const hit = document.elementFromPoint(event.clientX, event.clientY)
+        intercepted ||= Boolean(hit?.closest("[data-tag-pill]"))
+      }
+      if (performance.now() - start < 900) requestAnimationFrame(tick)
+      else window.tagPopoverHoverCloseResult = [
+        { test: "uses native hover hit testing", passed: event.isTrusted },
+        { test: "leaving starts contraction", passed: closingSeen },
+        { test: "returning pills do not intercept the cursor", passed: !intercepted },
+        { test: "closing does not reopen itself", passed: !reopened && !document.contains(panel) },
+        { test: "contraction reaches the source dot", passed: Boolean(returned && Math.abs(returned.x - source.x - 2) < 1 && Math.abs(returned.y - source.y - 5) < 1 && Math.abs(returned.width - 8) < 1) },
+      ]
+    }
+    requestAnimationFrame(tick)
+  }, { once: true })
+  return {
+    x: anchorRect.x + anchorRect.width / 2,
+    y: panelRect.top >= anchorRect.bottom ? (anchorRect.bottom + panelRect.top) / 2 : (panelRect.bottom + anchorRect.top) / 2,
+  }
+}
+window.armTagPopoverHoverClose = armTagPopoverHoverClose
