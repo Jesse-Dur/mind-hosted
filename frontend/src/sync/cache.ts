@@ -3,6 +3,10 @@ import { payloadForEntity } from "./entities"
 import { entityKey, serverClientId } from "./ids"
 import { syncDb } from "./localDb"
 import type { LocalEntityRecord, SyncEntity, SyncEntityType, SyncSnapshotResponse } from "./types"
+import { captureEntityWriteGeneration, entityWasWrittenAfter, markEntityWrite } from "./entityWriteFence"
+import { evictPastEntitiesCache, evictPastEntityCache } from "./queryCache"
+import { assertSyncAccountScopeCurrent, runSyncAccountTask } from "./accountScope"
+import { cachePastEntity } from "./pastCache"
 
 export type SnapshotChangeIds = {
   tileIds: number[]
@@ -32,7 +36,9 @@ function canvasIdForRecord(record: LocalEntityRecord) {
 }
 
 async function pendingOutboxFor(clientId: string) {
-  return syncDb.outbox.where("clientId").equals(clientId).and((record) => record.status !== "error").first()
+  // Errors and intentionally local-only edits are still authoritative local
+  // work. A pull must never overwrite them before the user resolves them.
+  return syncDb.outbox.where("clientId").equals(clientId).first()
 }
 
 async function findLocalServerRecord(entityType: SyncEntityType, serverId: number) {
@@ -44,16 +50,16 @@ async function findLocalServerRecord(entityType: SyncEntityType, serverId: numbe
 
 async function findLocalIncomingRecord(entityType: SyncEntityType, entity: SyncEntity) {
   const clientId = entity.client_id ?? serverClientId(entityType, entity.id)
-  return syncDb.entities.get(entityKey(entityType, clientId)) ?? findLocalServerRecord(entityType, entity.id)
+  return (await syncDb.entities.get(entityKey(entityType, clientId))) ?? findLocalServerRecord(entityType, entity.id)
 }
 
 function payloadChanged(entityType: SyncEntityType, existing: SyncEntity, incoming: SyncEntity) {
   return JSON.stringify(payloadForEntity(entityType, existing)) !== JSON.stringify(payloadForEntity(entityType, incoming))
 }
 
-async function changedIdsForSnapshotEntities(entityType: "tile", entities: Tile[]): Promise<number[]>
-async function changedIdsForSnapshotEntities(entityType: "thought", entities: Thought[]): Promise<number[]>
-async function changedIdsForSnapshotEntities(entityType: "tile" | "thought", entities: Array<Tile | Thought>) {
+async function changedIdsForSnapshotEntities(entityType: "tile", entities: Tile[], snapshotGeneration: number): Promise<number[]>
+async function changedIdsForSnapshotEntities(entityType: "thought", entities: Thought[], snapshotGeneration: number): Promise<number[]>
+async function changedIdsForSnapshotEntities(entityType: "tile" | "thought", entities: Array<Tile | Thought>, snapshotGeneration: number) {
   const changedIds: number[] = []
   for (const entity of entities) {
     const existing = await findLocalIncomingRecord(entityType, entity)
@@ -61,67 +67,137 @@ async function changedIdsForSnapshotEntities(entityType: "tile" | "thought", ent
       changedIds.push(entity.id)
       continue
     }
+    if (entityWasWrittenAfter(entityType, existing.clientId, snapshotGeneration)) continue
     if (await pendingOutboxFor(existing.clientId)) continue
+    if (entityWasWrittenAfter(entityType, existing.clientId, snapshotGeneration)) continue
     if (payloadChanged(entityType, existing.data, entity)) changedIds.push(entity.id)
   }
   return changedIds
 }
 
-async function snapshotChangeIds(snapshot: SyncSnapshotResponse): Promise<SnapshotChangeIds> {
+async function snapshotChangeIds(snapshot: SyncSnapshotResponse, snapshotGeneration: number): Promise<SnapshotChangeIds> {
   const [tileIds, thoughtIds] = await Promise.all([
-    changedIdsForSnapshotEntities("tile", snapshot.tiles),
-    changedIdsForSnapshotEntities("thought", snapshot.thoughts),
+    changedIdsForSnapshotEntities("tile", snapshot.tiles, snapshotGeneration),
+    changedIdsForSnapshotEntities("thought", snapshot.thoughts, snapshotGeneration),
   ])
   return { tileIds, thoughtIds }
 }
 
-async function renameCachedThoughtTags(oldName: string, newName: string) {
+export async function renameCachedThoughtTags(oldName: string, newName: string, snapshotGeneration?: number, preserveLocalData = false) {
   if (oldName === newName) return
   const thoughtRecords = await syncDb.entities.where("entityType").equals("thought").toArray()
   await Promise.all(thoughtRecords.map((record) => {
-    if (!isThought(record.data) || !record.data.tags.includes(oldName)) return Promise.resolve()
+    if (!isThought(record.data)) return Promise.resolve()
+    const confirmed = record.confirmedData && isThought(record.confirmedData) ? record.confirmedData : null
+    if (!record.data.tags.includes(oldName) && !confirmed?.tags.includes(oldName)) return Promise.resolve()
+    if (snapshotGeneration !== undefined && entityWasWrittenAfter("thought", record.clientId, snapshotGeneration)) return Promise.resolve()
+    if (snapshotGeneration === undefined) markEntityWrite("thought", record.clientId)
     return syncDb.entities.put({
       ...record,
-      data: { ...record.data, tags: record.data.tags.map((tag) => tag === oldName ? newName : tag) },
+      data: preserveLocalData ? record.data : { ...record.data, tags: record.data.tags.map((tag) => tag === oldName ? newName : tag) },
+      confirmedData: confirmed ? { ...confirmed, tags: confirmed.tags.map((tag) => tag === oldName ? newName : tag) } : record.confirmedData,
       updatedAt: Date.now(),
     })
   }))
 }
 
-export async function removeLocalThoughtTag(tagName: string) {
-  const thoughtRecords = await syncDb.entities.where("entityType").equals("thought").toArray()
-  await Promise.all(thoughtRecords.map(async (record) => {
-    if (!isThought(record.data) || !record.data.tags.includes(tagName)) return Promise.resolve()
-    // Thought tags are stored by name, so removing the tag definition must also
-    // clean durable edits so a later offline flush cannot restore the label.
-    const pendingOperations = await syncDb.outbox.where("clientId").equals(record.clientId).toArray()
-    await Promise.all([
-      syncDb.entities.put({
-        ...record,
-        data: { ...record.data, tags: record.data.tags.filter((tag) => tag !== tagName) },
-        updatedAt: Date.now(),
-      }),
-      ...pendingOperations.map((operation) => {
-        if (operation.entityType !== "thought" || operation.action !== "upsert" || !Array.isArray(operation.payload.tags)) return Promise.resolve()
-        return syncDb.outbox.put({
-          ...operation,
-          payload: { ...operation.payload, tags: operation.payload.tags.filter((tag) => tag !== tagName) },
+export function removeLocalThoughtTag(tagName: string, serverConfirmed = false) {
+  return runSyncAccountTask(async (scope) => {
+    const thoughtRecords = await syncDb.entities.where("entityType").equals("thought").toArray()
+    assertSyncAccountScopeCurrent(scope)
+    await Promise.all(thoughtRecords.map(async (record) => {
+      if (!isThought(record.data)) return
+      const confirmed = record.confirmedData && isThought(record.confirmedData) ? record.confirmedData : null
+      if (!record.data.tags.includes(tagName) && !(serverConfirmed && confirmed?.tags.includes(tagName))) return
+      // Thought tags are stored by name, so removing the tag definition must also
+      // clean durable edits so a later offline flush cannot restore the label.
+      const pendingOperations = await syncDb.outbox.where("clientId").equals(record.clientId).toArray()
+      markEntityWrite("thought", record.clientId)
+      await Promise.all([
+        syncDb.entities.put({
+          ...record,
+          data: { ...record.data, tags: record.data.tags.filter((tag) => tag !== tagName) },
+          confirmedData: serverConfirmed && confirmed ? { ...confirmed, tags: confirmed.tags.filter((tag) => tag !== tagName) } : record.confirmedData,
           updatedAt: Date.now(),
-        })
-      }),
-    ])
+        }),
+        ...pendingOperations.map((operation) => {
+          if (operation.entityType !== "thought" || operation.action !== "upsert" || !Array.isArray(operation.payload.tags)) return Promise.resolve()
+          return syncDb.outbox.put({
+            ...operation,
+            payload: { ...operation.payload, tags: operation.payload.tags.filter((tag) => tag !== tagName) },
+            updatedAt: Date.now(),
+          })
+        }),
+      ])
+    }))
+    assertSyncAccountScopeCurrent(scope)
+  })
+}
+
+export async function moveLocalCanvasContents(sourceCanvasId: number | null, targetCanvasId: number | null) {
+  if (sourceCanvasId === null || targetCanvasId === null || sourceCanvasId === targetCanvasId) return
+  const tileRecords = await syncDb.entities.where("entityType").equals("tile").toArray()
+  await Promise.all(tileRecords.map(async (record) => {
+    if (!isTile(record.data)) return
+    const confirmed = record.confirmedData && isTile(record.confirmedData) ? record.confirmedData : null
+    if (record.data.canvas_id !== sourceCanvasId && confirmed?.canvas_id !== sourceCanvasId) return
+    // Keep unsynced placement authoritative, but advance its discard baseline.
+    const pending = await syncDb.outbox.where("clientId").equals(record.clientId).first()
+    const data = !pending && record.data.canvas_id === sourceCanvasId ? { ...record.data, canvas_id: targetCanvasId } : record.data
+    markEntityWrite("tile", record.clientId)
+    await syncDb.entities.put({
+      ...record,
+      canvasId: data.canvas_id,
+      data,
+      confirmedData: confirmed?.canvas_id === sourceCanvasId ? { ...confirmed, canvas_id: targetCanvasId } : record.confirmedData,
+      updatedAt: Date.now(),
+    })
   }))
 }
 
-export async function cacheServerEntity(entityType: SyncEntityType, entity: SyncEntity, preserveDirty = true) {
+export async function confirmDeletedContents(entityType: "canvas" | "tile", serverId: number | null) {
+  if (serverId === null) return
+  const records = await syncDb.entities.toArray()
+  const baseline = (record: LocalEntityRecord) => record.confirmedData === undefined ? record.data : record.confirmedData
+  const tiles = entityType === "canvas" ? records.filter((record) => {
+    const entity = baseline(record)
+    return record.entityType === "tile" && entity && isTile(entity) && entity.canvas_id === serverId
+  }) : []
+  const tileIds = new Set(entityType === "tile" ? [serverId] : tiles.map((record) => baseline(record)!.id))
+  const thoughts = records.filter((record) => {
+    const entity = baseline(record)
+    return record.entityType === "thought" && entity && isThought(entity) && tileIds.has(entity.tile_id)
+  })
+  await Promise.all([...tiles, ...thoughts].map(async (record) => {
+    const pending = await pendingOutboxFor(record.clientId)
+    markEntityWrite(record.entityType, record.clientId)
+    if (pending) {
+      // Preserve local work until resolved; discard must respect the cascade.
+      await syncDb.entities.put({ ...record, confirmedData: null, lastSyncedAt: Date.now() })
+    } else {
+      await cachePastEntity(record.entityType, baseline(record)!)
+      await syncDb.entities.delete(record.key)
+    }
+  }))
+}
+
+export function cacheServerEntity(entityType: SyncEntityType, entity: SyncEntity, preserveDirty?: boolean): Promise<LocalEntityRecord>
+export function cacheServerEntity(entityType: SyncEntityType, entity: SyncEntity, preserveDirty: boolean, snapshotGeneration: number): Promise<LocalEntityRecord | undefined>
+export function cacheServerEntity(entityType: SyncEntityType, entity: SyncEntity, preserveDirty: boolean, snapshotGeneration: number, evictFromPast: boolean): Promise<LocalEntityRecord | undefined>
+export async function cacheServerEntity(entityType: SyncEntityType, entity: SyncEntity, preserveDirty = true, snapshotGeneration?: number, evictFromPast = true) {
   const serverClient = serverClientId(entityType, entity.id)
   const clientId = entity.client_id ?? serverClient
+  if (snapshotGeneration === undefined) markEntityWrite(entityType, clientId)
   const key = entityKey(entityType, clientId)
   const existing = await syncDb.entities.get(key) ?? await findLocalServerRecord(entityType, entity.id)
+  const existingClientId = existing?.clientId ?? clientId
+  if (snapshotGeneration !== undefined && entityWasWrittenAfter(entityType, existingClientId, snapshotGeneration)) return existing
   const dirty = existing ? await pendingOutboxFor(existing.clientId) : null
+  if (snapshotGeneration !== undefined && entityWasWrittenAfter(entityType, existingClientId, snapshotGeneration)) return existing
   const data = preserveDirty && dirty && existing ? existing.data : { ...entity, client_id: clientId }
-  if (entityType === "tag" && !dirty && existing && isTag(existing.data) && isTag(entity)) {
-    await renameCachedThoughtTags(existing.data.name, entity.name)
+  if (entityType === "tag" && existing && isTag(existing.data) && isTag(entity)) {
+    const previous = existing.confirmedData && isTag(existing.confirmedData) ? existing.confirmedData : existing.data
+    await renameCachedThoughtTags(previous.name, entity.name, snapshotGeneration, Boolean(dirty))
   }
   const record: LocalEntityRecord = {
     key,
@@ -142,32 +218,39 @@ export async function cacheServerEntity(entityType: SyncEntityType, entity: Sync
     }),
     status: preserveDirty && dirty ? "dirty" : "clean",
     data,
+    confirmedData: { ...entity, client_id: clientId },
+    syncDisposition: preserveDirty && dirty ? existing?.syncDisposition ?? "normal" : "normal",
+    lastSyncedAt: Date.now(),
     updatedAt: Date.now(),
   }
+  if (snapshotGeneration !== undefined && entityWasWrittenAfter(entityType, existingClientId, snapshotGeneration)) return existing
   if (existing && existing.key !== key) await syncDb.entities.delete(existing.key)
   await syncDb.entities.put(record)
+  if (evictFromPast && (entityType === "tile" || entityType === "thought")) await evictPastEntityCache(record.data as Tile | Thought)
   return record
 }
 
-export async function cacheServerEntities(entityType: SyncEntityType, entities: SyncEntity[]) {
-  await Promise.all(entities.map((entity) => cacheServerEntity(entityType, entity)))
+export async function cacheServerEntities(entityType: SyncEntityType, entities: SyncEntity[], snapshotGeneration: number) {
+  return Promise.all(entities.map((entity) => cacheServerEntity(entityType, entity, true, snapshotGeneration, false)))
 }
 
-async function deleteCleanMissingRecords(entityType: SyncEntityType, presentServerIds: Set<number>, includeRecord: (record: LocalEntityRecord) => boolean) {
+async function deleteCleanMissingRecords(entityType: SyncEntityType, presentServerIds: Set<number>, includeRecord: (record: LocalEntityRecord) => boolean, snapshotGeneration: number) {
   const records = await syncDb.entities.where("entityType").equals(entityType).toArray()
   await Promise.all(records.map(async (record) => {
     if (!includeRecord(record) || record.serverId === null || presentServerIds.has(record.serverId)) return
+    if (entityWasWrittenAfter(entityType, record.clientId, snapshotGeneration)) return
     if (await pendingOutboxFor(record.clientId)) return
+    if (entityWasWrittenAfter(entityType, record.clientId, snapshotGeneration)) return
     await syncDb.entities.delete(record.key)
   }))
 }
 
-async function reconcileSnapshot(snapshot: SyncSnapshotResponse) {
+async function reconcileSnapshot(snapshot: SyncSnapshotResponse, snapshotGeneration: number) {
   const serverCanvasIds = new Set(snapshot.canvases.map((canvas) => Number(canvas.id)))
   const serverTagIds = new Set(snapshot.tags.map((tag) => Number(tag.id)))
   await Promise.all([
-    deleteCleanMissingRecords("canvas", serverCanvasIds, () => true),
-    deleteCleanMissingRecords("tag", serverTagIds, () => true),
+    deleteCleanMissingRecords("canvas", serverCanvasIds, () => true, snapshotGeneration),
+    deleteCleanMissingRecords("tag", serverTagIds, () => true, snapshotGeneration),
   ])
 
   const canvasId = snapshot.active_canvas_id
@@ -181,31 +264,38 @@ async function reconcileSnapshot(snapshot: SyncSnapshotResponse) {
   const localCanvasTileRecordsById = new Map(localCanvasTileRecords.map((record) => [record.data.id, record]))
 
   await Promise.all([
-    deleteCleanMissingRecords("tile", serverTileIds, (record) => isTile(record.data) && record.data.canvas_id === canvasId),
+    deleteCleanMissingRecords("tile", serverTileIds, (record) => isTile(record.data) && record.data.canvas_id === canvasId, snapshotGeneration),
     syncDb.entities.where("entityType").equals("thought").toArray().then(async (records) => {
       await Promise.all(records.map(async (record) => {
         if (!isThought(record.data) || !localCanvasTileIds.has(record.data.tile_id)) return
         if (record.serverId === null || serverThoughtIds.has(record.serverId)) return
+        if (entityWasWrittenAfter("thought", record.clientId, snapshotGeneration)) return
         // A stale snapshot can arrive before a moved tile's write is fully
         // reflected server-side. Keep its thoughts until the tile sync settles.
         const parentTile = localCanvasTileRecordsById.get(record.data.tile_id)
+        if (parentTile && entityWasWrittenAfter("tile", parentTile.clientId, snapshotGeneration)) return
         if (parentTile && await pendingOutboxFor(parentTile.clientId)) return
         if (await pendingOutboxFor(record.clientId)) return
+        if (entityWasWrittenAfter("thought", record.clientId, snapshotGeneration)) return
         await syncDb.entities.delete(record.key)
       }))
     }),
   ])
 }
 
-export async function cacheSyncSnapshot(snapshot: SyncSnapshotResponse): Promise<SnapshotChangeIds> {
-  const changedIds = await snapshotChangeIds(snapshot)
-  await reconcileSnapshot(snapshot)
-  await Promise.all([
-    cacheServerEntities("canvas", snapshot.canvases),
-    cacheServerEntities("tag", snapshot.tags),
-    cacheServerEntities("tile", snapshot.tiles),
-    cacheServerEntities("thought", snapshot.thoughts),
+export async function cacheSyncSnapshot(snapshot: SyncSnapshotResponse, snapshotGeneration = captureEntityWriteGeneration()): Promise<SnapshotChangeIds> {
+  const changedIds = await snapshotChangeIds(snapshot, snapshotGeneration)
+  await reconcileSnapshot(snapshot, snapshotGeneration)
+  const records = await Promise.all([
+    cacheServerEntities("canvas", snapshot.canvases, snapshotGeneration),
+    cacheServerEntities("tag", snapshot.tags, snapshotGeneration),
+    cacheServerEntities("tile", snapshot.tiles, snapshotGeneration),
+    cacheServerEntities("thought", snapshot.thoughts, snapshotGeneration),
   ])
+  // A fenced snapshot can contain an entity already deleted by newer work.
+  // Only the accepted live records may evict their corresponding Past entries.
+  await evictPastEntitiesCache(records.flat().flatMap((record) =>
+    record && record.status !== "deleted" && (isTile(record.data) || isThought(record.data)) ? [record.data] : []))
   return changedIds
 }
 
@@ -237,6 +327,20 @@ export async function cachedThoughtsForCanvas(canvasId: number) {
     .filter(isThought)
     .filter((thought) => tileIds.has(thought.tile_id))
     .sort((a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at))
+}
+
+export async function cachedWorkspaceForSearch() {
+  const [tileRecords, thoughtRecords] = await Promise.all([
+    syncDb.entities.where("entityType").equals("tile").and((record) => record.status !== "deleted").toArray(),
+    syncDb.entities.where("entityType").equals("thought").and((record) => record.status !== "deleted").toArray(),
+  ])
+  const tiles = tileRecords.map((record) => record.data).filter(isTile)
+  const tileIds = new Set(tiles.map((tile) => tile.id))
+  const thoughts = thoughtRecords
+    .map((record) => record.data)
+    .filter(isThought)
+    .filter((thought) => tileIds.has(thought.tile_id))
+  return { tiles, thoughts }
 }
 
 export async function cachedTags() {

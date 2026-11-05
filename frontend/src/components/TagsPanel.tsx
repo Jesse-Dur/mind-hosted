@@ -42,7 +42,7 @@ export function TagsPanel() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, overflowY: "auto", marginBottom: 16 }}>
         {tags.length === 0 && <p style={{ fontSize: 12, color: "#ccc" }}>No tags yet</p>}
         <style>{`

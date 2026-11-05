@@ -1,13 +1,14 @@
 import { useRef } from "react"
-import { useStore } from "../store"
 import { Thought } from "./Thought"
 import { ThoughtInput } from "./ThoughtInput"
 import { dragState } from "../utils/dragState"
 import { setThoughtDragTargetTile } from "../utils/crossCanvasDrag"
 import { useTileThoughts } from "../hooks/useTileThoughts"
+import { SyncAnimatedList } from "./SyncAnimatedList"
+import { optimisticIdentityKey } from "../utils/optimisticIdentity"
 import type { Thought as ThoughtType } from "../types"
 
-export function TileContent({ tileId, tileThoughts }: { tileId: number; tileThoughts: ThoughtType[] }) {
+export function TileContent({ tileId, fontSize, tileThoughts, remoteThoughtRevision }: { tileId: number; fontSize: number; tileThoughts: ThoughtType[]; remoteThoughtRevision: number }) {
   const thoughtInputRef = useRef<HTMLInputElement>(null)
   const {
     orderedIds,
@@ -15,6 +16,7 @@ export function TileContent({ tileId, tileThoughts }: { tileId: number; tileThou
     dropTarget,
     hiddenThoughtId,
     previewThought,
+    dragActive,
     setDropTarget,
     onThoughtDragStart,
     onThoughtDragMove,
@@ -23,7 +25,6 @@ export function TileContent({ tileId, tileThoughts }: { tileId: number; tileThou
     onTileContentDragOver,
     onTileContentDrop,
   } = useTileThoughts(tileId, tileThoughts)
-  const { thoughtStableKeys } = useStore()
 
   const thoughtById = new Map(tileThoughts.map((thought) => [thought.id, thought]))
   if (previewThought) thoughtById.set(previewThought.id, previewThought)
@@ -38,8 +39,18 @@ export function TileContent({ tileId, tileThoughts }: { tileId: number; tileThou
     : displayed.filter((thought) => thought.id !== hiddenThoughtId)
 
   return (
-    <div
-      style={{ padding: "6px 10px", flex: 1, overflowY: "auto", userSelect: "text", cursor: "text", background: dropTarget ? "rgba(124,58,237,0.04)" : undefined, transition: "background 0.15s ease", display: "flex", flexDirection: "column", gap: 2 }}
+    <SyncAnimatedList
+      scopeKey={`tile-${tileId}`}
+      remoteRevision={remoteThoughtRevision}
+      disabled={dragActive}
+      items={[
+        ...visibleThoughts.map((thought) => ({
+          key: optimisticIdentityKey(thought, "thought"),
+          content: <Thought thought={thought} fontSize={fontSize} onDragStart={onThoughtDragStart} onDragMove={onThoughtDragMove} onDragOver={onThoughtDragOver} onDrop={onThoughtDrop} dragging={draggingId === thought.id} />,
+        })),
+        { key: "footer", content: <ThoughtInput tileId={tileId} fontSize={fontSize} inputRef={thoughtInputRef} /> },
+      ]}
+      style={{ padding: "6px 10px 18px", flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", userSelect: "text", cursor: "text", background: dropTarget ? "rgba(124,58,237,0.04)" : undefined, transition: "background 0.15s ease", display: "flex", flexDirection: "column", gap: 2 }}
       onClick={() => { if (window.getSelection()?.toString()) return; thoughtInputRef.current?.focus() }}
       onDragOver={(e) => {
         e.preventDefault()
@@ -55,19 +66,6 @@ export function TileContent({ tileId, tileThoughts }: { tileId: number; tileThou
         if (outside) setThoughtDragTargetTile(null)
       }}
       onDrop={onTileContentDrop}
-    >
-      {visibleThoughts.map((t) => (
-        <Thought
-          key={thoughtStableKeys.get(t.id) ?? t.id}
-          thought={t}
-          onDragStart={onThoughtDragStart}
-          onDragMove={onThoughtDragMove}
-          onDragOver={onThoughtDragOver}
-          onDrop={onThoughtDrop}
-          dragging={draggingId === t.id}
-        />
-      ))}
-      <ThoughtInput tileId={tileId} inputRef={thoughtInputRef} />
-    </div>
+    />
   )
 }

@@ -19,12 +19,17 @@ async function canvasIdForEntity(entityType: SyncEntityType, entity: SyncEntity 
 export async function logEvent(userId: string, entityType: SyncEntityType, action: SyncAction, opId: string, entity: SyncEntity | null, clientId: string | null, data: SyncPayload) {
   const canvasId = await canvasIdForEntity(entityType, entity)
   const entityId = entity?.id ?? null
-  const [event] = await sql<{ revision: number | string }[]>`
-    INSERT INTO sync_events (user_id, canvas_id, entity_type, entity_id, client_id, op_id, action, data)
-    VALUES (${userId}, ${canvasId}, ${entityType}, ${entityId}, ${clientId}, ${opId}, ${action}, ${jsonValue(data)})
-    RETURNING revision
-  `
-  return event ? Number(event.revision) : null
+  return sql.begin(async (transaction) => {
+    // Allocate only after the previous publisher for this user has committed.
+    // Hold the lock through commit so a pull cannot skip a late lower revision.
+    await transaction`SELECT pg_advisory_xact_lock(hashtextextended(${`sync-events:${userId}`}, 0))`
+    const [event] = await transaction<{ revision: number | string }[]>`
+      INSERT INTO sync_events (user_id, canvas_id, entity_type, entity_id, client_id, op_id, action, data)
+      VALUES (${userId}, ${canvasId}, ${entityType}, ${entityId}, ${clientId}, ${opId}, ${action}, ${jsonValue(data)})
+      RETURNING revision
+    `
+    return event ? Number(event.revision) : null
+  })
 }
 
 export async function latestRevision(userId: string) {

@@ -52,7 +52,7 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
         tileCache.set(targetCanvasId, mergedTiles)
         thoughtCache.set(targetCanvasId, mergedThoughts)
         return s.activeCanvasId === targetCanvasId
-          ? { tiles: mergedTiles, thoughts: mergedThoughts, tileCache, thoughtCache }
+          ? { tiles: mergedTiles, thoughts: mergedThoughts, tileCache, thoughtCache, remoteThoughtRevision: s.remoteThoughtRevision + 1 }
           : { tileCache, thoughtCache }
       })
       get().markRemoteChanges(changedTileIds, changedThoughtIds)
@@ -116,7 +116,7 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
         tileCache.set(targetCanvasId, mergedTiles)
         thoughtCache.set(targetCanvasId, visibleThoughts)
         return s.activeCanvasId === targetCanvasId
-          ? { tiles: mergedTiles, thoughts: visibleThoughts, tileCache, thoughtCache }
+          ? { tiles: mergedTiles, thoughts: visibleThoughts, tileCache, thoughtCache, remoteThoughtRevision: s.remoteThoughtRevision + 1 }
           : { tileCache, thoughtCache }
       })
       get().markRemoteChanges(changedTileIds, changedThoughtIds)
@@ -186,7 +186,7 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
         const nextThoughtCache = new Map(s.thoughtCache).set(id, nextThoughts)
         const visible = s.activeCanvasId === id
         return visible
-          ? { tiles: nextTiles, thoughts: nextThoughts, tileCache: nextTileCache, thoughtCache: nextThoughtCache }
+          ? { tiles: nextTiles, thoughts: nextThoughts, tileCache: nextTileCache, thoughtCache: nextThoughtCache, remoteThoughtRevision: s.remoteThoughtRevision + 1 }
           : { tileCache: nextTileCache, thoughtCache: nextThoughtCache }
       })
       get().markRemoteChanges(changedTileIds, changedThoughtIds)

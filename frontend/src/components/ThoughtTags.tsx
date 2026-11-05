@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useStore } from "../store"
 import { CloseButton } from "./CloseButton"
@@ -8,6 +8,8 @@ type Position = {
   left: number
   top: number
   placement: "above" | "below"
+  width: number
+  height: number
 }
 
 type Offset = {
@@ -28,10 +30,18 @@ function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum)
 }
 
-export function ThoughtTags({ tags, onRemove }: { tags: string[]; onRemove: (tag: string) => void }) {
+export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true }: { tags: string[]; onRemove?: (tag: string) => void; expandOnHover?: boolean }) {
+  const [removal, setRemoval] = useState<{ tag: string; tags: string[] } | null>(null)
+  // Save immediately; only retain the old rows for their exit animation. Leaving
+  // the canvas during that animation must not cancel the user's tag removal.
+  const tags = removal?.tags ?? currentTags
+  const latestTags = useRef(currentTags)
+  latestTags.current = currentTags
   const knownTags = useStore((state) => state.tags)
   const anchorRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [exitScroll, setExitScroll] = useState(0)
   const dotRefs = useRef<Array<HTMLDivElement | null>>([])
   const rowRefs = useRef<Array<HTMLDivElement | null>>([])
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -39,12 +49,21 @@ export function ThoughtTags({ tags, onRemove }: { tags: string[]; onRemove: (tag
   const removeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [visible, setVisible] = useState(false)
   const [position, setPosition] = useState<Position | null>(null)
-  const [offsets, setOffsets] = useState<Offset[]>([])
+  const [offsets, setOffsets] = useState<Record<string, Offset>>({})
+  const [closing, setClosing] = useState(false)
+  const [settled, setSettled] = useState(false)
+  const motionStarted = useRef(false)
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pointerType = useRef("mouse")
+  const focusPanel = useRef(false)
+  const restoringFocus = useRef(false)
+  const pendingFocusIndex = useRef<number | null>(null)
+  const panelId = useId()
+  const reducedMotion = typeof window !== "undefined" && Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches)
   const [expanded, setExpanded] = useState(false)
-  const [removingTag, setRemovingTag] = useState<string | null>(null)
   const tagKey = tags.join("\u0000")
-  const prepared = position !== null && offsets.length === tags.length && tags.length > 0
-  const motionDuration = MOVE_MS + Math.max(0, tags.length - 1) * STAGGER_MS
+  const prepared = position !== null && tags.length > 0 && tags.every((tag) => Object.prototype.hasOwnProperty.call(offsets, tag))
+  const motionDuration = reducedMotion ? 0 : MOVE_MS + Math.min(5, Math.max(0, tags.length - 1)) * STAGGER_MS
 
   function clearCloseTimer() {
     if (closeTimer.current === null) return
@@ -62,13 +81,18 @@ export function ThoughtTags({ tags, onRemove }: { tags: string[]; onRemove: (tag
     if (tags.length === 0) return
     clearCloseTimer()
     clearFinishTimer()
+    setClosing(false)
     if (visible) {
+      if (exitScroll > 0) setSettled(true)
       setExpanded(true)
       return
     }
+    motionStarted.current = false
     setPosition(null)
-    setOffsets([])
+    setOffsets({})
     setExpanded(false)
+    setSettled(false)
+    setExitScroll(0)
     setVisible(true)
   }
 
@@ -76,11 +100,16 @@ export function ThoughtTags({ tags, onRemove }: { tags: string[]; onRemove: (tag
     if (!visible) return
     clearCloseTimer()
     clearFinishTimer()
+    if (settleTimer.current !== null) clearTimeout(settleTimer.current)
+    setOffsets(measureOffsets())
+    setExitScroll(scrollRef.current?.scrollTop ?? 0)
+    setClosing(true)
+    setSettled(false)
     setExpanded(false)
     finishTimer.current = setTimeout(() => {
       setVisible(false)
       setPosition(null)
-      setOffsets([])
+      setOffsets({})
       finishTimer.current = null
     }, motionDuration)
   }
@@ -91,20 +120,41 @@ export function ThoughtTags({ tags, onRemove }: { tags: string[]; onRemove: (tag
   }
 
   function remove(tag: string) {
-    if (removingTag !== null) return
-    setRemovingTag(tag)
+    if (removal !== null) return
+    clearCloseTimer()
+    setRemoval({ tag, tags })
+    onRemove?.(tag)
     removeTimer.current = setTimeout(() => {
-      onRemove(tag)
-      setRemovingTag(null)
+      if (panelRef.current?.contains(document.activeElement)) {
+        pendingFocusIndex.current = Math.min(tags.indexOf(tag), latestTags.current.length - 1)
+      }
+      setRemoval(null)
       removeTimer.current = null
-      if (tags.length === 1) {
+      if (latestTags.current.length === 0) {
         setVisible(false)
         setPosition(null)
-        setOffsets([])
+        setOffsets({})
         setExpanded(false)
+        anchorRef.current?.parentElement?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true })
       }
-    }, REMOVE_MS)
+    }, reducedMotion ? 0 : REMOVE_MS)
   }
+
+  function measureOffsets() {
+    return Object.fromEntries(tags.map((tag, index) => {
+      const sourceRect = dotRefs.current[index]?.getBoundingClientRect()
+      const rowRect = rowRefs.current[index]?.getBoundingClientRect()
+      return [tag, sourceRect && rowRect ? {
+        x: sourceRect.left + (sourceRect.width - 8) / 2 - rowRect.left,
+        y: sourceRect.top + (sourceRect.height - 8) / 2 - rowRect.top,
+        width: rowRect.width,
+      } : { x: 0, y: 0, width: 8 }]
+    }))
+  }
+
+  useLayoutEffect(() => {
+    if (!closing && exitScroll > 0 && scrollRef.current) scrollRef.current.scrollTop = exitScroll
+  }, [closing, exitScroll])
 
   useLayoutEffect(() => {
     if (!visible || position !== null) return
@@ -127,25 +177,43 @@ export function ThoughtTags({ tags, onRemove }: { tags: string[]; onRemove: (tag
       left: clamp(anchorRect.right - panelRect.width, EDGE_PADDING, maximumLeft),
       top: clamp(idealTop, EDGE_PADDING, maximumTop),
       placement,
+      width: panelRect.width,
+      height: panelRect.height,
     })
   }, [position, tagKey, visible])
 
   useLayoutEffect(() => {
     if (!visible || position === null || tags.length === 0) return
-    const nextOffsets = tags.map((_, index) => {
-      const sourceRect = dotRefs.current[index]?.getBoundingClientRect()
-      const rowRect = rowRefs.current[index]?.getBoundingClientRect()
-      if (!sourceRect || !rowRect) return { x: 0, y: 0, width: 12 }
-      return {
-        x: sourceRect.left + 2 - rowRect.left,
-        y: sourceRect.top + 5 - rowRect.top,
-        width: rowRect.width,
-      }
-    })
-    setOffsets(nextOffsets)
-    const frame = requestAnimationFrame(() => setExpanded(true))
-    return () => cancelAnimationFrame(frame)
+    setOffsets(measureOffsets())
+    if (pendingFocusIndex.current !== null) {
+      rowRefs.current[pendingFocusIndex.current]?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true })
+      pendingFocusIndex.current = null
+    }
   }, [position, tagKey, visible])
+
+  useLayoutEffect(() => {
+    if (!prepared || closing || motionStarted.current) return
+    // Commit the measured source geometry before enabling transitions. Otherwise
+    // the browser coalesces both styles and the dots jump straight to the panel.
+    panelRef.current?.querySelectorAll<HTMLElement>("[data-tag-pill]").forEach((pill) => {
+      void pill.getBoundingClientRect()
+    })
+    const frame = requestAnimationFrame(() => {
+      motionStarted.current = true
+      setExpanded(true)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [prepared, closing])
+
+  useEffect(() => {
+    if (!expanded) return
+    if (focusPanel.current) {
+      panelRef.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true })
+      focusPanel.current = false
+    }
+    settleTimer.current = setTimeout(() => setSettled(true), motionDuration)
+    return () => { if (settleTimer.current !== null) clearTimeout(settleTimer.current) }
+  }, [expanded, motionDuration])
 
   useEffect(() => {
     if (!visible) return
@@ -155,17 +223,27 @@ export function ThoughtTags({ tags, onRemove }: { tags: string[]; onRemove: (tag
       closePanel()
     }
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") closePanel()
+      if (event.key !== "Escape") return
+      if (panelRef.current?.contains(document.activeElement)) {
+        restoringFocus.current = true
+        anchorRef.current?.focus({ preventScroll: true })
+        restoringFocus.current = false
+      }
+      closePanel()
     }
     document.addEventListener("pointerdown", onPointerDown, true)
     window.addEventListener("keydown", onKeyDown)
     window.addEventListener("resize", closePanel)
-    window.addEventListener("scroll", closePanel, true)
+    function onScroll(event: Event) {
+      if (event.target instanceof Node && panelRef.current?.contains(event.target)) return
+      closePanel()
+    }
+    window.addEventListener("scroll", onScroll, true)
     return () => {
       document.removeEventListener("pointerdown", onPointerDown, true)
       window.removeEventListener("keydown", onKeyDown)
       window.removeEventListener("resize", closePanel)
-      window.removeEventListener("scroll", closePanel, true)
+      window.removeEventListener("scroll", onScroll, true)
     }
   }, [visible, tagKey])
 
@@ -173,31 +251,43 @@ export function ThoughtTags({ tags, onRemove }: { tags: string[]; onRemove: (tag
     clearCloseTimer()
     clearFinishTimer()
     if (removeTimer.current !== null) clearTimeout(removeTimer.current)
+    if (settleTimer.current !== null) clearTimeout(settleTimer.current)
   }, [])
 
   if (tags.length === 0 && !visible) return null
 
   return (
     <>
-      <style>{`@keyframes tagIn { from { opacity: 0; transform: scale(0.7); } to { opacity: 1; transform: scale(1); } }`}</style>
+      <style>{`[data-thought-tags-trigger]:focus-visible { outline: 2px solid #a78bfa !important; outline-offset: 2px; border-radius: 4px; }`}</style>
       <div
         ref={anchorRef}
-        role="button"
-        tabIndex={0}
-        aria-label="Show thought tags"
-        aria-expanded={visible}
-        onPointerEnter={openPanel}
-        onPointerLeave={scheduleClose}
+        data-thought-tags-trigger
+        role={expandOnHover ? "button" : undefined}
+        tabIndex={expandOnHover ? 0 : undefined}
+        aria-label={expandOnHover ? "Show thought tags" : tags.join(", ")}
+        aria-expanded={expandOnHover ? visible : undefined}
+        aria-controls={visible ? panelId : undefined}
+        onPointerEnter={(event) => { if (expandOnHover && event.pointerType === "mouse") openPanel() }}
+        onPointerLeave={(event) => { if (event.pointerType === "mouse") scheduleClose() }}
+        onPointerDown={(event) => { pointerType.current = event.pointerType; event.stopPropagation() }}
+        onClick={(event) => event.stopPropagation()}
+        onDragStart={(event) => { event.preventDefault(); event.stopPropagation() }}
         onPointerUp={(event) => {
-          if (event.pointerType === "mouse") return
-          if (visible) closePanel()
+          if (!expandOnHover || event.pointerType === "mouse") return
+          event.stopPropagation()
+          if (visible && !closing) closePanel()
           else openPanel()
         }}
-        onFocus={openPanel}
+        onFocus={(event) => {
+          if (!restoringFocus.current && expandOnHover && (pointerType.current === "mouse" || event.currentTarget.matches(":focus-visible"))) openPanel()
+        }}
         onBlur={scheduleClose}
         onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
+          pointerType.current = "mouse"
+          if (expandOnHover && ["Enter", " ", "ArrowDown"].includes(event.key)) {
             event.preventDefault()
+            if (expanded) panelRef.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true })
+            else focusPanel.current = true
             openPanel()
           }
           if (event.key === "Escape") closePanel()
@@ -225,7 +315,6 @@ export function ThoughtTags({ tags, onRemove }: { tags: string[]; onRemove: (tag
               width: 12,
               height: 18,
               opacity: prepared ? 0 : 1,
-              animation: prepared ? undefined : "tagIn 0.15s cubic-bezier(0.4,0,0.2,1)",
             }}
           >
             <TagDot tag={tag} />
@@ -236,20 +325,31 @@ export function ThoughtTags({ tags, onRemove }: { tags: string[]; onRemove: (tag
       {visible && createPortal(
         <div
           ref={panelRef}
-          onPointerEnter={clearCloseTimer}
-          onPointerLeave={scheduleClose}
+          id={panelId}
+          role="group"
+          aria-label="Thought tags"
+          onPointerEnter={() => { if (closing) openPanel(); else clearCloseTimer() }}
+          onPointerLeave={(event) => { if (event.pointerType === "mouse") scheduleClose() }}
           onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          onDragStart={(event) => { event.preventDefault(); event.stopPropagation() }}
           onFocusCapture={clearCloseTimer}
           onBlurCapture={scheduleClose}
           style={{
             position: "fixed",
             left: position?.left ?? 0,
-            top: position?.top ?? 0,
+            top: position?.placement === "above" ? undefined : position?.top ?? 0,
+            bottom: position?.placement === "above" ? window.innerHeight - position.top - position.height : undefined,
+            width: position?.width,
             zIndex: 1000,
             display: "flex",
             flexDirection: "column",
-            gap: 4,
             padding: 8,
+            maxWidth: "calc(100vw - 16px)",
+            maxHeight: "calc(100dvh - 16px)",
+            boxSizing: "border-box",
+            borderRadius: 9,
+            fontFamily: "inherit",
             visibility: prepared ? "visible" : "hidden",
           }}
         >
@@ -267,73 +367,79 @@ export function ThoughtTags({ tags, onRemove }: { tags: string[]; onRemove: (tag
               opacity: expanded ? 1 : 0,
               transform: expanded ? "scale(1)" : "scale(0.96)",
               transformOrigin: position?.placement === "above" ? "bottom right" : "top right",
-              transition: "opacity 160ms ease, transform 180ms cubic-bezier(0.2,0.8,0.2,1)",
+              transition: reducedMotion ? "none" : "opacity 160ms ease, transform 180ms cubic-bezier(0.2,0.8,0.2,1)",
               transitionDelay: expanded ? "0ms" : `${Math.max(0, motionDuration - 180)}ms`,
               pointerEvents: "none",
             }}
           />
-          {tags.map((tag, index) => {
-            const color = knownTags.find((item) => item.name === tag)?.color ?? "#888"
-            const offset = offsets[index] ?? { x: 0, y: 0, width: 8 }
-            const removing = removingTag === tag
-            const delay = expanded ? index * STAGGER_MS : (tags.length - index - 1) * STAGGER_MS
-            return (
-              <div
-                key={tag}
-                ref={(element) => { rowRefs.current[index] = element }}
-                style={{
-                  position: "relative",
-                  zIndex: 1,
-                  height: removing ? 0 : ITEM_HEIGHT,
-                  width: "max-content",
-                  opacity: removing ? 0 : 1,
-                  transform: removing ? "scale(0.9)" : "scale(1)",
-                  transition: `height ${REMOVE_MS}ms ease, opacity ${REMOVE_MS}ms ease, transform ${REMOVE_MS}ms ease`,
-                }}
-              >
-                <div aria-hidden style={{ display: "flex", alignItems: "center", height: ITEM_HEIGHT, paddingLeft: 7, visibility: "hidden" }}>
-                  <span style={{ fontSize: 10, fontWeight: 600, whiteSpace: "nowrap", paddingRight: 4 }}>{tag}</span>
-                  <span style={{ width: 14, height: 14 }} />
-                </div>
+          <div ref={scrollRef} style={{ padding: 1, margin: -1, transform: closing && exitScroll > 0 ? `translateY(${-exitScroll}px)` : undefined, maxHeight: "calc(100dvh - 32px)", overflowY: settled ? "auto" : "visible", overscrollBehavior: "contain" }}>
+            {tags.map((tag, index) => {
+              const color = knownTags.find((item) => item.name === tag)?.color ?? "#888"
+              const offset = prepared ? offsets[tag]! : { x: 0, y: 0, width: 8 }
+              const removing = removal?.tag === tag
+              const delay = reducedMotion ? 0 : Math.min(5, expanded ? index : tags.length - index - 1) * STAGGER_MS
+              return (
                 <div
+                  key={tag}
+                  ref={(element) => { rowRefs.current[index] = element }}
                   style={{
-                    position: "absolute",
-                    left: 0,
-                    top: 0,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "flex-start",
-                    width: expanded ? offset.width : 8,
-                    height: expanded ? ITEM_HEIGHT : 8,
-                    borderRadius: 99,
-                    background: expanded ? `${color}22` : color,
-                    outline: expanded ? `1px solid ${color}55` : "1px solid transparent",
-                    overflow: "hidden",
-                    transform: expanded ? "translate3d(0,0,0)" : `translate3d(${offset.x}px,${offset.y}px,0)`,
-                    transformOrigin: "left center",
-                    transition: `transform ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), width ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), height ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), background ${MOVE_MS}ms ease, outline-color ${MOVE_MS}ms ease`,
-                    transitionDelay: `${delay}ms`,
+                    position: "relative",
+                    zIndex: 1,
+                    height: removing ? 0 : ITEM_HEIGHT,
+                    width: "max-content",
+                    maxWidth: "100%",
+                    flexShrink: 0,
+                    marginBottom: removing || index === tags.length - 1 ? 0 : 4,
+                    opacity: removing ? 0 : 1,
+                    transform: removing ? "scale(0.9)" : "scale(1)",
+                    transition: reducedMotion ? "none" : `height ${REMOVE_MS}ms ease, margin-bottom ${REMOVE_MS}ms ease, opacity ${REMOVE_MS}ms ease, transform ${REMOVE_MS}ms ease`,
                   }}
                 >
-                  <span style={{ color, fontSize: 10, fontWeight: 600, lineHeight: 1, whiteSpace: "nowrap", paddingLeft: 7, paddingRight: 4, opacity: expanded ? 1 : 0, transition: "opacity 110ms ease", transitionDelay: expanded ? `${delay + 80}ms` : "0ms" }}>
-                    {tag}
-                  </span>
-                  <span style={{ opacity: expanded ? 1 : 0, transition: "opacity 100ms ease", transitionDelay: expanded ? `${delay + 105}ms` : "0ms" }}>
-                    <CloseButton
-                      size={14}
-                      iconSize={6}
-                      ariaLabel={`Remove ${tag} tag`}
-                      onClick={(event) => {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        remove(tag)
-                      }}
-                    />
-                  </span>
+                  <div aria-hidden style={{ display: "flex", alignItems: "center", height: ITEM_HEIGHT, paddingLeft: 7, visibility: "hidden" }}>
+                    <span style={{ fontSize: 10, fontWeight: 600, whiteSpace: "nowrap", paddingRight: 4 }}>{tag}</span>
+                    {onRemove && <span style={{ width: 20, height: 20, flexShrink: 0 }} />}
+                  </div>
+                  <div
+                    data-tag-pill={tag}
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      top: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "flex-start",
+                      width: expanded ? offset.width : 8,
+                      height: expanded ? ITEM_HEIGHT : 8,
+                      borderRadius: 99,
+                      background: expanded ? `${color}22` : color,
+                      outline: expanded ? `1px solid ${color}55` : "1px solid transparent",
+                      overflow: "hidden",
+                      transform: expanded ? "translate3d(0,0,0)" : `translate3d(${offset.x}px,${offset.y}px,0)`,
+                      transformOrigin: "left center",
+                      transition: reducedMotion || !motionStarted.current ? "none" : `transform ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), width ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), height ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), background ${MOVE_MS}ms ease, outline-color ${MOVE_MS}ms ease`,
+                      transitionDelay: `${delay}ms`,
+                    }}
+                  >
+                    <span style={{ color, fontSize: 10, fontWeight: 600, lineHeight: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, paddingLeft: 7, paddingRight: 4, opacity: expanded ? 1 : 0, transition: reducedMotion ? "none" : "opacity 110ms ease", transitionDelay: expanded && !reducedMotion ? `${delay + 80}ms` : "0ms" }}>
+                      {tag}
+                    </span>
+                    {onRemove && <span style={{ flexShrink: 0, opacity: expanded ? 1 : 0, transition: reducedMotion ? "none" : "opacity 100ms ease", transitionDelay: expanded && !reducedMotion ? `${delay + 105}ms` : "0ms" }}>
+                      <CloseButton
+                        size={20}
+                        iconSize={6}
+                        ariaLabel={`Remove ${tag} tag`}
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          remove(tag)
+                        }}
+                      />
+                    </span>}
+                  </div>
                 </div>
-              </div>
-            )
-          })}
+              )
+            })}
+          </div>
         </div>,
         document.body,
       )}

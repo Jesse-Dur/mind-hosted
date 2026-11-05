@@ -27,6 +27,14 @@ export async function resolvePayload(record: OutboxRecord) {
     if (serverId === null) return null
     payload.targetCanvasId = serverId
   }
+  // Earlier acknowledgements saved string parent IDs into queued operations.
+  // Normalize those too so Retry now can recover without discarding the edit.
+  for (const field of ["canvas_id", "tile_id", "targetCanvasId"]) {
+    const value = payload[field]
+    if (typeof value === "string" && /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0) {
+      payload[field] = Number(value)
+    }
+  }
   return payload
 }
 

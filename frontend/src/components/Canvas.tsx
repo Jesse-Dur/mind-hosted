@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react"
+import { useRef, useState, useEffect, useLayoutEffect } from "react"
 import { useStore } from "../store"
 import { Tile } from "./Tile"
 import { getCrossCanvasDrag, subscribeCrossCanvasDrag, subscribeCrossCanvasDragPointer, type CrossCanvasDragSession } from "../utils/crossCanvasDrag"
@@ -29,7 +29,7 @@ function getActiveCanvasKey(canvases: CanvasType[], activeCanvasId: number | nul
 }
 
 export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
-  const { tiles, thoughts, addTile, canvasHeight, activeCanvasId, canvases } = useStore()
+  const { tiles, thoughts, addTile, canvasHeight, activeCanvasId, canvases, remoteThoughtRevision } = useStore()
   const TAB_OFFSET = tabBarVisible ? 36 : 0
   const CANVAS_H = canvasHeight
   const CANVAS_W = Math.floor(Math.round(canvasHeight * (16 / 9)) / GRID) * GRID
@@ -38,6 +38,8 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
   const [scale, setScale] = useState(1)
   const [displayedTiles, setDisplayedTiles] = useState(tiles)
   const [displayedThoughts, setDisplayedThoughts] = useState(thoughts)
+  // Keep the sync signal with the displayed list, including during canvas fades.
+  const [displayedThoughtRevision, setDisplayedThoughtRevision] = useState(remoteThoughtRevision)
   const [visible, setVisible] = useState(true)
   const canvasRef = useRef<HTMLDivElement>(null)
   const activeCanvasKey = getActiveCanvasKey(canvases, activeCanvasId)
@@ -66,9 +68,10 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
     transitioning.current = true
     setVisible(false)
     const t = setTimeout(() => {
-      const { tiles, thoughts } = useStore.getState()
+      const { tiles, thoughts, remoteThoughtRevision } = useStore.getState()
       setDisplayedTiles(tiles)
       setDisplayedThoughts(thoughts)
+      setDisplayedThoughtRevision(remoteThoughtRevision)
       transitioning.current = false
       setVisible(true)
       if (getCrossCanvasDrag()?.kind !== "tile") setImmuneTileSession(null)
@@ -76,14 +79,14 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
     return () => clearTimeout(t)
   }, [activeCanvasKey])
 
-  // Only sync displayed tiles when not mid-transition
-  useEffect(() => {
-    if (!transitioning.current) setDisplayedTiles(tiles)
-  }, [tiles])
-
-  useEffect(() => {
-    if (!transitioning.current) setDisplayedThoughts(thoughts)
-  }, [thoughts])
+  // Settle optimistic moves before paint when the drag preview is cleared.
+  // Keep the old canvas intact until its fade-out has finished.
+  useLayoutEffect(() => {
+    if (transitioning.current || prevCanvasKey.current !== activeCanvasKey) return
+    setDisplayedTiles(tiles)
+    setDisplayedThoughts(thoughts)
+    setDisplayedThoughtRevision(remoteThoughtRevision)
+  }, [tiles, thoughts, activeCanvasKey, remoteThoughtRevision])
 
   useEffect(() => {
     function updateScale() {
@@ -249,11 +252,11 @@ export function Canvas({ tabBarVisible }: { tabBarVisible: boolean }) {
         {/* Tiles fade independently — dot grid stays visible during transition */}
         <div style={{ opacity: visible ? 1 : 0, transition: "opacity 0.15s ease", position: "absolute", inset: 0, pointerEvents: "none" }}>
           {displayedTiles.filter((t) => t.visible && t.id !== immuneTileId).map((tile) => (
-            <Tile key={optimisticIdentityKey(tile, "tile")} tile={tile} thoughts={displayedThoughts} scale={scale} />
+            <Tile key={optimisticIdentityKey(tile, "tile")} tile={tile} thoughts={displayedThoughts} remoteThoughtRevision={displayedThoughtRevision} scale={scale} />
           ))}
         </div>
         {immuneTile?.visible && (
-          <Tile key={`immune-${optimisticIdentityKey(immuneTile, "tile")}`} tile={immuneTile} thoughts={immuneThoughts} scale={scale} />
+          <Tile key={`immune-${optimisticIdentityKey(immuneTile, "tile")}`} tile={immuneTile} thoughts={immuneThoughts} remoteThoughtRevision={displayedThoughtRevision} scale={scale} />
         )}
         {draft && (
           <div style={{

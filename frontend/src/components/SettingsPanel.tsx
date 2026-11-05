@@ -1,4 +1,7 @@
 import { useStore } from "../store"
+import { InstallAppSection } from "../pwa/installPrompt"
+import { getDeviceClass } from "../preferences/devicePreferences"
+import { MAX_CANVAS_FONT_SIZE, MIN_CANVAS_FONT_SIZE } from "../utils/canvasFontSize"
 
 const OPTIONS = [
   { value: 1080, label: "Less room, bigger tiles", sub: "1080p" },
@@ -9,9 +12,11 @@ const OPTIONS = [
 const GRID = 24
 function snap(n: number) { return Math.round(n / GRID) * GRID }
 
-export function SettingsPanel() {
-  const { canvasHeight, setCanvasHeight, tabsVisible, setTabsVisible, tiles, updateTile } = useStore()
-  const idx = OPTIONS.findIndex(o => o.value === canvasHeight) ?? 1
+export function SettingsContent() {
+  const { canvasHeight, setCanvasHeight, canvasFontSize, setCanvasFontSize, tabsVisible, setTabsVisible, tiles, updateTile } = useStore()
+  const desktopSettings = getDeviceClass() === "desktop"
+  const selectedIndex = OPTIONS.findIndex(o => o.value === canvasHeight)
+  const idx = selectedIndex >= 0 ? selectedIndex : 1
   const CANVAS_W = Math.round(canvasHeight * (16 / 9))
 
   const outOfBounds = tiles.filter(t => t.x + t.width > CANVAS_W || t.y + t.height > canvasHeight)
@@ -27,10 +32,10 @@ export function SettingsPanel() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 2 }}>
       <p style={{ fontSize: 11, color: "#ccc", textAlign: "right", marginBottom: -8 }}>v{__APP_VERSION__}</p>
 
-      <div>
+      {desktopSettings && <div>
         <p style={{ fontSize: 11, fontWeight: 700, color: "#aaa", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 12 }}>Tab Bar</p>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span style={{ fontSize: 13, color: "#333" }}>Show tab bar</span>
@@ -41,7 +46,7 @@ export function SettingsPanel() {
             <span style={{ position: "absolute", top: 2, left: tabsVisible ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
           </button>
         </div>
-      </div>
+      </div>}
 
       <div>
         <p style={{ fontSize: 11, fontWeight: 700, color: "#aaa", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 16 }}>Canvas Size</p>
@@ -80,6 +85,34 @@ export function SettingsPanel() {
           </div>
         )}
       </div>
+
+      <div>
+        <p style={{ fontSize: 11, fontWeight: 700, color: "#aaa", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 16 }}>Font Size</p>
+
+        <input
+          type="range"
+          min={MIN_CANVAS_FONT_SIZE}
+          max={MAX_CANVAS_FONT_SIZE}
+          step={1}
+          value={canvasFontSize}
+          onChange={(e) => setCanvasFontSize(Number(e.target.value))}
+          aria-label="Canvas font size"
+          style={{ width: "100%", accentColor: "#1a1a1a", cursor: "pointer" }}
+        />
+
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+          <span style={{ fontSize: 10, color: "#bbb" }}>{MIN_CANVAS_FONT_SIZE}px</span>
+          <span style={{ fontSize: 10, color: "#1a1a1a", fontWeight: 600 }}>{canvasFontSize}px</span>
+          <span style={{ fontSize: 10, color: "#bbb" }}>{MAX_CANVAS_FONT_SIZE}px</span>
+        </div>
+
+        <div style={{ marginTop: 12, padding: "10px 12px", background: "#f8f8f8", borderRadius: 8 }}>
+          <p style={{ fontSize: 13, color: "#333", fontWeight: 500 }}>Thoughts and tile titles</p>
+        </div>
+      </div>
+      <InstallAppSection />
     </div>
   )
 }
+
+export const SettingsPanel = SettingsContent

@@ -48,5 +48,8 @@ export interface HistoryEvent {
   action: string
   summary: string
   detail: string | Record<string, unknown>
+  client_id?: string | null
+  op_id?: string | null
+  occurred_at?: string
   created_at: string
 }

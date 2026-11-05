@@ -19,6 +19,8 @@ async function ensureDefaultCanvas(userId: string) {
 
 export async function syncSnapshot(userId: string, requestedCanvasId?: number): Promise<SyncSnapshot> {
   await ensureDefaultCanvas(userId)
+  // Anchor before reading data so concurrent changes remain eligible for pull.
+  const revision = await latestRevision(userId)
   const canvases = await sql<Canvas[]>`
     SELECT * FROM canvases
     WHERE user_id = ${userId}
@@ -29,7 +31,7 @@ export async function syncSnapshot(userId: string, requestedCanvasId?: number): 
     : canvases.find((canvas) => Number(canvas.id) === requestedCanvasId)
   const activeCanvas = requestedCanvas ?? canvases[0] ?? null
   const activeCanvasId = activeCanvas ? Number(activeCanvas.id) : null
-  const [tags, tiles, thoughts, revision] = await Promise.all([
+  const [tags, tiles, thoughts] = await Promise.all([
     sql<Tag[]>`SELECT * FROM tags WHERE user_id = ${userId} ORDER BY name ASC`,
     activeCanvasId === null
       ? Promise.resolve([] satisfies Tile[])
@@ -51,7 +53,6 @@ export async function syncSnapshot(userId: string, requestedCanvasId?: number): 
             AND tiles.deleted_at IS NULL
           ORDER BY thoughts.sort_order ASC, thoughts.created_at ASC
         `,
-    latestRevision(userId),
   ])
   return {
     revision,

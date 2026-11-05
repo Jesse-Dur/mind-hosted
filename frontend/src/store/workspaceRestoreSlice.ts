@@ -16,7 +16,7 @@ export const createWorkspaceRestoreSlice: StoreSlice<WorkspaceRestoreSlice> = (s
     writeStoredActiveCanvasId(activeCanvasId)
 
     const [tags, tiles, thoughts] = activeCanvasId === null
-      ? [await cachedTags(), [], []] as const
+      ? [await cachedTags(), [], []]
       : await Promise.all([
         cachedTags(),
         cachedTiles(activeCanvasId),

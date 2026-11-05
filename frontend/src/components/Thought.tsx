@@ -5,10 +5,13 @@ import { TagMenu } from "./TagMenu"
 import { CloseButton } from "./CloseButton"
 import { ThoughtTags } from "./ThoughtTags"
 import { useThoughtEdit } from "../hooks/useThoughtEdit"
+import { SyncStatusDot } from "./SyncStatusDot"
+import { getThoughtControlMetrics } from "../utils/canvasFontSize"
 import type { Thought as ThoughtType } from "../types"
 
 interface Props {
   thought: ThoughtType
+  fontSize: number
   onDragStart: (id: number, point: { clientX: number; clientY: number }) => void
   onDragMove: (clientX: number, clientY: number) => void
   onDragOver: (id: number, placement: "before" | "after") => void
@@ -24,23 +27,18 @@ const thoughtAnimationStyles = `
   80% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0.03), 0 0 0 2px rgba(124,58,237,0.4); }
   100% { box-shadow: inset 0 0 0 9999px rgba(124,58,237,0); }
 }
-@keyframes remoteThoughtUpdate {
-  0% { background: #f5f3ff; border-color: #a78bfa; box-shadow: 0 0 0 2px rgba(124,58,237,0.24); }
-  60% { background: #faf7ff; border-color: #c4b5fd; box-shadow: 0 0 0 2px rgba(124,58,237,0.12); }
-  100% { background: #fafafa; border-color: #ebebeb; box-shadow: 0 0 0 0 rgba(124,58,237,0); }
-}
 `
 
-export function Thought({ thought, onDragStart, onDragMove, onDragOver, onDrop, dragging }: Props) {
-  const { highlightedId, remoteChangedThoughtIds, removeThought, updateThoughtTags } = useStore()
+export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver, onDrop, dragging }: Props) {
+  const { highlightedId, removeThought, updateThoughtTags } = useStore()
   const isHighlighted = highlightedId?.type === "thought" && Number(highlightedId.id) === Number(thought.id)
-  const isRemoteChanged = remoteChangedThoughtIds.has(thought.id)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [localTags, setLocalTags] = useState(thought.tags)
 
   useEffect(() => { setLocalTags(thought.tags) }, [thought.tags])
   const { editing, content, saveEditing, startEditing, setIntent, cancelEditing } = useThoughtEdit(thought)
   const spanRef = useRef<HTMLSpanElement>(null)
+  const { controlSize, handleSize, closeIconSize } = getThoughtControlMetrics(fontSize)
 
   function remove(e: React.MouseEvent) {
     e.stopPropagation()
@@ -58,7 +56,7 @@ export function Thought({ thought, onDragStart, onDragMove, onDragOver, onDrop, 
 
   return (
     <>
-      {(isHighlighted || isRemoteChanged) && <style>{thoughtAnimationStyles}</style>}
+      {isHighlighted && <style>{thoughtAnimationStyles}</style>}
       <div
         draggable={!editing}
         onDragStart={(e) => {
@@ -86,25 +84,24 @@ export function Thought({ thought, onDragStart, onDragMove, onDragOver, onDrop, 
         onClick={(e) => e.stopPropagation()}
         style={{
           display: "flex", alignItems: "center", gap: 6,
-          padding: "5px 8px", fontSize: 13,
+          padding: "5px 8px", fontSize, lineHeight: 1.3,
           background: dragging ? "#f5f5f5" : "#fafafa",
           border: "1px solid #ebebeb", borderRadius: 6, cursor: "grab",
           boxSizing: "border-box",
           minHeight: 28,
+          flexShrink: 0,
           opacity: dragging ? 0.4 : 1,
           transition: "opacity 0.15s ease, transform 0.12s ease",
           transform: dragging ? "scale(0.98)" : "scale(1)",
           animation: !dragging
             ? isHighlighted
               ? "thoughtHighlight 3s linear forwards"
-              : isRemoteChanged
-                ? "remoteThoughtUpdate 850ms ease-out forwards"
-                : undefined
+              : undefined
             : undefined,
         }}
       >
-        <span style={{ color: "#ccc", flexShrink: 0, fontSize: 11 }}>⠿</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ color: "#ccc", flexShrink: 0, width: controlSize, height: controlSize, fontSize: handleSize, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>⠿</span>
+        <div style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere", wordBreak: "break-word" }}>
           <span
             ref={spanRef}
             contentEditable={editing || undefined}
@@ -112,14 +109,19 @@ export function Thought({ thought, onDragStart, onDragMove, onDragOver, onDrop, 
             onBlur={(e) => saveEditing(e.currentTarget.textContent ?? "")}
             onKeyDown={(e) => {
               if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur() }
-              if (e.key === "Escape") { e.currentTarget.blur(); cancelEditing() }
+              if (e.key === "Escape") {
+                e.currentTarget.textContent = thought.content
+                cancelEditing()
+                e.currentTarget.blur()
+              }
             }}
             onMouseDown={(e) => { e.stopPropagation(); setIntent(); startEditing(); requestAnimationFrame(() => spanRef.current?.focus()) }}
-            style={{ color: "#1a1a1a", outline: "none", cursor: "text", userSelect: "text", fontSize: 13 }}
+            style={{ color: "#1a1a1a", outline: "none", cursor: "text", userSelect: "text", fontSize: "inherit", lineHeight: "inherit" }}
           >{content}</span>
         </div>
         <ThoughtTags tags={localTags} onRemove={removeTag} />
-        <CloseButton onClick={remove} size={18} />
+        <SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} />
+        <CloseButton onClick={remove} size={controlSize} iconSize={closeIconSize} />
       </div>
 
       {menu && createPortal(
