@@ -11,6 +11,7 @@ import {
   currentKodyReviewOutcome,
   currentReviewState,
   currentRevisionTime,
+  dispatchMergedDeployment,
   hasCurrentApproval,
   kodyApprovalPolicy,
   kodyApprovalStatus,
@@ -574,6 +575,13 @@ describe("Dependabot status publishing", () => {
     "utf8",
   );
 
+  test("uses trusted base or default-branch policy code for every privileged trigger", () => {
+    const parsed = Bun.YAML.parse(workflow) as { jobs: { gate: { steps: Array<{ uses?: string; with?: Record<string, unknown> }> } } };
+    const checkout = parsed.jobs.gate.steps.find((step) => step.uses?.startsWith("actions/checkout@"));
+    expect(checkout?.with?.ref).toBe("${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}");
+    expect(checkout?.with?.["persist-credentials"]).toBe(false);
+  });
+
   test("orders Dependabot status publishing after classification", () => {
     expect(workflow).toContain("statuses: write");
     expect(workflow).toContain("needs:");
@@ -632,6 +640,49 @@ describe("test-suite check", () => {
   });
 });
 
+describe("post-merge deployment dispatch", () => {
+  const pullRequest = { number: 30, base: { ref: "main" }, assignees: [] };
+
+  function fixture(failures: number) {
+    const calls: Array<{ path: string; options?: any }> = [];
+    let attempts = 0;
+    const api = {
+      repository: "Jesse-Dur/mind-hosted",
+      async request(path: string, options?: any) {
+        calls.push({ path, options });
+        if (path === "/actions/workflows/deploy-backend.yml/dispatches" && attempts++ < failures) {
+          throw new Error("GitHub dispatch unavailable");
+        }
+        return null;
+      },
+      async paginate() { return []; },
+    };
+    return { calls, api };
+  }
+
+  test("retries transient failures without merging a second time", async () => {
+    const { calls, api } = fixture(2);
+    const delays: number[] = [];
+    await dispatchMergedDeployment(api, pullRequest, { pause: async (delay: number) => { delays.push(delay); } });
+    expect(delays).toEqual([1000, 2000]);
+    expect(calls).toHaveLength(3);
+    expect(calls.every(({ path }) => path === "/actions/workflows/deploy-backend.yml/dispatches")).toBe(true);
+  });
+
+  test("reports exhausted retries on the merged PR and leaves the workflow failed", async () => {
+    const { calls, api } = fixture(Infinity);
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(dispatchMergedDeployment(api, pullRequest, { pause: async () => {} })).rejects.toThrow("was merged, but deployment dispatch could not be confirmed");
+      expect(calls.filter(({ path }) => path === "/actions/workflows/deploy-backend.yml/dispatches")).toHaveLength(3);
+      expect(calls.some(({ path }) => path === "/issues/30/assignees")).toBe(true);
+      const comment = calls.find(({ path }) => path === "/issues/30/comments");
+      expect(comment?.options.body.body).toContain("Deployment dispatch unconfirmed");
+      expect(comment?.options.body.body).toContain("The merge is complete");
+    } finally { errors.mockRestore(); }
+  });
+});
+
 describe("final merge revalidation", () => {
   function fixture({
     reviewState = "APPROVED",
@@ -641,6 +692,7 @@ describe("final merge revalidation", () => {
     latestSha = "current-sha",
     maintainerApproval = false,
     previousApproval = false,
+    failedBranchCleanup = false,
   } = {}) {
     const pullRequest = {
       number: 30,
@@ -671,7 +723,10 @@ describe("final merge revalidation", () => {
         if (path === "/commits/current-sha") return {};
         if (path === "/pulls/30/merge") return { merged: true };
         if (path === "/actions/workflows/deploy-backend.yml/dispatches") return null;
-        if (path.startsWith("/git/refs/heads/")) return null;
+        if (path.startsWith("/git/refs/heads/")) {
+          if (failedBranchCleanup) throw new Error("GitHub branch deletion unavailable");
+          return null;
+        }
         throw new Error(`Unexpected request: ${path}`);
       },
       async paginate(path: string) {
@@ -709,6 +764,16 @@ describe("final merge revalidation", () => {
     expect(dispatch?.options).toEqual({ method: "POST", body: { ref: "main" } });
     expect(requests.indexOf(dispatch!)).toBeGreaterThan(requests.indexOf(merge!));
     expect(requests.some(({ path }) => path === "/pulls/30/reviews")).toBe(false);
+  });
+
+  test("branch cleanup failure preserves a successful merge and dispatch result", async () => {
+    const { api, pullRequest, requests } = fixture({ failedBranchCleanup: true });
+    const warning = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await mergeCurrentRevision(api, pullRequest, classifyPolicy({ updateLevel: "patch" }))).toBe(true);
+      expect(requests.filter(({ path }) => path === "/actions/workflows/deploy-backend.yml/dispatches")).toHaveLength(1);
+      expect(warning).toHaveBeenCalledTimes(1);
+    } finally { warning.mockRestore(); }
   });
 
   for (const [name, options] of [

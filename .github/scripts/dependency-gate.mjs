@@ -606,6 +606,36 @@ async function deleteMergedBranch(api, pullRequest) {
   }
 }
 
+export async function dispatchMergedDeployment(api, pullRequest, { pause = sleep } = {}) {
+  let dispatchError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await api.request("/actions/workflows/deploy-backend.yml/dispatches", {
+        method: "POST",
+        body: { ref: pullRequest.base.ref },
+      });
+      return;
+    } catch (error) {
+      dispatchError = error;
+      if (attempt < 2) await pause(1_000 * 2 ** attempt);
+    }
+  }
+
+  const message = `Pull request #${pullRequest.number} was merged, but deployment dispatch could not be confirmed after three attempts.`;
+  console.error(message, dispatchError);
+  try {
+    await assignMaintainer(api, pullRequest);
+    await upsertStatusComment(api, pullRequest.number, `### Deployment dispatch unconfirmed
+
+${message}
+
+The merge is complete. Check the [deployment runs](https://github.com/${api.repository}/actions/workflows/deploy-backend.yml) before retrying: a failed API response can also occur after GitHub accepts a dispatch. If no deployment was queued, run **Deploy Backend** for the default branch. @${MAINTAINER_LOGIN}`);
+  } catch (reportError) {
+    console.error("Could not report the merged update's unconfirmed deployment on the pull request.", reportError);
+  }
+  throw new Error(message, { cause: dispatchError });
+}
+
 export async function mergeCurrentRevision(api, pullRequest, policy) {
   const latestPullRequest = await api.request(`/pulls/${pullRequest.number}`);
 
@@ -647,11 +677,13 @@ export async function mergeCurrentRevision(api, pullRequest, policy) {
 
   // GITHUB_TOKEN merges do not emit push-triggered Actions runs. Explicit
   // workflow_dispatch events do, so the normal deployment still follows.
-  await api.request("/actions/workflows/deploy-backend.yml/dispatches", {
-    method: "POST",
-    body: { ref: latestPullRequest.base.ref },
-  });
-  await deleteMergedBranch(api, latestPullRequest);
+  await dispatchMergedDeployment(api, latestPullRequest);
+  try {
+    await deleteMergedBranch(api, latestPullRequest);
+  } catch (error) {
+    // Deployment is already queued; branch housekeeping must not disguise that.
+    console.warn(`Update #${latestPullRequest.number} merged and deployment was dispatched, but branch cleanup failed.`, error);
+  }
   return true;
 }
 
