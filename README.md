@@ -45,7 +45,7 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 | Layer | Technology |
 |---|---|
 | Runtime | Bun |
-| Backend | Hono (hosted on Render) |
+| Backend | Hono (VPS, managed by PM2 behind Nginx) |
 | Database | Neon (Postgres) |
 | Frontend | React + TypeScript + Vite (hosted on Vercel) |
 | State | Zustand |
@@ -101,11 +101,40 @@ The public app data API is intentionally narrow:
 
 ---
 
+## Dependency updates
+
+Dependabot follows the SMILES website update schedule: backend, frontend, and runtime Bun packages are checked daily at 06:00 Australia/Adelaide, and GitHub Actions at 06:20. `runtime/package.json` and its lockfile pin the Bun executable and PM2, using the official npm packages. Runtime updates stay separate from application updates. Routine application patches wait two days after release and are grouped; runtime patches are individual PRs. Minors and majors wait four days and remain separate. GitHub Actions updates wait four days. Security updates have no cooldown and are not grouped by this configuration.
+
+The CI workflow installs all three lockfiles, runs the dependency-policy and runtime recovery tests and application suite, checks types, and builds the frontend. It uses the proposed Bun and PM2 versions from `runtime/package.json`, Node 22 for PM2, and a disposable PostgreSQL service with external billing disabled. A runtime smoke test starts and resurrects a temporary Bun process under the proposed PM2 using an isolated process-manager directory. CI and the Kody approval status are advisory: this configuration does not require branch-protection checks or prevent manual merges.
+
+Dependency automation merges patches, minors, and verified security fixes only after the **Test suite** check passes and **kody-ai[bot]** approves the exact current commit. Normal major upgrades also need Jesse-Dur's approval of that commit; GitHub Actions changes remain manual. Missing, failed, or outdated checks and reviews keep an update open. The policy rechecks the revision and review before merging and assigns updates needing attention to Jesse-Dur. Human-authored PRs receive a Kody approval indicator but are not automatically merged.
+
+The repository variable `DEPENDENCY_AUTO_MERGE_PAUSED=true` suspends automatic merges while leaving update PRs, CI, reviews, and manual merges available. `PRODUCTION_DEPLOYMENT_PAUSED=true` suspends the deployment job. These switches are independent and take effect on new workflow runs.
+
+The hosted Kody app must have access to the repository. `kodus-config.yml` enables automatic reviews, approvals, and requests for changes, including dependency manifests and lockfiles. Dependabot alerts and security updates must be enabled in the repository security settings. The optional Actions secret `DEPENDABOT_ALERTS_TOKEN` grants only Dependabot-alert and pull-request read access; without it, unverified major security fixes follow the normal manual-major policy.
+
+Manual merges into `main` use the deployment workflow. Dependency-policy merges explicitly dispatch that same workflow because merges made with `GITHUB_TOKEN` do not trigger push workflows. Dispatch retries up to three times; if none is confirmed, the workflow fails and attempts to assign the merged PR and post deployment recovery instructions. Deployments run one at a time and check out the workflow's exact commit; an outdated run cannot overwrite a newer deployed commit.
+
+On the VPS, `.github/scripts/deploy-runtime.mjs` installs locked runtime releases under `~/.local/share/mind-runtime/releases`. It bootstraps the exact proposed Bun version through npm so an older installed Bun does not need to parse a newer lockfile format. It verifies both installed versions and installs the locked backend dependencies before switching the runtime. The deployment account needs Node, npm, an existing `pm2-opc` startup service, and passwordless sudo for its systemd override and restart. The saved PM2 process list must contain only `mind-backend`, using `~/.bun/bin/bun`, as in the existing VPS setup.
+
+The deployer saves the process list, atomically switches the Bun executable, and installs a systemd override that uses the managed PM2 on reboot. After restarting the process manager, it checks that the unauthenticated local sync endpoint returns its expected 401. If activation or health checks fail, it restores the previous runtime and service override and restarts the prior manager; the workflow reports failure even when recovery succeeds. This recovery does not revert application source or backend dependencies. The current and previous runtime releases are retained; older releases are removed after a successful deployment. The original global PM2 is retained as a bootstrap tool, while the service uses the repository-managed installation.
+
+OS packages and Node are maintained through the VPS package manager. TLS renewal uses Certbot independently of dependency updates.
+
+---
+
+## Production certificate renewal
+
+The VPS uses Certbot's Route 53 DNS challenge to renew `api.mind.durik.com.au`; port 80 is not required. The enabled `certbot-renew.timer` runs the renewal service on a randomized schedule. After a successful renewal, `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh` validates the Nginx configuration and gracefully reloads Nginx to serve the new certificate. The backend process does not need to restart.
+
+---
+
 ## Self-hosting
 
 ### Prerequisites
 
-- **[Bun](https://bun.sh)** — runtime and package manager
+- **[Bun](https://bun.sh)** — use the version pinned in `runtime/package.json`
+- Node 22 and npm for PM2 and runtime tests
 - A [Neon](https://neon.tech) Postgres database
 - An [OpenRouter](https://openrouter.ai/settings/keys) API key from a workspace configured for strict ZDR
 - A [Clerk](https://clerk.com) application
@@ -115,6 +144,7 @@ The public app data API is intentionally narrow:
 ```bash
 # Install dependencies
 bun install
+bun install --cwd runtime --frozen-lockfile
 cd frontend && bun install && cd ..
 ```
 
@@ -132,7 +162,7 @@ cd frontend && bun install && cd ..
 
 In OpenRouter, enforce ZDR for all model groups, select **ZDR only** for both Google and other models (exclude Safety Retention), and keep prompt/completion logging and training opt-ins disabled. Apply these settings to the workspace/key used by the backend before sending user data. Requests fail when no eligible provider is available; retries do not relax privacy settings. Never put the API key in frontend variables.
 
-The browser preserves its recorded audio format, including WebM and MP4/M4A. Uploads are limited to 25 MB. The existing `/api/whisper/transcribe` URL remains compatible, but is served by Scribe v2.
+The browser preserves its recorded audio format, including WebM and MP4/M4A. Uploads are limited to 25 MB, with request sizes capped before parsing. Scribe v2 detects the language automatically and serves the existing `/api/whisper/transcribe` URL.
 
 Run `bun run test:ai-integration` for mocked provider, tool-mutation, and recording-format regression checks. The existing `bun run bench:ai-prompts` command makes live model calls and writes benchmark fixtures; use an isolated test database.
 

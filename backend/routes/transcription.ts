@@ -1,4 +1,5 @@
 import { Hono } from "hono"
+import { bodyLimit } from "hono/body-limit"
 import { getAuth } from "@clerk/hono"
 import { autumnAccessDeniedResponse, isAutumnAccessDeniedError } from "../billing/errors"
 import { consumeAutumnFeature } from "../billing/entitlements"
@@ -8,7 +9,17 @@ import { OpenRouterError } from "../ai/openrouter"
 
 export const transcriptionRoute = new Hono()
 
-transcriptionRoute.post("/transcribe", async (c) => {
+// Allow multipart headers in addition to the audio file's limit.
+export const MAX_AUDIO_REQUEST_BYTES = MAX_AUDIO_BYTES + 64 * 1024
+const limitAudioRequest = bodyLimit({
+  maxSize: MAX_AUDIO_REQUEST_BYTES,
+  onError: (c) => c.json({ error: "Audio upload exceeds maximum request size" }, 413),
+})
+
+transcriptionRoute.post("/transcribe", async (c, next) => {
+  if (!getAuth(c)?.userId) return c.json({ error: "Unauthorized" }, 401)
+  return limitAudioRequest(c, next)
+}, async (c) => {
   const auth = getAuth(c)
   if (!auth?.userId) return c.json({ error: "Unauthorized" }, 401)
 

@@ -2,18 +2,28 @@ name: Deploy Backend
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
 jobs:
   deploy:
+    if: vars.PRODUCTION_DEPLOYMENT_PAUSED != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1
+        env:
+          DEPLOY_COMMIT: ${{ github.sha }}
         with:
+          envs: DEPLOY_COMMIT
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
+            set -eu
             cd /app/mind-hosted
-            git pull origin main
-            bun install
-            pm2 restart mind-backend
+            git fetch origin main
+            git merge --ff-only "$DEPLOY_COMMIT"
+            test "$(git rev-parse HEAD)" = "$DEPLOY_COMMIT"
+            node .github/scripts/deploy-runtime.mjs

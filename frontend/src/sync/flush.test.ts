@@ -284,7 +284,10 @@ describe("frontend sync flush", () => {
       }] } as unknown as SyncPushResponse
     }
 
-    await flushSyncQueue()
+    // Equal enqueue timestamps can put children before their parents in a
+    // batch. The harness disables scheduled flushes, so drain the follow-up
+    // passes that the real scheduler runs after each parent acknowledgement.
+    for (let pass = 0; pass < 3; pass += 1) await flushSyncQueue()
 
     expect(fetchCalls.filter(({ operation }) => operation.entity_type === "tile")
       .map(({ operation }) => operation.payload.canvas_id)).toEqual([10, 10])

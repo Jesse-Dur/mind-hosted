@@ -2,11 +2,11 @@
   "name": "mind",
   "private": true,
   "scripts": {
-    "test": "bun run test:ai-integration && bun run test:backend && bun run test:frontend-sync && bun run test:store && bun run typecheck && bun run test:mobile",
+    "test": "bun run test:automation && bun run test:ai-integration && bun run test:backend && bun run test:frontend-sync && bun run test:store && bun run typecheck && bun run test:mobile",
     "test:backend": "bun test backend/test/snapshot.test.ts && AUTUMN_DISABLED=true bun --env-file=.env.local test backend/test/sync.test.ts backend/test/syncHistory.test.ts backend/test/billing.test.ts",
     "test:frontend-sync": "bun test frontend/src/sync/sync.test.ts frontend/src/sync/flush.test.ts frontend/src/sync/pull.test.ts frontend/src/sync/reconciliation.test.ts frontend/src/sync/thoughtPresentation.test.ts frontend/src/sync/canvasPresentation.test.ts",
     "test:store": "bun test frontend/src/store/store.test.ts frontend/src/store/syncStatus.test.ts",
-    "test:mobile": "bun test frontend/src/sync/accountPartition.test.ts && bun test frontend/src/startup/workspaceBootRetry.test.ts frontend/src/auth/reauthSignal.test.ts frontend/src/sync/statusPresentation.test.ts frontend/src/layout/mobileBundles.test.ts frontend/src/preferences/devicePreferences.test.ts frontend/src/pwa/installPrompt.test.ts frontend/src/pwa/serviceWorker.test.ts frontend/src/utils/crossCanvasTabHover.test.ts frontend/src/utils/historyFeed.test.ts frontend/src/utils/mobileGestureSelection.test.ts frontend/src/utils/mobileSwipeDismiss.test.ts frontend/src/utils/mobileTileGesture.test.ts frontend/src/utils/mobileThoughtOrder.test.ts frontend/src/utils/physicalKeyboard.test.ts frontend/src/utils/pointerRect.test.ts frontend/src/utils/targetDoubleTap.test.ts frontend/src/utils/textSelection.test.ts",
+    "test:mobile": "bun test --preload fake-indexeddb/auto frontend/src/startup/workspaceBootRetry.test.ts frontend/src/auth/reauthSignal.test.ts frontend/src/sync/accountPartition.test.ts frontend/src/sync/statusPresentation.test.ts frontend/src/layout/mobileBundles.test.ts frontend/src/preferences/devicePreferences.test.ts frontend/src/pwa/installPrompt.test.ts frontend/src/pwa/serviceWorker.test.ts frontend/src/utils/crossCanvasTabHover.test.ts frontend/src/utils/historyFeed.test.ts frontend/src/utils/mobileGestureSelection.test.ts frontend/src/utils/mobileSwipeDismiss.test.ts frontend/src/utils/mobileTileGesture.test.ts frontend/src/utils/mobileThoughtOrder.test.ts frontend/src/utils/physicalKeyboard.test.ts frontend/src/utils/pointerRect.test.ts frontend/src/utils/targetDoubleTap.test.ts frontend/src/utils/textSelection.test.ts",
     "test:ai": "bun run backend/test/ai.test.ts",
     "bench:ai-prompts": "bun run backend/test/ai.test.ts",
     "typecheck": "bun run --cwd frontend tsc --project ../backend/tsconfig.json --noEmit && bun run --cwd frontend tsc --project tsconfig.json --noEmit && bun run --cwd frontend build",
@@ -14,6 +14,7 @@
     "dev:backend": "bun run backend/index.ts",
     "dev:frontend": "bun run --cwd frontend dev",
     "start": "bun run backend/index.ts",
+    "test:automation": "bun test ./.github/scripts/dependency-gate.test.ts ./.github/scripts/runtime.test.ts",
     "test:ai-integration": "bun test backend/test/openrouter.test.ts frontend/src/utils/audioRecording.test.ts && bun test backend/test/aiProcessing.test.ts"
   },
   "devDependencies": {

@@ -18,7 +18,6 @@ export async function transcribeAudio(audio: File, format: string): Promise<stri
   const data = await openRouterRequest("/audio/transcriptions", {
     model: openRouterModel("transcription"),
     input_audio: { data: Buffer.from(await audio.arrayBuffer()).toString("base64"), format },
-    language: "en",
   })
   if (!data || typeof data !== "object" || !("text" in data) || typeof data.text !== "string") {
     throw new OpenRouterError(502)

@@ -23,7 +23,8 @@ mock.module("../db/sync", () => ({ syncDb: {
 } }))
 
 const { aiRoute, classifyAndStore } = await import("../routes/ai")
-const { transcriptionRoute } = await import("../routes/transcription")
+const { transcriptionRoute, MAX_AUDIO_REQUEST_BYTES } = await import("../routes/transcription")
+const { MAX_AUDIO_BYTES } = await import("../ai/transcribe")
 const originalKey = process.env.OPENROUTER_API_KEY
 let fetchMock: ReturnType<typeof spyOn<typeof globalThis, "fetch">>
 
@@ -179,6 +180,61 @@ describe("transcription route", () => {
     for (const audio of [undefined, "not a file", new File([], "empty"), new File(["text"], "text", { type: "text/plain" })]) {
       expect((await audioRequest(audio)).status).toBe(400)
     }
+    expect(consume).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test("rejects oversized declared requests before parsing and authenticates first", async () => {
+    const parse = spyOn(Request.prototype, "formData")
+    const request = () => transcriptionRoute.request("/transcribe", {
+      method: "POST",
+      headers: { "Content-Length": String(MAX_AUDIO_REQUEST_BYTES + 1) },
+      body: "unparsed upload",
+    })
+    try {
+      expect((await request()).status).toBe(413)
+      authenticated = false
+      expect((await request()).status).toBe(401)
+      expect(parse).not.toHaveBeenCalled()
+      expect(consume).not.toHaveBeenCalled()
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally { parse.mockRestore() }
+  })
+
+  test("bounds uploads without Content-Length before parsing", async () => {
+    const parse = spyOn(Request.prototype, "formData")
+    const chunk = new Uint8Array(1024 * 1024)
+    let chunksRead = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        chunksRead += 1
+        controller.enqueue(chunk)
+        if (chunksRead === 100) controller.close()
+      },
+    }, { highWaterMark: 0 })
+    try {
+      const res = await transcriptionRoute.request("/transcribe", { method: "POST", body })
+      expect(res.status).toBe(413)
+      expect(chunksRead).toBe(Math.floor(MAX_AUDIO_REQUEST_BYTES / chunk.length) + 1)
+      expect(parse).not.toHaveBeenCalled()
+      expect(consume).not.toHaveBeenCalled()
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally { parse.mockRestore() }
+  })
+
+  test("allows the full audio limit with multipart overhead", async () => {
+    fetchMock.mockResolvedValue(Response.json({ text: "Full recording" }))
+    const res = await audioRequest(new File([new Uint8Array(MAX_AUDIO_BYTES)], "audio.webm", { type: "audio/webm" }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ text: "Full recording" })
+    expect(consume).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  test("rejects audio over the file limit within the request allowance", async () => {
+    const res = await audioRequest(new File([new Uint8Array(MAX_AUDIO_BYTES + 1)], "audio.webm", { type: "audio/webm" }))
+    expect(res.status).toBe(413)
+    expect(await res.json()).toEqual({ error: "Audio file exceeds 25 MB" })
     expect(consume).not.toHaveBeenCalled()
     expect(fetchMock).not.toHaveBeenCalled()
   })

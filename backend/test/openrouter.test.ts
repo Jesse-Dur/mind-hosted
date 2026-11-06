@@ -118,10 +118,11 @@ describe("transcription", () => {
       const [url, init] = fetchMock.mock.calls[0]!
       expect(url).toBe("https://openrouter.ai/api/v1/audio/transcriptions")
       expect(JSON.parse(String(init?.body))).toMatchObject({
-        model: "elevenlabs/scribe-v2", language: "en",
+        model: "elevenlabs/scribe-v2",
         input_audio: { data: Buffer.from("test recording").toString("base64"), format },
         provider: { zdr: true, data_collection: "deny" },
       })
+      expect(JSON.parse(String(init?.body))).not.toHaveProperty("language")
     },
   )
 
