@@ -16,7 +16,7 @@ export const aiRoute = new Hono()
 const CONCURRENCY: Record<string, number> = { low: 1, medium: 2, high: 4 }
 let running = 0
 
-export type AiStatus = "idle" | "processing" | "queued" | "limited"
+export type AiStatus = "idle" | "processing" | "queued"
 const userStatus = new Map<string, AiStatus>()
 const userStatusTimers = new Map<string, ReturnType<typeof setTimeout>>()
 

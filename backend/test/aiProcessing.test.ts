@@ -144,10 +144,26 @@ describe("thought processing via OpenRouter", () => {
     const create = tool("create_thought", { tile_id: 1, content: "Buy milk" })
     fetchMock.mockResolvedValueOnce(response(create))
       .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }))
-      .mockResolvedValueOnce(response(create, tool("done")))
+      .mockImplementationOnce(Object.assign(async () => {
+        expect(await status()).toBe("queued")
+        return response(create, tool("done"))
+      }, { preconnect: () => {} }))
     await classifyAndStore("Buy milk", "test-user")
     expect(writes).toHaveLength(1)
     expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(await status()).toBe("idle")
+  })
+
+  test("clears the queue after rate-limit retries are exhausted", async () => {
+    const statuses: string[] = []
+    fetchMock.mockImplementation(Object.assign(async () => {
+      statuses.push(await status())
+      return new Response("", { status: 429, headers: { "Retry-After": "0" } })
+    }, { preconnect: () => {} }))
+    await expect(classifyAndStore("Buy milk", "test-user")).rejects.toMatchObject({ status: 429 })
+    expect(statuses).toEqual(["processing", "queued", "queued"])
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(writes).toHaveLength(0)
     expect(await status()).toBe("idle")
   })
 
