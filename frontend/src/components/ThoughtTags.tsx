@@ -3,7 +3,8 @@ import { createPortal } from "react-dom"
 import { useStore } from "../store"
 import { CloseButton } from "./CloseButton"
 import { TagDot } from "./TagPill"
-import { tagPillStyle, tagPopoverSurface, useTagPopoverStyles } from "./tagPopoverStyles"
+import { tagRowStyle, tagPopoverSurface, useTagPopoverStyles } from "./tagPopoverStyles"
+import { TagLabel } from "./TagLabel"
 
 type Position = {
   left: number
@@ -156,12 +157,6 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
   useLayoutEffect(() => {
     if (!closing && exitScroll > 0 && scrollRef.current) scrollRef.current.scrollTop = exitScroll
   }, [closing, exitScroll])
-
-  useLayoutEffect(() => {
-    // Font preferences can arrive while open. Remeasure the natural panel
-    // width before updating its fixed position and per-pill geometry.
-    setPosition(null)
-  }, [labelSize])
 
   useLayoutEffect(() => {
     if (!visible || position !== null) return
@@ -351,11 +346,12 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
             zIndex: 1000,
             display: "flex",
             flexDirection: "column",
-            padding: panelPadding,
+            padding: `${panelPadding + 1}px 1px`,
+            minWidth: 160,
             maxWidth: "calc(100vw - 16px)",
             maxHeight: "calc(100dvh - 16px)",
             boxSizing: "border-box",
-            borderRadius: 9,
+            borderRadius: 8,
             fontFamily: "inherit",
             visibility: prepared ? "visible" : "hidden",
           }}
@@ -376,7 +372,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
             }}
           />
           {/* Returning pills must not hover themselves open as they cross the cursor. */}
-          <div ref={scrollRef} style={{ pointerEvents: closing ? "none" : undefined, padding: 1, margin: -1, transform: closing && exitScroll > 0 ? `translateY(${-exitScroll}px)` : undefined, maxHeight: `calc(100dvh - ${16 + panelPadding * 2}px)`, overflowY: settled ? "auto" : "visible", overscrollBehavior: "contain" }}>
+          <div ref={scrollRef} style={{ pointerEvents: closing ? "none" : undefined, transform: closing && exitScroll > 0 ? `translateY(${-exitScroll}px)` : undefined, maxHeight: `calc(100dvh - ${16 + (panelPadding + 1) * 2}px)`, overflowY: settled ? "auto" : "visible", overscrollBehavior: "contain" }}>
             {tags.map((tag, index) => {
               const color = knownTags.find((item) => item.name === tag)?.color ?? "#888"
               const offset = prepared ? offsets[tag]! : { x: 0, y: 0, width: 8 }
@@ -391,22 +387,22 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
                     zIndex: 1,
                     height: removing ? 0 : itemHeight,
                     width: "max-content",
+                    minWidth: "100%",
                     maxWidth: "100%",
                     flexShrink: 0,
-                    marginBottom: removing || index === tags.length - 1 ? 0 : labelGap,
                     opacity: removing ? 0 : 1,
                     transform: removing ? "scale(0.9)" : "scale(1)",
-                    transition: reducedMotion ? "none" : `height ${REMOVE_MS}ms ease, margin-bottom ${REMOVE_MS}ms ease, opacity ${REMOVE_MS}ms ease, transform ${REMOVE_MS}ms ease`,
+                    transition: reducedMotion ? "none" : `height ${REMOVE_MS}ms ease, opacity ${REMOVE_MS}ms ease, transform ${REMOVE_MS}ms ease`,
                   }}
                 >
-                  <div aria-hidden style={{ display: "flex", alignItems: "center", height: itemHeight, paddingLeft: labelPadding, visibility: "hidden" }}>
-                    <span style={{ fontSize: labelSize, fontWeight: 600, whiteSpace: "nowrap", paddingRight: labelGap }}>{tag}</span>
+                  <div aria-hidden style={{ ...tagRowStyle(color), display: "flex", alignItems: "center", gap: labelGap, height: itemHeight, padding: `0 ${labelPadding}px`, fontSize: labelSize, visibility: "hidden" }}>
+                    <TagLabel name={tag} color={color} />
                     {onRemove && <span style={{ width: removeSize, height: removeSize, flexShrink: 0 }} />}
                   </div>
                   <div
                     data-tag-pill={tag}
                     style={{
-                      ...tagPillStyle(color),
+                      ...tagRowStyle(color),
                       position: "absolute",
                       // Keep return movement and resizing on the same layout
                       // timeline; WebKit can advance 3D transforms separately.
@@ -417,19 +413,20 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
                       justifyContent: "flex-start",
                       width: expanded ? offset.width : 8,
                       height: expanded ? itemHeight : 8,
-                      background: expanded ? `${color}22` : color,
-                      outline: expanded ? `1px solid ${color}55` : "1px solid transparent",
+                      fontSize: labelSize,
+                      borderRadius: expanded ? 0 : "50%",
+                      background: expanded ? `${color}11` : color,
                       overflow: "hidden",
                       transform: closing ? "none" : expanded ? "translate3d(0,0,0)" : `translate3d(${offset.x}px,${offset.y}px,0)`,
                       transformOrigin: "left center",
-                      transition: reducedMotion || !motionStarted.current ? "none" : `left ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), top ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), transform ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), width ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), height ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), background ${MOVE_MS}ms ease, outline-color ${MOVE_MS}ms ease`,
+                      transition: reducedMotion || !motionStarted.current ? "none" : `left ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), top ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), transform ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), width ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), height ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), background ${MOVE_MS}ms ease, border-radius ${MOVE_MS}ms ease`,
                       transitionDelay: `${delay}ms`,
                     }}
                   >
-                    <span style={{ color, fontSize: labelSize, fontWeight: 600, lineHeight: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, paddingLeft: labelPadding, paddingRight: labelGap, opacity: expanded ? 1 : 0, transition: reducedMotion ? "none" : "opacity 110ms ease", transitionDelay: expanded && !reducedMotion ? `${delay + 80}ms` : "0ms" }}>
-                      {tag}
+                    <span style={{ display: "flex", flex: 1, minWidth: 0, paddingLeft: labelPadding, paddingRight: labelGap, opacity: expanded ? 1 : 0, transition: reducedMotion ? "none" : "opacity 110ms ease", transitionDelay: expanded && !reducedMotion ? `${delay + 80}ms` : "0ms" }}>
+                      <TagLabel name={tag} color={color} />
                     </span>
-                    {onRemove && <span style={{ flexShrink: 0, opacity: expanded ? 1 : 0, transition: reducedMotion ? "none" : "opacity 100ms ease", transitionDelay: expanded && !reducedMotion ? `${delay + 105}ms` : "0ms" }}>
+                    {onRemove && <span style={{ flexShrink: 0, paddingRight: labelPadding, opacity: expanded ? 1 : 0, transition: reducedMotion ? "none" : "opacity 100ms ease", transitionDelay: expanded && !reducedMotion ? `${delay + 105}ms` : "0ms" }}>
                       <CloseButton
                         size={removeSize}
                         iconSize={iconSize}
