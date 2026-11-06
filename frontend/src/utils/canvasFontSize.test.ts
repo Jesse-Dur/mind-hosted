@@ -20,16 +20,16 @@ describe("thought control sizing", () => {
   })
 
   test("reduces the whole tile font when the preferred size cannot fit", () => {
-    expect(getEffectiveCanvasFontSize(36, 96, 0)).toBe(18)
-    expect(getEffectiveCanvasFontSize(36, 96, 1)).toBe(9)
-    expect(getEffectiveCanvasFontSize(36, 120, 1)).toBe(23)
-    expect(getEffectiveCanvasFontSize(36, 120, 2)).toBe(17)
+    expect(getEffectiveCanvasFontSize(36, 144, 0)).toBe(28)
+    expect(getEffectiveCanvasFontSize(36, 144, 1)).toBe(22)
+    expect(getEffectiveCanvasFontSize(36, 144, 2)).toBe(16)
+    expect(getEffectiveCanvasFontSize(36, 168, 2)).toBe(27)
   })
 
-  test("reserves the full width of every tag dot", () => {
-    expect(getThoughtRequiredTileWidth(8, 1)).toBe(96)
-    expect(getThoughtRequiredTileWidth(8, 2)).toBe(108)
-    expect(getThoughtRequiredTileWidth(8, 3)).toBe(120)
+  test("reserves every tag dot and a stable sync control area", () => {
+    expect(getThoughtRequiredTileWidth(8, 1)).toBe(122)
+    expect(getThoughtRequiredTileWidth(8, 2)).toBe(134)
+    expect(getThoughtRequiredTileWidth(8, 3)).toBe(146)
   })
 
 })

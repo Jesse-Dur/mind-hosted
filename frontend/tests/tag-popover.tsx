@@ -2,8 +2,11 @@ import { useState } from "react"
 import { createRoot } from "react-dom/client"
 import { ThoughtTags } from "../src/components/ThoughtTags"
 import { TagMenu } from "../src/components/TagMenu"
+import { Thought } from "../src/components/Thought"
+import { syncEntityKey } from "../src/sync/status"
+import type { SyncVisualState } from "../src/sync/types"
 import { useStore } from "../src/store"
-import type { Thought } from "../src/types"
+import type { Thought as ThoughtType } from "../src/types"
 
 const params = new URLSearchParams(location.search)
 const names = params.has("many") ? Array.from({ length: 40 }, (_, i) => `Tag ${i + 1}`)
@@ -35,7 +38,7 @@ function MenuFixture() {
   const [tags, setTags] = useState(names.slice(0, 2))
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const fontSize = useStore((state) => state.canvasFontSize)
-  const thought: Thought = { id: 1, tile_id: 1, content: "A thought with tags", tags, sort_order: 0, created_at: "" }
+  const thought: ThoughtType = { id: 1, tile_id: 1, content: "A thought with tags", tags, sort_order: 0, created_at: "" }
   return <>
     <label style={{ display: "block", margin: 16 }}>Font size <select aria-label="Font size" value={fontSize} onChange={(event) => useStore.setState({ canvasFontSize: Number(event.target.value) })}>
       {[8, 13, 24, 36].map((size) => <option key={size} value={size}>{size}</option>)}
@@ -50,6 +53,37 @@ function MenuFixture() {
   </>
 }
 
+const syncSamples = [
+  { id: 101, width: 144, fontSize: 8, content: "" },
+  { id: 102, width: 240, fontSize: 13, content: "A thought with tags" },
+  { id: 103, width: 240, fontSize: 13, content: "A longer thought that wraps across several lines in a narrow tile" },
+  { id: 104, width: 330, fontSize: 24, content: "Large text" },
+  { id: 105, width: 144, fontSize: 8, content: "No tags", tags: [] },
+]
+
+function fixtureSyncStatus(state: SyncVisualState | null) {
+  useStore.setState({ syncEntityStatuses: new Map(syncSamples.flatMap(({ id }) => {
+    const clientId = `fixture-${id}`
+    const key = syncEntityKey("thought", clientId)
+    return state ? [[key, { key, entityType: "thought" as const, clientId, state, opId: null, action: null, error: null, updatedAt: Date.now() }]] : []
+  })) })
+}
+
+function SyncFixture() {
+  return <>
+    <div style={{ display: "flex", gap: 8, padding: 16 }}>
+      <button onClick={() => fixtureSyncStatus("pending")}>Pending</button>
+      <button onClick={() => fixtureSyncStatus("synced")}>Acknowledged</button>
+      <button onClick={() => fixtureSyncStatus("error")}>Failed</button>
+      <button onClick={() => fixtureSyncStatus("local_only")}>Local only</button>
+      <button onClick={() => fixtureSyncStatus(null)}>Clear</button>
+    </div>
+    {syncSamples.map(({ id, width, fontSize, content, tags = names.slice(0, 2) }) => <div key={id} data-sync-sample={id} style={{ width, margin: 16 }}>
+      <Thought thought={{ id, client_id: `fixture-${id}`, tile_id: 1, content, tags, sort_order: 0, created_at: "" }} fontSize={fontSize} dragging={false} onDragStart={() => {}} onDragMove={() => {}} onDragOver={() => {}} onDrop={() => {}} />
+    </div>)}
+  </>
+}
+
 function App() {
   const [key, setKey] = useState(0)
   return <>
@@ -61,7 +95,12 @@ function App() {
     </main>
   </>
 }
-createRoot(document.getElementById("root")!).render(params.has("menu") ? <MenuFixture /> : <App />)
+if (params.has("sync")) useStore.setState({
+  updateThoughtTags: async () => { fixtureSyncStatus("pending") },
+  updateThoughtContent: async () => { fixtureSyncStatus("pending") },
+  removeThought: async () => {},
+})
+createRoot(document.getElementById("root")!).render(params.has("sync") ? <SyncFixture /> : params.has("menu") ? <MenuFixture /> : <App />)
 
 declare global {
   interface Window {

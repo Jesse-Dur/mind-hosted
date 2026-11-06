@@ -31,7 +31,7 @@ function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum)
 }
 
-export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true }: { tags: string[]; onRemove?: (tag: string) => void; expandOnHover?: boolean }) {
+export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true, onOpenChange }: { tags: string[]; onRemove?: (tag: string) => void; expandOnHover?: boolean; onOpenChange?: (open: boolean) => void }) {
   const { itemHeight, removeSize, labelSize, labelPadding, labelGap, panelPadding, iconSize, pillGap } = useTagPopoverStyles()
   const [removal, setRemoval] = useState<{ tag: string; tags: string[] } | null>(null)
   // Save immediately; only retain the old rows for their exit animation. Leaving
@@ -50,6 +50,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
   const finishTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const removeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [visible, setVisible] = useState(false)
+  useLayoutEffect(() => { onOpenChange?.(visible) }, [visible, onOpenChange])
   const [position, setPosition] = useState<Position | null>(null)
   const [offsets, setOffsets] = useState<Record<string, Offset>>({})
   const [closing, setClosing] = useState(false)
