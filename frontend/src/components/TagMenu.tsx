@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useStore } from "../store"
 import type { Thought } from "../types"
-import { tagRowStyle, tagPopoverHeading, tagPopoverSurface, useTagPopoverStyles } from "./tagPopoverStyles"
+import { tagRowStyle, tagPopoverSurface, useTagPopoverStyles } from "./tagPopoverStyles"
 import { TagLabel } from "./TagLabel"
 
 interface Props {
@@ -14,7 +14,7 @@ interface Props {
 
 export function TagMenu({ thought, x, y, onClose, onUpdate }: Props) {
   const tags = useStore((state) => state.tags)
-  const { labelSize, labelPadding, labelGap, panelPadding } = useTagPopoverStyles()
+  const { labelSize, labelPadding, labelGap, panelPadding, headingSize, headingStyle } = useTagPopoverStyles()
   const menuRef = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState({ x, y })
 
@@ -22,9 +22,13 @@ export function TagMenu({ thought, x, y, onClose, onUpdate }: Props) {
     const menu = menuRef.current
     if (!menu) return
     function reposition() {
+      // Computed dimensions ignore the opening transform and retain fractions.
+      const style = getComputedStyle(menu!)
+      const width = Math.ceil(parseFloat(style.width))
+      const height = Math.ceil(parseFloat(style.height))
       setPosition({
-        x: Math.max(10, Math.min(x, window.innerWidth - menu!.offsetWidth - 10)),
-        y: Math.max(10, Math.min(y, window.innerHeight - menu!.offsetHeight - 10)),
+        x: Math.max(10, Math.min(x, window.innerWidth - width - 10)),
+        y: Math.max(10, Math.min(y, window.innerHeight - height - 10)),
       })
     }
     reposition()
@@ -64,8 +68,8 @@ export function TagMenu({ thought, x, y, onClose, onUpdate }: Props) {
           [data-tag-option]:focus-visible { outline: 2px solid #a78bfa !important; outline-offset: 2px; }
           @media (prefers-reduced-motion: reduce) { [aria-label="Tag as"] { animation: none !important; } }
         `}</style>
-        <p style={tagPopoverHeading}>Tag as</p>
-        {tags.length === 0 && <p style={{ margin: 0, fontSize: 12, color: "#ccc", padding: `4px ${labelPadding}px` }}>No tags — add in sidebar</p>}
+        <p style={headingStyle}>Tag as</p>
+        {tags.length === 0 && <p style={{ margin: 0, fontSize: labelSize, color: "#ccc", padding: `${panelPadding}px ${labelPadding}px` }}>No tags — add in sidebar</p>}
         {tags.map((tag) => {
           const active = thought.tags.includes(tag.name)
           return (
@@ -75,13 +79,13 @@ export function TagMenu({ thought, x, y, onClose, onUpdate }: Props) {
                 ...tagRowStyle(tag.color, active),
                 display: "flex", alignItems: "center", gap: labelGap, width: "100%",
                 margin: 0, borderRadius: 0,
-                padding: `6px ${labelPadding}px`, border: 0, boxSizing: "border-box",
+                padding: `${panelPadding}px ${labelPadding}px`, border: 0, boxSizing: "border-box",
                 cursor: "pointer", textAlign: "left", fontFamily: "inherit", fontSize: labelSize,
                 transition: "background 0.1s ease",
               }}
             >
-              <TagLabel name={tag.name} color={tag.color} />
-              {active && <span aria-hidden style={{ fontSize: 10, color: tag.color }}>✓</span>}
+              <TagLabel name={tag.name} color={tag.color} fontSize={labelSize} />
+              {active && <span aria-hidden style={{ fontSize: headingSize, color: tag.color }}>✓</span>}
             </button>
           )
         })}

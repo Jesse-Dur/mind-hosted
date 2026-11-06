@@ -1,5 +1,7 @@
 import type { CSSProperties } from "react"
 import { useMobileWorkspace } from "../layout/useWorkspaceLayout"
+import { useStore } from "../store"
+import { DEFAULT_CANVAS_FONT_SIZE } from "../utils/canvasFontSize"
 
 export const tagPopoverSurface: CSSProperties = {
   border: "1px solid #e8e8e8",
@@ -8,14 +10,12 @@ export const tagPopoverSurface: CSSProperties = {
   boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
 }
 
-export const tagPopoverHeading: CSSProperties = {
+const tagPopoverHeading: CSSProperties = {
   margin: 0,
-  fontSize: 10,
   fontWeight: 700,
   color: "#aaa",
   letterSpacing: "0.08em",
   textTransform: "uppercase",
-  padding: "2px 12px 6px",
 }
 
 export function tagRowStyle(color: string, active = true): CSSProperties {
@@ -29,14 +29,23 @@ export function tagRowStyle(color: string, active = true): CSSProperties {
 
 export function useTagPopoverStyles() {
   const mobile = useMobileWorkspace()
+  const labelSize = useStore((state) => state.canvasFontSize)
+  const scale = labelSize / DEFAULT_CANVAS_FONT_SIZE
+  const labelPadding = Math.min(20, Math.max(8, Math.round(12 * scale)))
+  const panelPadding = Math.min(10, Math.max(4, Math.round(6 * scale)))
+  const headingSize = Math.max(8, Math.round(10 * scale))
+  const removeSize = Math.max(mobile ? 44 : 20, Math.round(20 * scale))
   return {
-    labelSize: 13,
-    itemHeight: mobile ? 44 : 28,
-    removeSize: mobile ? 44 : 20,
-    iconSize: mobile ? 12 : 8,
-    labelPadding: 12,
-    labelGap: 8,
-    panelPadding: 6,
-    pillGap: mobile ? 8 : 4,
+    labelSize,
+    itemHeight: Math.max(mobile ? 44 : 28, Math.ceil(labelSize * 1.2) + panelPadding * 2, removeSize),
+    removeSize,
+    iconSize: Math.max(mobile ? 12 : 6, Math.round((mobile ? 12 : 8) * scale)),
+    labelPadding,
+    labelGap: Math.min(12, Math.max(4, Math.round(8 * scale))),
+    panelPadding,
+    pillGap: Math.min(mobile ? 12 : 8, Math.max(3, Math.round((mobile ? 8 : 4) * scale))),
+    listPadding: Math.min(12, Math.max(4, Math.round(7 * scale))),
+    headingSize,
+    headingStyle: { ...tagPopoverHeading, fontSize: headingSize, padding: `${Math.max(1, Math.round(2 * scale))}px ${labelPadding}px ${panelPadding}px` },
   }
 }

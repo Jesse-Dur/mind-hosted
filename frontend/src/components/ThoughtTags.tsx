@@ -3,7 +3,7 @@ import { createPortal } from "react-dom"
 import { useStore } from "../store"
 import { CloseButton } from "./CloseButton"
 import { TagDot } from "./TagPill"
-import { tagRowStyle, tagPopoverHeading, tagPopoverSurface, useTagPopoverStyles } from "./tagPopoverStyles"
+import { tagRowStyle, tagPopoverSurface, useTagPopoverStyles } from "./tagPopoverStyles"
 import { TagLabel } from "./TagLabel"
 import { getThoughtTagMetrics } from "../utils/canvasFontSize"
 
@@ -36,7 +36,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
   const preferredFontSize = useStore((state) => state.canvasFontSize)
   const tagFontSize = fontSize ?? preferredFontSize
   const { size: dotSize, width: dotWidth, height: dotHeight, trailingOffset } = getThoughtTagMetrics(tagFontSize)
-  const { itemHeight, removeSize, labelSize, labelPadding, labelGap, panelPadding, iconSize, pillGap } = useTagPopoverStyles()
+  const { itemHeight, removeSize, labelSize, labelPadding, labelGap, panelPadding, iconSize, pillGap, listPadding, headingStyle } = useTagPopoverStyles()
   const [removal, setRemoval] = useState<{ tag: string; tags: string[] } | null>(null)
   // Save immediately; only retain the old rows for their exit animation. Leaving
   // the canvas during that animation must not cancel the user's tag removal.
@@ -162,6 +162,12 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
   useLayoutEffect(() => {
     if (!closing && exitScroll > 0 && scrollRef.current) scrollRef.current.scrollTop = exitScroll
   }, [closing, exitScroll])
+
+  useLayoutEffect(() => {
+    // Preferences may update while open. Measure the new natural dimensions
+    // before fixing the panel's position and each pill's animation geometry.
+    setPosition(null)
+  }, [labelSize, itemHeight])
 
   useLayoutEffect(() => {
     if (!visible || position !== null) return
@@ -377,7 +383,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
             }}
           />
           <p style={{
-            ...tagPopoverHeading,
+            ...headingStyle,
             position: "relative",
             zIndex: 1,
             flexShrink: 0,
@@ -386,7 +392,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
             transitionDelay: expanded ? "0ms" : `${Math.max(0, motionDuration - 180)}ms`,
           }}>Tags</p>
           {/* Returning pills must not hover themselves open as they cross the cursor. */}
-          <div ref={scrollRef} style={{ pointerEvents: closing ? "none" : undefined, padding: "1px 7px", flexShrink: 1, minHeight: 0, transform: closing && exitScroll > 0 ? `translateY(${-exitScroll}px)` : undefined, maxHeight: `calc(100dvh - ${16 + (panelPadding + 1) * 2}px)`, overflowY: settled ? "auto" : "visible", overscrollBehavior: "contain" }}>
+          <div ref={scrollRef} style={{ pointerEvents: closing ? "none" : undefined, padding: `1px ${listPadding}px`, flexShrink: 1, minHeight: 0, transform: closing && exitScroll > 0 ? `translateY(${-exitScroll}px)` : undefined, maxHeight: `calc(100dvh - ${16 + (panelPadding + 1) * 2}px)`, overflowY: settled ? "auto" : "visible", overscrollBehavior: "contain" }}>
             {tags.map((tag, index) => {
               const color = knownTags.find((item) => item.name === tag)?.color ?? "#888"
               const offset = prepared ? offsets[tag]! : { x: 0, y: 0, width: dotSize }
@@ -410,7 +416,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
                   }}
                 >
                   <div aria-hidden style={{ ...tagRowStyle(color), display: "flex", alignItems: "center", gap: labelGap, height: itemHeight, padding: `0 ${labelPadding}px`, fontSize: labelSize, visibility: "hidden" }}>
-                    <TagLabel name={tag} color={color} />
+                    <TagLabel name={tag} color={color} fontSize={labelSize} />
                     {onRemove && <span style={{ width: removeSize, height: removeSize, flexShrink: 0 }} />}
                   </div>
                   <div
@@ -439,7 +445,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
                     }}
                   >
                     <span style={{ display: "flex", flex: 1, minWidth: 0, paddingLeft: labelPadding, paddingRight: labelGap, opacity: expanded ? 1 : 0, transition: reducedMotion ? "none" : "opacity 110ms ease", transitionDelay: expanded && !reducedMotion ? `${delay + 80}ms` : "0ms" }}>
-                      <TagLabel name={tag} color={color} />
+                      <TagLabel name={tag} color={color} fontSize={labelSize} />
                     </span>
                     {onRemove && <span style={{ flexShrink: 0, paddingRight: labelPadding, opacity: expanded ? 1 : 0, transition: reducedMotion ? "none" : "opacity 100ms ease", transitionDelay: expanded && !reducedMotion ? `${delay + 105}ms` : "0ms" }}>
                       <CloseButton
