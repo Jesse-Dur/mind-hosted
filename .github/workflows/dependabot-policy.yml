@@ -1,0 +1,100 @@
+name: Dependabot policy
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
+      - dismissed
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: "Optional pull-request number; leave empty to scan every open Dependabot PR"
+        required: false
+        type: number
+
+concurrency:
+  group: dependabot-policy-${{ github.event.pull_request.number || inputs.pull_request || github.event.workflow_run.head_sha || github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  checks: read
+  contents: write
+  issues: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  classify:
+    name: Classify Dependabot update
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Read Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.DEPENDABOT_ALERTS_TOKEN || github.token }}
+          alert-lookup: ${{ secrets.DEPENDABOT_ALERTS_TOKEN != '' }}
+
+      - name: Check out the trusted base revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Apply policy labels
+        env:
+          ALERT_STATE: ${{ steps.metadata.outputs.alert-state }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PACKAGE_ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+          SECURITY_LOOKUP_AVAILABLE: ${{ secrets.DEPENDABOT_ALERTS_TOKEN != '' }}
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+        run: node .github/scripts/dependency-gate.mjs classify
+
+  gate:
+    name: Enforce current-revision gates
+    needs:
+      - classify
+    if: >-
+      always() &&
+      vars.DEPENDENCY_AUTO_MERGE_PAUSED != 'true' &&
+      (needs.classify.result == 'success' || needs.classify.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out trusted policy code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Evaluate open Dependabot updates
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          POLL: ${{ github.event_name == 'pull_request_target' }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request }}
+          REPOSITORY: ${{ github.repository }}
+          WAIT_MINUTES: "30"
+          POLL_SECONDS: "60"
+        run: node .github/scripts/dependency-gate.mjs gate
