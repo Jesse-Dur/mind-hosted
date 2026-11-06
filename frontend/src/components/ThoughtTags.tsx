@@ -3,7 +3,7 @@ import { createPortal } from "react-dom"
 import { useStore } from "../store"
 import { CloseButton } from "./CloseButton"
 import { TagDot } from "./TagPill"
-import { tagRowStyle, tagPopoverSurface, useTagPopoverStyles } from "./tagPopoverStyles"
+import { tagRowStyle, tagPopoverHeading, tagPopoverSurface, useTagPopoverStyles } from "./tagPopoverStyles"
 import { TagLabel } from "./TagLabel"
 
 type Position = {
@@ -32,7 +32,7 @@ function clamp(value: number, minimum: number, maximum: number) {
 }
 
 export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true }: { tags: string[]; onRemove?: (tag: string) => void; expandOnHover?: boolean }) {
-  const { itemHeight, removeSize, labelSize, labelPadding, labelGap, panelPadding, iconSize } = useTagPopoverStyles()
+  const { itemHeight, removeSize, labelSize, labelPadding, labelGap, panelPadding, iconSize, pillGap } = useTagPopoverStyles()
   const [removal, setRemoval] = useState<{ tag: string; tags: string[] } | null>(null)
   // Save immediately; only retain the old rows for their exit animation. Leaving
   // the canvas during that animation must not cancel the user's tag removal.
@@ -371,8 +371,17 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
               pointerEvents: "none",
             }}
           />
+          <p style={{
+            ...tagPopoverHeading,
+            position: "relative",
+            zIndex: 1,
+            flexShrink: 0,
+            opacity: expanded ? 1 : 0,
+            transition: reducedMotion ? "none" : "opacity 160ms ease",
+            transitionDelay: expanded ? "0ms" : `${Math.max(0, motionDuration - 180)}ms`,
+          }}>Tags</p>
           {/* Returning pills must not hover themselves open as they cross the cursor. */}
-          <div ref={scrollRef} style={{ pointerEvents: closing ? "none" : undefined, transform: closing && exitScroll > 0 ? `translateY(${-exitScroll}px)` : undefined, maxHeight: `calc(100dvh - ${16 + (panelPadding + 1) * 2}px)`, overflowY: settled ? "auto" : "visible", overscrollBehavior: "contain" }}>
+          <div ref={scrollRef} style={{ pointerEvents: closing ? "none" : undefined, padding: "1px 7px", flexShrink: 1, minHeight: 0, transform: closing && exitScroll > 0 ? `translateY(${-exitScroll}px)` : undefined, maxHeight: `calc(100dvh - ${16 + (panelPadding + 1) * 2}px)`, overflowY: settled ? "auto" : "visible", overscrollBehavior: "contain" }}>
             {tags.map((tag, index) => {
               const color = knownTags.find((item) => item.name === tag)?.color ?? "#888"
               const offset = prepared ? offsets[tag]! : { x: 0, y: 0, width: 8 }
@@ -387,12 +396,12 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
                     zIndex: 1,
                     height: removing ? 0 : itemHeight,
                     width: "max-content",
-                    minWidth: "100%",
                     maxWidth: "100%",
                     flexShrink: 0,
+                    marginBottom: removing || index === tags.length - 1 ? 0 : pillGap,
                     opacity: removing ? 0 : 1,
                     transform: removing ? "scale(0.9)" : "scale(1)",
-                    transition: reducedMotion ? "none" : `height ${REMOVE_MS}ms ease, opacity ${REMOVE_MS}ms ease, transform ${REMOVE_MS}ms ease`,
+                    transition: reducedMotion ? "none" : `height ${REMOVE_MS}ms ease, margin-bottom ${REMOVE_MS}ms ease, opacity ${REMOVE_MS}ms ease, transform ${REMOVE_MS}ms ease`,
                   }}
                 >
                   <div aria-hidden style={{ ...tagRowStyle(color), display: "flex", alignItems: "center", gap: labelGap, height: itemHeight, padding: `0 ${labelPadding}px`, fontSize: labelSize, visibility: "hidden" }}>
@@ -414,12 +423,13 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
                       width: expanded ? offset.width : 8,
                       height: expanded ? itemHeight : 8,
                       fontSize: labelSize,
-                      borderRadius: expanded ? 0 : "50%",
-                      background: expanded ? `${color}11` : color,
+                      borderRadius: 99,
+                      background: expanded ? `${color}22` : color,
+                      outline: expanded ? `1px solid ${color}55` : "1px solid transparent",
                       overflow: "hidden",
                       transform: closing ? "none" : expanded ? "translate3d(0,0,0)" : `translate3d(${offset.x}px,${offset.y}px,0)`,
                       transformOrigin: "left center",
-                      transition: reducedMotion || !motionStarted.current ? "none" : `left ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), top ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), transform ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), width ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), height ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), background ${MOVE_MS}ms ease, border-radius ${MOVE_MS}ms ease`,
+                      transition: reducedMotion || !motionStarted.current ? "none" : `left ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), top ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), transform ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), width ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), height ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), background ${MOVE_MS}ms ease, outline-color ${MOVE_MS}ms ease`,
                       transitionDelay: `${delay}ms`,
                     }}
                   >

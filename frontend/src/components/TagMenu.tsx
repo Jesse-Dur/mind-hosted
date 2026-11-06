@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useStore } from "../store"
 import type { Thought } from "../types"
-import { tagRowStyle, tagPopoverSurface, useTagPopoverStyles } from "./tagPopoverStyles"
+import { tagRowStyle, tagPopoverHeading, tagPopoverSurface, useTagPopoverStyles } from "./tagPopoverStyles"
 import { TagLabel } from "./TagLabel"
 
 interface Props {
@@ -64,7 +64,7 @@ export function TagMenu({ thought, x, y, onClose, onUpdate }: Props) {
           [data-tag-option]:focus-visible { outline: 2px solid #a78bfa !important; outline-offset: 2px; }
           @media (prefers-reduced-motion: reduce) { [aria-label="Tag as"] { animation: none !important; } }
         `}</style>
-        <p style={{ margin: 0, fontSize: 10, fontWeight: 700, color: "#aaa", letterSpacing: "0.08em", textTransform: "uppercase", padding: `2px ${labelPadding}px 6px` }}>Tag as</p>
+        <p style={tagPopoverHeading}>Tag as</p>
         {tags.length === 0 && <p style={{ margin: 0, fontSize: 12, color: "#ccc", padding: `4px ${labelPadding}px` }}>No tags — add in sidebar</p>}
         {tags.map((tag) => {
           const active = thought.tags.includes(tag.name)

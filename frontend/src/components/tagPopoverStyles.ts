@@ -8,6 +8,16 @@ export const tagPopoverSurface: CSSProperties = {
   boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
 }
 
+export const tagPopoverHeading: CSSProperties = {
+  margin: 0,
+  fontSize: 10,
+  fontWeight: 700,
+  color: "#aaa",
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+  padding: "2px 12px 6px",
+}
+
 export function tagRowStyle(color: string, active = true): CSSProperties {
   return {
     color: "#333",
@@ -27,5 +37,6 @@ export function useTagPopoverStyles() {
     labelPadding: 12,
     labelGap: 8,
     panelPadding: 6,
+    pillGap: mobile ? 8 : 4,
   }
 }
