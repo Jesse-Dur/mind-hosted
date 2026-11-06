@@ -1,0 +1,54 @@
+name: Kody approval status
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
+      - dismissed
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: kody-approval-status-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  status:
+    name: Publish Kody approval status
+    if: >-
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      (github.event_name == 'pull_request_target' ||
+       (github.event.review.user.login == 'kody-ai[bot]' &&
+        github.event.review.user.id == 148880201))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out trusted policy code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Report current-revision Kody approval
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if ! grep -q 'mode === "kody-status"' .github/scripts/dependency-gate.mjs; then
+            echo "::notice title=Kody approval status::The trusted base does not contain the status reporter yet; it becomes active after this workflow reaches the default branch."
+            exit 0
+          fi
+
+          node .github/scripts/dependency-gate.mjs kody-status

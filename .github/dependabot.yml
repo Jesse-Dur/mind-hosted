@@ -1,0 +1,55 @@
+version: 2
+
+updates:
+  - package-ecosystem: "bun"
+    directories:
+      - "/"
+      - "/frontend"
+    schedule:
+      interval: "daily"
+      time: "06:00"
+      timezone: "Australia/Adelaide"
+    cooldown:
+      default-days: 4
+      semver-patch-days: 2
+      semver-minor-days: 4
+      semver-major-days: 4
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps"
+    groups:
+      patch-updates:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+
+  - package-ecosystem: "bun"
+    directory: "/runtime"
+    schedule:
+      interval: "daily"
+      time: "06:00"
+      timezone: "Australia/Adelaide"
+    cooldown:
+      default-days: 4
+      semver-patch-days: 2
+      semver-minor-days: 4
+      semver-major-days: 4
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "runtime"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "06:20"
+      timezone: "Australia/Adelaide"
+    cooldown:
+      default-days: 4
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    assignees:
+      - "Jesse-Dur"
