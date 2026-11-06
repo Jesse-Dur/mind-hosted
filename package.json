@@ -24,7 +24,7 @@
   "dependencies": {
     "@clerk/backend": "^3.5.0",
     "@clerk/hono": "^0.1.33",
-    "hono": "^4.12.23",
+    "hono": "^4.13.16",
     "postgres": "^3.4.9"
   }
 }
