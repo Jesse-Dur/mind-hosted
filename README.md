@@ -12,7 +12,11 @@ I used to write it down on notepad (back in my microslop windows days), or write
 
 Lying in bed, I began to imagine a blank slate, where i could create tiles and put my 'thoughts', so made it (with the help of AI, of course). I never intended to make this public, but many people have been very interested, so I thought i'd open-source it, the logical solution! But this does mean it's largely vibecoded slop, so feel free to contribute, or to put your time towards a better cause (or touch grass).
 
-Privacy is important to me. AI processing is handled by Groq, who do not retain your prompts or completions. Your thoughts are stored in a managed Postgres database scoped strictly to your account.
+Privacy is important to me. Thought processing and voice transcription run through OpenRouter and its downstream providers. Text processing sends your input and relevant tile, tag, and thought context; transcription sends your audio.
+
+Both requests require Zero Data Retention (ZDR) routing and deny provider data collection. The OpenRouter workspace or key must also enforce ZDR only with Safety Retention excluded; the request flag follows those settings. OpenRouter defines ZDR as no routine storage after processing, with a legal/CSAM retention exception ([policy](https://openrouter.ai/docs/guides/features/zdr)).
+
+Your saved thoughts and AI input/action History remain in the account-scoped managed Postgres database, and offline data remains in your browser. Recordings are forwarded for transcription without being saved by the backend; AI diagnostic logs exclude audio, transcripts, and note content.
 
 You're welcome to open issues, fork the project, make it commercial, heck i dont care. All i ask is you be a good person & those are the terms you agree to by interacting with this project.
 
@@ -46,7 +50,8 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 | Frontend | React + TypeScript + Vite (hosted on Vercel) |
 | State | Zustand |
 | Offline storage | IndexedDB via Dexie |
-| AI | Groq (`qwen/qwen3.6-27b`) |
+| AI | OpenRouter (`z-ai/glm-5.3-flash`) |
+| Transcription | OpenRouter (`elevenlabs/scribe-v2`) |
 | Auth | Clerk |
 
 ---
@@ -84,7 +89,7 @@ Sync event publication uses a short transaction with a per-user advisory lock ac
 
 When upgrading an existing installation to serialized publication, stop and drain the old backend writers before starting the updated backend. Clients that already missed events need fresh snapshots for their cached canvases; snapshot reconciliation preserves pending local work and the outbox.
 
-AI processing still requires network access to Groq. AI writes are restricted to thoughts and go through the same backend sync mutation path internally, so AI-created, updated, deleted, and moved thoughts emit `sync_events` and are picked up by normal pull flows.
+AI processing and voice transcription require network access to OpenRouter. AI writes are restricted to thoughts and go through the same backend sync mutation path internally, so AI-created, updated, deleted, and moved thoughts emit `sync_events` and are picked up by normal pull flows.
 
 The public app data API is intentionally narrow:
 
@@ -102,7 +107,7 @@ The public app data API is intentionally narrow:
 
 - **[Bun](https://bun.sh)** — runtime and package manager
 - A [Neon](https://neon.tech) Postgres database
-- A [Groq](https://console.groq.com) API key
+- An [OpenRouter](https://openrouter.ai/settings/keys) API key from a workspace configured for strict ZDR
 - A [Clerk](https://clerk.com) application
 
 ### Setup
@@ -118,10 +123,18 @@ cd frontend && bun install && cd ..
 | Environment variable | Description |
 |---|---|
 | `DATABASE_URL` | Neon Postgres connection string |
-| `GROQ_API_KEY` | Groq API key |
+| `OPENROUTER_API_KEY` | Server-only OpenRouter API key |
+| `OPENROUTER_AI_MODEL` | Optional; defaults to `z-ai/glm-5.3-flash` |
+| `OPENROUTER_TRANSCRIPTION_MODEL` | Optional; defaults to `elevenlabs/scribe-v2` |
 | `CLERK_SECRET_KEY` | Clerk secret key |
 | `CLERK_PUBLISHABLE_KEY` | Clerk publishable key (backend) |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk publishable key (frontend) |
+
+In OpenRouter, enforce ZDR for all model groups, select **ZDR only** for both Google and other models (exclude Safety Retention), and keep prompt/completion logging and training opt-ins disabled. Apply these settings to the workspace/key used by the backend before sending user data. Requests fail when no eligible provider is available; retries do not relax privacy settings. Never put the API key in frontend variables.
+
+The browser preserves its recorded audio format, including WebM and MP4/M4A. Uploads are limited to 25 MB. The existing `/api/whisper/transcribe` URL remains compatible, but is served by Scribe v2.
+
+Run `bun run test:ai-integration` for mocked provider, tool-mutation, and recording-format regression checks. The existing `bun run bench:ai-prompts` command makes live model calls and writes benchmark fixtures; use an isolated test database.
 
 ### Running
 
