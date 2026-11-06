@@ -70,6 +70,7 @@ async function runTagPopoverChecks() {
   for (const side of ["top", "bottom", "left", "right", "center"]) {
     const anchor = trigger(side)
     const source = anchor.firstElementChild!.getBoundingClientRect()
+    const sourceDots = [...anchor.children].map((slot) => slot.querySelector<HTMLElement>("[aria-hidden]")!.getBoundingClientRect())
     const before = anchor.parentElement!.getBoundingClientRect()
     emit(anchor, "pointerover")
     const samples: { x: number; y: number; width: number }[] = []
@@ -99,15 +100,16 @@ async function runTagPopoverChecks() {
     }))
     const after = anchor.parentElement!.getBoundingClientRect()
     check(`${side}: thought does not move`, before.x === after.x && before.y === after.y && before.width === after.width && before.height === after.height)
+    const expandedPills = [...panel()!.querySelectorAll("[data-tag-pill]")].map((pill) => pill.getBoundingClientRect())
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
-    const returning: { x: number; y: number; width: number }[] = []
+    const returning: { x: number; y: number; width: number; pills: DOMRect[] }[] = []
     const closingStart = performance.now()
     await new Promise<void>((resolve) => {
       function tick() {
         const pill = panel()?.querySelector<HTMLElement>("[data-tag-pill]")
         if (pill) {
           const r = pill.getBoundingClientRect()
-          returning.push({ x: r.x, y: r.y, width: r.width })
+          returning.push({ x: r.x, y: r.y, width: r.width, pills: [...panel()!.querySelectorAll("[data-tag-pill]")].map((item) => item.getBoundingClientRect()) })
         }
         if (performance.now() - closingStart < 450) requestAnimationFrame(tick)
         else resolve()
@@ -116,6 +118,16 @@ async function runTagPopoverChecks() {
     })
     const returned = returning[returning.length - 1]!
     check(`${side}: reverses through intermediate frames`, returning.some((s) => s.width > 9 && s.width < last.width - 1))
+    check(`${side}: every pill moves continuously as it shrinks`, returning.every((frame) => frame.pills.every((rect, index) => {
+      const start = expandedPills[index]!, dot = sourceDots[index]!
+      const progress = (start.width - rect.width) / (start.width - dot.width)
+      return Math.abs(rect.x - (start.x + (dot.x - start.x) * progress)) < 1
+        && Math.abs(rect.y - (start.y + (dot.y - start.y) * progress)) < 1
+    })))
+    check(`${side}: every pill reaches its own dot`, returned.pills.every((rect, index) => {
+      const dot = sourceDots[index]!
+      return Math.abs(rect.x - dot.x) < 1 && Math.abs(rect.y - dot.y) < 1 && Math.abs(rect.width - dot.width) < 1
+    }))
     check(`${side}: returns to its source`, Math.abs(returned.x - source.x - 2) < 1 && Math.abs(returned.y - source.y - 5) < 1 && Math.abs(returned.width - 8) < 1)
     check(`${side}: Escape closes`, !panel())
     check(`${side}: source returns without fading`, getComputedStyle(anchor.firstElementChild!).opacity === "1" && getComputedStyle(anchor.firstElementChild!).animationName === "none")

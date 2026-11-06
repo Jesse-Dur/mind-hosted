@@ -411,8 +411,10 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
                     data-tag-pill={tag}
                     style={{
                       position: "absolute",
-                      left: 0,
-                      top: 0,
+                      // Keep return movement and resizing on the same layout
+                      // timeline; WebKit can advance 3D transforms separately.
+                      left: closing ? offset.x : 0,
+                      top: closing ? offset.y : 0,
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "flex-start",
@@ -422,9 +424,9 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
                       background: expanded ? `${color}22` : color,
                       outline: expanded ? `1px solid ${color}55` : "1px solid transparent",
                       overflow: "hidden",
-                      transform: expanded ? "translate3d(0,0,0)" : `translate3d(${offset.x}px,${offset.y}px,0)`,
+                      transform: closing ? "none" : expanded ? "translate3d(0,0,0)" : `translate3d(${offset.x}px,${offset.y}px,0)`,
                       transformOrigin: "left center",
-                      transition: reducedMotion || !motionStarted.current ? "none" : `transform ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), width ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), height ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), background ${MOVE_MS}ms ease, outline-color ${MOVE_MS}ms ease`,
+                      transition: reducedMotion || !motionStarted.current ? "none" : `left ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), top ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), transform ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), width ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), height ${MOVE_MS}ms cubic-bezier(0.2,0.8,0.2,1), background ${MOVE_MS}ms ease, outline-color ${MOVE_MS}ms ease`,
                       transitionDelay: `${delay}ms`,
                     }}
                   >
