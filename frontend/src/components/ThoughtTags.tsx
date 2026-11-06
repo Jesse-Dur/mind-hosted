@@ -5,6 +5,7 @@ import { CloseButton } from "./CloseButton"
 import { TagDot } from "./TagPill"
 import { tagRowStyle, tagPopoverHeading, tagPopoverSurface, useTagPopoverStyles } from "./tagPopoverStyles"
 import { TagLabel } from "./TagLabel"
+import { getThoughtTagMetrics } from "../utils/canvasFontSize"
 
 type Position = {
   left: number
@@ -31,7 +32,10 @@ function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum)
 }
 
-export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true, onOpenChange }: { tags: string[]; onRemove?: (tag: string) => void; expandOnHover?: boolean; onOpenChange?: (open: boolean) => void }) {
+export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true, onOpenChange, fontSize }: { tags: string[]; onRemove?: (tag: string) => void; expandOnHover?: boolean; onOpenChange?: (open: boolean) => void; fontSize?: number }) {
+  const preferredFontSize = useStore((state) => state.canvasFontSize)
+  const tagFontSize = fontSize ?? preferredFontSize
+  const { size: dotSize, width: dotWidth, height: dotHeight, trailingOffset } = getThoughtTagMetrics(tagFontSize)
   const { itemHeight, removeSize, labelSize, labelPadding, labelGap, panelPadding, iconSize, pillGap } = useTagPopoverStyles()
   const [removal, setRemoval] = useState<{ tag: string; tags: string[] } | null>(null)
   // Save immediately; only retain the old rows for their exit animation. Leaving
@@ -145,13 +149,13 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
 
   function measureOffsets() {
     return Object.fromEntries(tags.map((tag, index) => {
-      const sourceRect = dotRefs.current[index]?.getBoundingClientRect()
+      const sourceRect = dotRefs.current[index]?.querySelector("[data-tag-dot]")?.getBoundingClientRect()
       const rowRect = rowRefs.current[index]?.getBoundingClientRect()
       return [tag, sourceRect && rowRect ? {
-        x: sourceRect.left + (sourceRect.width - 8) / 2 - rowRect.left,
-        y: sourceRect.top + (sourceRect.height - 8) / 2 - rowRect.top,
+        x: sourceRect.left - rowRect.left,
+        y: sourceRect.top - rowRect.top,
         width: rowRect.width,
-      } : { x: 0, y: 0, width: 8 }]
+      } : { x: 0, y: 0, width: dotSize }]
     }))
   }
 
@@ -192,7 +196,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
       rowRefs.current[pendingFocusIndex.current]?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true })
       pendingFocusIndex.current = null
     }
-  }, [position, tagKey, visible])
+  }, [position, tagKey, visible, dotSize, dotWidth, dotHeight])
 
   useLayoutEffect(() => {
     if (!prepared || closing || motionStarted.current) return
@@ -301,9 +305,9 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
           alignItems: "center",
           alignSelf: "center",
           flexShrink: 0,
-          height: 18,
+          height: dotHeight,
           lineHeight: 0,
-          marginRight: -4,
+          marginRight: -trailingOffset,
           cursor: "default",
           outline: "none",
         }}
@@ -315,12 +319,12 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
             style={{
               display: "flex",
               alignItems: "center",
-              width: 12,
-              height: 18,
+              width: dotWidth,
+              height: dotHeight,
               opacity: prepared ? 0 : 1,
             }}
           >
-            <TagDot tag={tag} />
+            <TagDot tag={tag} fontSize={tagFontSize} />
           </div>
         ))}
       </div>
@@ -385,7 +389,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
           <div ref={scrollRef} style={{ pointerEvents: closing ? "none" : undefined, padding: "1px 7px", flexShrink: 1, minHeight: 0, transform: closing && exitScroll > 0 ? `translateY(${-exitScroll}px)` : undefined, maxHeight: `calc(100dvh - ${16 + (panelPadding + 1) * 2}px)`, overflowY: settled ? "auto" : "visible", overscrollBehavior: "contain" }}>
             {tags.map((tag, index) => {
               const color = knownTags.find((item) => item.name === tag)?.color ?? "#888"
-              const offset = prepared ? offsets[tag]! : { x: 0, y: 0, width: 8 }
+              const offset = prepared ? offsets[tag]! : { x: 0, y: 0, width: dotSize }
               const removing = removal?.tag === tag
               const delay = reducedMotion ? 0 : Math.min(5, expanded ? index : tags.length - index - 1) * STAGGER_MS
               return (
@@ -421,8 +425,8 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "flex-start",
-                      width: expanded ? offset.width : 8,
-                      height: expanded ? itemHeight : 8,
+                      width: expanded ? offset.width : dotSize,
+                      height: expanded ? itemHeight : dotSize,
                       fontSize: labelSize,
                       borderRadius: 99,
                       background: expanded ? `${color}22` : color,

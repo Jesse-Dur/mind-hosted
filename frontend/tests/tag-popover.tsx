@@ -129,7 +129,7 @@ async function runTagPopoverChecks() {
   await wait(30)
   for (const side of ["top", "bottom", "left", "right", "center"]) {
     const anchor = trigger(side)
-    const source = anchor.firstElementChild!.getBoundingClientRect()
+    const source = anchor.querySelector("[data-tag-dot]")!.getBoundingClientRect()
     const sourceDots = [...anchor.children].map((slot) => slot.querySelector<HTMLElement>("[aria-hidden]")!.getBoundingClientRect())
     const before = anchor.parentElement!.getBoundingClientRect()
     emit(anchor, "pointerover")
@@ -149,8 +149,8 @@ async function runTagPopoverChecks() {
     })
     const first = samples[0]!
     const last = samples[samples.length - 1]!
-    check(`${side}: starts at source dot`, Math.abs(first.x - source.x - 2) < 1 && Math.abs(first.y - source.y - 5) < 1 && Math.abs(first.width - 8) < 1)
-    check(`${side}: travels before expanding`, samples.some((s) => s.width > 9 && s.width < last.width - 1 && Math.abs(s.y - first.y) > 1))
+    check(`${side}: starts at source dot`, Math.abs(first.x - source.x) < 1 && Math.abs(first.y - source.y) < 1 && Math.abs(first.width - source.width) < 1)
+    check(`${side}: travels before expanding`, samples.some((s) => s.width > source.width + 1 && s.width < last.width - 1 && Math.abs(s.y - first.y) > 1))
     const bounds = panel()!.getBoundingClientRect()
     check(`${side}: stays in viewport`, bounds.x >= 7.9 && bounds.y >= 7.9 && bounds.right <= innerWidth - 7.9 && bounds.bottom <= innerHeight - 7.9)
     const mobile = innerWidth <= 900
@@ -177,7 +177,7 @@ async function runTagPopoverChecks() {
       requestAnimationFrame(tick)
     })
     const returned = returning[returning.length - 1]!
-    check(`${side}: reverses through intermediate frames`, returning.some((s) => s.width > 9 && s.width < last.width - 1))
+    check(`${side}: reverses through intermediate frames`, returning.some((s) => s.width > source.width + 1 && s.width < last.width - 1))
     check(`${side}: every pill moves continuously as it shrinks`, returning.every((frame) => frame.pills.every((rect, index) => {
       const start = expandedPills[index]!, dot = sourceDots[index]!
       const progress = (start.width - rect.width) / (start.width - dot.width)
@@ -186,9 +186,9 @@ async function runTagPopoverChecks() {
     })))
     check(`${side}: every pill reaches its own dot`, returned.pills.every((rect, index) => {
       const dot = sourceDots[index]!
-      return Math.abs(rect.x - dot.x) < 1 && Math.abs(rect.y - dot.y) < 1 && Math.abs(rect.width - dot.width) < 1
+      return Math.abs(rect.x - dot.x) < 1 && Math.abs(rect.y - dot.y) < 1 && Math.abs(rect.width - dot.width) < 1 && Math.abs(rect.height - dot.height) < 1
     }))
-    check(`${side}: returns to its source`, Math.abs(returned.x - source.x - 2) < 1 && Math.abs(returned.y - source.y - 5) < 1 && Math.abs(returned.width - 8) < 1)
+    check(`${side}: returns to its source`, Math.abs(returned.x - source.x) < 1 && Math.abs(returned.y - source.y) < 1 && Math.abs(returned.width - source.width) < 1)
     check(`${side}: Escape closes`, !panel())
     check(`${side}: source returns without fading`, getComputedStyle(anchor.firstElementChild!).opacity === "1" && getComputedStyle(anchor.firstElementChild!).animationName === "none")
   }
@@ -239,7 +239,7 @@ function armTagPopoverHoverClose(side = "center") {
   if (!panel) throw new Error("Hover the requested tag cluster before arming this check")
   const anchorRect = anchor.getBoundingClientRect()
   const panelRect = panel.getBoundingClientRect()
-  const source = anchor.firstElementChild!.getBoundingClientRect()
+  const source = anchor.querySelector("[data-tag-dot]")!.getBoundingClientRect()
   window.tagPopoverHoverCloseResult = null
   anchor.addEventListener("pointerleave", (event) => {
     let closingSeen = false
@@ -263,7 +263,7 @@ function armTagPopoverHoverClose(side = "center") {
         { test: "leaving starts contraction", passed: closingSeen },
         { test: "returning pills do not intercept the cursor", passed: !intercepted },
         { test: "closing does not reopen itself", passed: !reopened && !document.contains(panel) },
-        { test: "contraction reaches the source dot", passed: Boolean(returned && Math.abs(returned.x - source.x - 2) < 1 && Math.abs(returned.y - source.y - 5) < 1 && Math.abs(returned.width - 8) < 1) },
+        { test: "contraction reaches the source dot", passed: Boolean(returned && Math.abs(returned.x - source.x) < 1 && Math.abs(returned.y - source.y) < 1 && Math.abs(returned.width - source.width) < 1) },
       ]
     }
     requestAnimationFrame(tick)

@@ -7,8 +7,6 @@ export const THOUGHT_SYNC_RESERVE = 26
 
 const THOUGHT_HORIZONTAL_CHROME = 40
 const THOUGHT_GAP = 6
-const THOUGHT_TAG_WIDTH = 12
-const THOUGHT_TAG_TRAILING_OFFSET = 4
 const MIN_THOUGHT_TEXT_WIDTH = 4
 
 export function normalizeCanvasFontSize(value: number) {
@@ -30,12 +28,20 @@ export function getThoughtControlMetrics(fontSize: number) {
   }
 }
 
+export function getThoughtTagMetrics(fontSize: number) {
+  const scale = normalizeCanvasFontSize(fontSize) / DEFAULT_CANVAS_FONT_SIZE
+  const size = Math.max(5, Math.round(8 * scale))
+  const padding = Math.max(3, Math.round(4 * scale))
+  return { size, width: size + padding, height: getThoughtControlMetrics(fontSize).controlSize, trailingOffset: padding }
+}
+
 export function getThoughtRequiredTileWidth(fontSize: number, tagCount: number) {
   const { controlSize } = getThoughtControlMetrics(fontSize)
+  const tagMetrics = getThoughtTagMetrics(fontSize)
   const normalizedTagCount = Number.isFinite(tagCount) ? Math.max(0, Math.floor(tagCount)) : 0
   const hasTags = normalizedTagCount > 0
   const tagWidth = hasTags
-    ? normalizedTagCount * THOUGHT_TAG_WIDTH - THOUGHT_TAG_TRAILING_OFFSET
+    ? normalizedTagCount * tagMetrics.width - tagMetrics.trailingOffset
     : 0
   const gapWidth = (hasTags ? 3 : 2) * THOUGHT_GAP
 

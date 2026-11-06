@@ -1,8 +1,10 @@
 import { useStore } from "../store"
+import { getThoughtTagMetrics } from "../utils/canvasFontSize"
 
-export function TagDot({ tag }: { tag: string }) {
+export function TagDot({ tag, fontSize }: { tag: string; fontSize: number }) {
   const color = useStore((state) => state.tags.find((item) => item.name === tag)?.color ?? "#888")
-  return <span aria-label={tag} style={{ width: 12, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-    <span aria-hidden style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+  const { size, width, height } = getThoughtTagMetrics(fontSize)
+  return <span aria-label={tag} style={{ width, height, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+    <span aria-hidden data-tag-dot style={{ width: size, height: size, borderRadius: "50%", background: color }} />
   </span>
 }

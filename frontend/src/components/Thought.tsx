@@ -129,7 +129,7 @@ export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver
         <div data-thought-controls style={{ position: "relative", display: "flex", alignItems: "center", gap: localTags.length ? 6 : 0, flexShrink: 0, height: controlSize, paddingLeft: THOUGHT_SYNC_RESERVE }}>
           <style>{`@media (prefers-reduced-motion: reduce) { [data-thought-tag-slot] { transition: none !important; } }`}</style>
           <div data-thought-tag-slot style={{ display: "flex", alignItems: "center", transform: tagsShifted ? `translateX(-${THOUGHT_SYNC_RESERVE}px)` : "translateX(0)", transition: "transform 220ms cubic-bezier(.2,.8,.2,1)" }}>
-            <ThoughtTags tags={localTags} onRemove={removeTag} onOpenChange={setTagPopoverOpen} />
+            <ThoughtTags tags={localTags} fontSize={fontSize} onRemove={removeTag} onOpenChange={setTagPopoverOpen} />
           </div>
           <span style={{ position: "absolute", right: controlSize + 6, top: "50%", width: 20, height: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} onVisibilityChange={setSyncVisible} />
