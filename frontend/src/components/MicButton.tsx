@@ -57,9 +57,9 @@ export function MicButton({ micState, onMicClick }: Props) {
 
         {/* Loading ring — traces border during stream init, rendered on top */}
         {micState === "loading" && (
-          <svg width={SIZE + 2} height={SIZE + 1} viewBox="0 0 30 29" style={{ position: "absolute", top: -1, left: -1, transform: "rotate(-90deg)", pointerEvents: "none" }}>
+          <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ position: "absolute", inset: 0, transform: "rotate(-90deg)", pointerEvents: "none" }}>
             <circle
-              cx="15" cy="15" r={RADIUS}
+              cx={SIZE / 2} cy={SIZE / 2} r={RADIUS}
               fill="none" stroke="#555" strokeWidth="2"
               strokeDasharray={CIRCUMFERENCE}
               strokeLinecap="round"
