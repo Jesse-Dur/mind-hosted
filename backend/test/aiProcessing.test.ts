@@ -57,6 +57,64 @@ afterEach(() => {
 })
 
 describe("thought processing via OpenRouter", () => {
+  test("applies multiple creates once and finishes after the whole batch", async () => {
+    const milk = tool("create_thought", { tile_id: 1, content: "Buy milk" })
+    fetchMock.mockResolvedValueOnce(response(
+      tool("done"),
+      milk,
+      tool("create_thought", { tile_id: 1, content: "Buy bread" }),
+      tool("create_thought", { tile_id: 1, content: "Buy milk" }),
+      tool("create_thought", { tile_id: 2, content: "Send invoice", tags: ["work"] }),
+    ))
+
+    const stats = await classifyAndStore("Buy milk and bread, and send the work invoice", "test-user")
+
+    expect(stats.iterations).toBe(1)
+    expect(writes).toEqual([
+      { action: "upsert", id: null, payload: { tile_id: 1, content: "Buy milk", tags: [] } },
+      { action: "upsert", id: null, payload: { tile_id: 1, content: "Buy bread", tags: [] } },
+      { action: "upsert", id: null, payload: { tile_id: 2, content: "Send invoice", tags: ["work"] } },
+    ])
+    expect(history).toHaveBeenCalledTimes(1)
+    expect((history.mock.calls[0] as unknown as any[])[3].actions).toHaveLength(3)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(await status()).toBe("idle")
+  })
+
+  test("uses a batch of searches before applying several different mutations", async () => {
+    thoughts.push(
+      { id: 8, tile_id: 1, content: "Send draft", tags: ["work"], sort_order: 4 },
+      { id: 9, tile_id: 2, content: "Old meeting", tags: ["work"], sort_order: 1 },
+    )
+    fetchMock.mockResolvedValueOnce(response(
+      tool("search_by_tile", { tile_id: 1 }),
+      tool("search_by_tag", { tag: "work" }),
+    )).mockResolvedValueOnce(response(
+      tool("update_thought", { thought_id: 7, content: "Call dentist Friday" }),
+      tool("move_thought", { thought_id: 8, tile_id: 2 }),
+      tool("delete_thought", { thought_id: 9 }),
+      tool("create_thought", { tile_id: 1, content: "Buy envelopes" }),
+      tool("done"),
+    ))
+
+    const stats = await classifyAndStore("Change several Tasks and work thoughts", "test-user")
+
+    expect(stats.iterations).toBe(2)
+    expect(writes).toHaveLength(4)
+    expect(writes[0]).toMatchObject({ action: "upsert", id: 7, payload: { content: "Call dentist Friday" } })
+    expect(writes[1]).toMatchObject({ action: "upsert", id: 8, payload: { tile_id: 2, content: "Send draft", tags: ["work"] } })
+    expect(writes[2]).toMatchObject({ action: "delete", id: 9 })
+    expect(writes[3]).toMatchObject({ action: "upsert", id: null, payload: { tile_id: 1, content: "Buy envelopes" } })
+    const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))
+    const context = JSON.stringify(secondRequest.messages)
+    expect(context).toContain("Call dentist")
+    expect(context).toContain("Old meeting")
+    expect(history).toHaveBeenCalledTimes(1)
+    expect((history.mock.calls[0] as unknown as any[])[3].actions).toHaveLength(4)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(await status()).toBe("idle")
+  })
+
   test.each([
     ["update_thought", { thought_id: 7, content: "Call dentist tomorrow" }, "upsert"],
     ["move_thought", { thought_id: 7, tile_id: 2 }, "upsert"],
