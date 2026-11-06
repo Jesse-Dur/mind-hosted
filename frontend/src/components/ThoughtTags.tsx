@@ -1,9 +1,9 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useStore } from "../store"
-import { useMobileWorkspace } from "../layout/useWorkspaceLayout"
 import { CloseButton } from "./CloseButton"
 import { TagDot } from "./TagPill"
+import { tagPillStyle, tagPopoverSurface, useTagPopoverStyles } from "./tagPopoverStyles"
 
 type Position = {
   left: number
@@ -31,13 +31,7 @@ function clamp(value: number, minimum: number, maximum: number) {
 }
 
 export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true }: { tags: string[]; onRemove?: (tag: string) => void; expandOnHover?: boolean }) {
-  const mobile = useMobileWorkspace()
-  const itemHeight = mobile ? 44 : 22
-  const removeSize = mobile ? 44 : 20
-  const labelSize = mobile ? 14 : 10
-  const labelPadding = mobile ? 12 : 7
-  const labelGap = mobile ? 8 : 4
-  const panelPadding = mobile ? 10 : 8
+  const { itemHeight, removeSize, labelSize, labelPadding, labelGap, panelPadding, iconSize } = useTagPopoverStyles()
   const [removal, setRemoval] = useState<{ tag: string; tags: string[] } | null>(null)
   // Save immediately; only retain the old rows for their exit animation. Leaving
   // the canvas during that animation must not cancel the user's tag removal.
@@ -162,6 +156,12 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
   useLayoutEffect(() => {
     if (!closing && exitScroll > 0 && scrollRef.current) scrollRef.current.scrollTop = exitScroll
   }, [closing, exitScroll])
+
+  useLayoutEffect(() => {
+    // Font preferences can arrive while open. Remeasure the natural panel
+    // width before updating its fixed position and per-pill geometry.
+    setPosition(null)
+  }, [labelSize])
 
   useLayoutEffect(() => {
     if (!visible || position !== null) return
@@ -366,11 +366,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
               position: "absolute",
               inset: 0,
               zIndex: 0,
-              border: "1px solid #e3e3e3",
-              borderRadius: 9,
-              background: "rgba(255,255,255,0.98)",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-              backdropFilter: "blur(10px)",
+              ...tagPopoverSurface,
               opacity: expanded ? 1 : 0,
               transform: expanded ? "scale(1)" : "scale(0.96)",
               transformOrigin: position?.placement === "above" ? "bottom right" : "top right",
@@ -410,6 +406,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
                   <div
                     data-tag-pill={tag}
                     style={{
+                      ...tagPillStyle(color),
                       position: "absolute",
                       // Keep return movement and resizing on the same layout
                       // timeline; WebKit can advance 3D transforms separately.
@@ -420,7 +417,6 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
                       justifyContent: "flex-start",
                       width: expanded ? offset.width : 8,
                       height: expanded ? itemHeight : 8,
-                      borderRadius: 99,
                       background: expanded ? `${color}22` : color,
                       outline: expanded ? `1px solid ${color}55` : "1px solid transparent",
                       overflow: "hidden",
@@ -436,7 +432,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true 
                     {onRemove && <span style={{ flexShrink: 0, opacity: expanded ? 1 : 0, transition: reducedMotion ? "none" : "opacity 100ms ease", transitionDelay: expanded && !reducedMotion ? `${delay + 105}ms` : "0ms" }}>
                       <CloseButton
                         size={removeSize}
-                        iconSize={mobile ? 12 : 6}
+                        iconSize={iconSize}
                         ariaLabel={`Remove ${tag} tag`}
                         onClick={(event) => {
                           event.preventDefault()

@@ -1,7 +1,9 @@
 import { useState } from "react"
 import { createRoot } from "react-dom/client"
 import { ThoughtTags } from "../src/components/ThoughtTags"
+import { TagMenu } from "../src/components/TagMenu"
 import { useStore } from "../src/store"
+import type { Thought } from "../src/types"
 
 const params = new URLSearchParams(location.search)
 const names = params.has("many") ? Array.from({ length: 40 }, (_, i) => `Tag ${i + 1}`)
@@ -29,6 +31,25 @@ function Row({ side, initial = names }: { side: string; initial?: string[] }) {
 }
 
 window.__tagRemovals = []
+function MenuFixture() {
+  const [tags, setTags] = useState(names.slice(0, 2))
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const fontSize = useStore((state) => state.canvasFontSize)
+  const thought: Thought = { id: 1, tile_id: 1, content: "A thought with tags", tags, sort_order: 0, created_at: "" }
+  return <>
+    <label style={{ display: "block", margin: 16 }}>Font size <select aria-label="Font size" value={fontSize} onChange={(event) => useStore.setState({ canvasFontSize: Number(event.target.value) })}>
+      {[8, 13, 24, 36].map((size) => <option key={size} value={size}>{size}</option>)}
+    </select></label>
+    <div data-menu-thought onContextMenu={(event) => { event.preventDefault(); setMenu({ x: event.clientX, y: event.clientY }) }} style={{ margin: 16, padding: 8, display: "flex", alignItems: "center", gap: 8, width: "max-content", maxWidth: "calc(100vw - 32px)", background: "#fafafa", border: "1px solid #ebebeb", borderRadius: 6 }}>
+      <span style={{ fontSize }}>A thought with tags</span>
+      <ThoughtTags tags={tags} onRemove={(tag) => setTags((current) => current.filter((item) => item !== tag))} />
+    </div>
+    <button style={{ margin: 16 }} onClick={() => setMenu({ x: innerWidth - 8, y: innerHeight - 8 })}>Open Tag as at edge</button>
+    {menu && <TagMenu thought={thought} x={menu.x} y={menu.y} onClose={() => setMenu(null)} onUpdate={setTags} />}
+    <output aria-label="Assigned tags">{tags.join(", ")}</output>
+  </>
+}
+
 function App() {
   const [key, setKey] = useState(0)
   return <>
@@ -40,7 +61,7 @@ function App() {
     </main>
   </>
 }
-createRoot(document.getElementById("root")!).render(<App />)
+createRoot(document.getElementById("root")!).render(params.has("menu") ? <MenuFixture /> : <App />)
 
 declare global {
   interface Window {

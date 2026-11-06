@@ -1,6 +1,7 @@
-import { useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react"
 import { useStore } from "../store"
 import type { Thought } from "../types"
+import { tagPillStyle, tagPopoverSurface, useTagPopoverStyles } from "./tagPopoverStyles"
 
 interface Props {
   thought: Thought
@@ -11,19 +12,33 @@ interface Props {
 }
 
 export function TagMenu({ thought, x, y, onClose, onUpdate }: Props) {
-  const { tags } = useStore()
+  const tags = useStore((state) => state.tags)
+  const { mobile, labelSize, itemHeight, removeSize, iconSize, labelPadding, labelGap, panelPadding } = useTagPopoverStyles()
   const menuRef = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState({ x, y })
 
   useLayoutEffect(() => {
     const menu = menuRef.current
     if (!menu) return
-    const rect = menu.getBoundingClientRect()
-    setPosition({
-      x: Math.max(10, Math.min(x, window.innerWidth - rect.width - 10)),
-      y: Math.max(10, Math.min(y, window.innerHeight - rect.height - 10)),
-    })
-  }, [x, y, tags.length])
+    function reposition() {
+      const rect = menu!.getBoundingClientRect()
+      setPosition({
+        x: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)),
+        y: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)),
+      })
+    }
+    reposition()
+    window.addEventListener("resize", reposition)
+    return () => window.removeEventListener("resize", reposition)
+  }, [x, y, tags, mobile, labelSize])
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [onClose])
 
   function toggle(tagName: string) {
     const next = thought.tags.includes(tagName)
@@ -36,28 +51,43 @@ export function TagMenu({ thought, x, y, onClose, onUpdate }: Props) {
     <>
       <div onPointerDown={(event) => { event.stopPropagation(); onClose() }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation() }}
         style={{ position: "fixed", inset: 0, zIndex: 199 }} />
-      <div ref={menuRef} style={{
-        position: "fixed", left: position.x, top: position.y, background: "#fff",
-        border: "1px solid #e8e8e8", borderRadius: 8,
-        boxShadow: "0 4px 20px rgba(0,0,0,0.1)", padding: "6px 0",
-        zIndex: 200, minWidth: 160, maxWidth: "calc(100vw - 20px)", maxHeight: "min(300px, calc(100dvh - 20px))", overflowY: "auto",
-        animation: "tagMenuIn 0.12s cubic-bezier(0.4,0,0.2,1)",
+      <div ref={menuRef} role="group" aria-label="Tag as" style={{
+        ...tagPopoverSurface,
+        position: "fixed", left: position.x, top: position.y,
+        padding: panelPadding, boxSizing: "border-box", fontFamily: "inherit",
+        zIndex: 200, minWidth: mobile ? 200 : 160, width: "max-content", maxWidth: "calc(100vw - 16px)", maxHeight: "min(400px, calc(100dvh - 16px))", overflowY: "auto", overscrollBehavior: "contain",
+        animation: "tagMenuIn 120ms ease",
       }} onPointerDown={(event) => event.stopPropagation()} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation() }}>
-        <style>{`@keyframes tagMenuIn { from { opacity:0; transform:scale(0.95) translateY(-4px) } to { opacity:1; transform:scale(1) translateY(0) } }`}</style>
-        <p style={{ fontSize: 10, fontWeight: 700, color: "#aaa", letterSpacing: "0.08em", textTransform: "uppercase", padding: "2px 12px 6px" }}>Tag as</p>
-        {tags.length === 0 && <p style={{ fontSize: 12, color: "#ccc", padding: "4px 12px" }}>No tags — add in sidebar</p>}
+        <style>{`
+          @keyframes tagMenuIn { from { opacity: 0; } to { opacity: 1; } }
+          [data-tag-option]:hover { background: var(--tag-hover) !important; }
+          [data-tag-option]:focus-visible { outline: 2px solid #a78bfa !important; outline-offset: 2px; }
+          @media (prefers-reduced-motion: reduce) { [aria-label="Tag as"] { animation: none !important; } }
+        `}</style>
+        <p style={{ margin: 0, fontSize: labelSize, lineHeight: 1.3, fontWeight: 600, color: "#777", padding: `2px ${labelPadding}px ${labelGap + 4}px` }}>Tag as</p>
+        {tags.length === 0 && <p style={{ margin: 0, fontSize: labelSize, lineHeight: 1.4, color: "#999", padding: `4px ${labelPadding}px` }}>No tags — add in sidebar</p>}
         {tags.map((tag) => {
           const active = thought.tags.includes(tag.name)
           return (
-            <div key={tag.id} onClick={(e) => { e.stopPropagation(); toggle(tag.name) }}
-              style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", cursor: "pointer", fontSize: 13, background: active ? tag.color + "11" : "transparent", transition: "background 0.1s ease" }}
-              onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLDivElement).style.background = "#f5f5f5" }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = active ? tag.color + "11" : "transparent" }}
+            <button key={tag.id} type="button" data-tag-option aria-pressed={active}
+              onClick={(event) => { event.stopPropagation(); toggle(tag.name) }}
+              style={{
+                ...tagPillStyle(tag.color),
+                // Use the same pill treatment as the expanded tags. Selection
+                // stays explicit through both the fill and the SVG check.
+                "--tag-hover": `${tag.color}22`,
+                display: "flex", alignItems: "center", width: "100%", minHeight: itemHeight,
+                margin: 0, marginBottom: tag === tags[tags.length - 1] ? 0 : labelGap,
+                padding: `0 0 0 ${labelPadding}px`, border: 0, boxSizing: "border-box",
+                cursor: "pointer", textAlign: "left", fontFamily: "inherit", fontSize: labelSize,
+                fontWeight: 600, lineHeight: 1, background: active ? `${tag.color}22` : "transparent",
+              } as CSSProperties}
             >
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: tag.color, flexShrink: 0 }} />
-              <span style={{ flex: 1, color: "#333" }}>{tag.name}</span>
-              {active && <span style={{ fontSize: 10, color: tag.color }}>✓</span>}
-            </div>
+              <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", paddingRight: labelGap }}>{tag.name}</span>
+              <span aria-hidden style={{ width: removeSize, height: itemHeight, flexShrink: 0, display: "grid", placeItems: "center" }}>
+                {active && <svg width={iconSize} height={iconSize} viewBox="0 0 12 12" fill="none"><path d="m2 6 2.5 2.5L10 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+              </span>
+            </button>
           )
         })}
       </div>
