@@ -19,11 +19,11 @@
   "devDependencies": {
     "@types/bun": "latest",
     "concurrently": "^9.2.1",
-    "fake-indexeddb": "^6.2.5"
+    "fake-indexeddb": "^6.2.7"
   },
   "dependencies": {
     "@clerk/backend": "^3.5.0",
-    "@clerk/hono": "^0.1.33",
+    "@clerk/hono": "^0.1.97",
     "hono": "^4.13.16",
     "postgres": "^3.4.9"
   }

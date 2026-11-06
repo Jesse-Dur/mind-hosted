@@ -20,9 +20,9 @@
   "dependencies": {
     "@clerk/clerk-react": "^5.61.3",
     "cmdk": "^1.1.1",
-    "dexie": "^4.4.3",
+    "dexie": "^4.4.7",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
-    "zustand": "^5.0.12"
+    "zustand": "^5.0.16"
   }
 }
