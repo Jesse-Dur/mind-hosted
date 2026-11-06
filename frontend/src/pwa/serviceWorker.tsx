@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { respondToBuildQuery } from "./buildIdentity"
+import { messageWorker, updateErrorMessage } from "./updateRequest"
 
 let waitingWorker: ServiceWorker | null = null
 
@@ -9,21 +10,6 @@ function currentWorkspace() {
 
 function clerkAssets() {
   return performance.getEntriesByType("resource").map((entry) => entry.name).filter(isCacheableClerkAsset)
-}
-
-function messageWorker(worker: ServiceWorker, type: "PREPARE_UPDATE" | "SKIP_WAITING") {
-  return new Promise<void>((resolve, reject) => {
-    const channel = new MessageChannel()
-    const finish = (error?: Error) => {
-      window.clearTimeout(timeout)
-      channel.port1.close()
-      if (error) reject(error)
-      else resolve()
-    }
-    const timeout = window.setTimeout(() => finish(new Error("Update download timed out")), 20000)
-    channel.port1.onmessage = (event) => finish(event.data?.ok ? undefined : new Error("Update download failed"))
-    worker.postMessage({ type, workspace: currentWorkspace(), urls: clerkAssets() }, [channel.port2])
-  })
 }
 
 function isCacheableClerkAsset(value: string) {
@@ -48,7 +34,7 @@ export function registerServiceWorker() {
         const worker = registration.waiting
         if (!worker) return
         try {
-          await messageWorker(worker, "PREPARE_UPDATE")
+          await messageWorker(worker, "PREPARE_UPDATE", { workspace: currentWorkspace(), urls: clerkAssets() })
           if (registration.waiting !== worker) return
           waitingWorker = worker
           window.dispatchEvent(new Event("mind-pwa-update"))
@@ -89,16 +75,17 @@ export function registerServiceWorker() {
 export function PwaUpdatePrompt() {
   const [ready, setReady] = useState(() => Boolean(waitingWorker))
   const [updating, setUpdating] = useState(false)
-  const [error, setError] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   async function update() {
     if (!waitingWorker) return
     setUpdating(true)
-    setError(false)
+    setError(null)
     try {
-      await messageWorker(waitingWorker, "SKIP_WAITING")
-    } catch {
+      await messageWorker(waitingWorker, "SKIP_WAITING", { workspace: currentWorkspace(), urls: clerkAssets() })
+    } catch (error) {
+      console.error("PWA update failed", error)
       setUpdating(false)
-      setError(true)
+      setError(updateErrorMessage(error))
     }
   }
   useEffect(() => {
@@ -117,5 +104,5 @@ export function PwaUpdatePrompt() {
     return () => navigator.serviceWorker?.removeEventListener("controllerchange", reload)
   }, [])
   if (!ready) return null
-  return <div role="status" style={{ position: "fixed", left: "50%", bottom: "max(16px,env(safe-area-inset-bottom))", transform: "translateX(-50%)", zIndex: 500, borderRadius: 10, background: "#222", color: "#fff", padding: "9px 10px 9px 13px", display: "flex", alignItems: "center", gap: 12, boxShadow: "0 8px 25px rgba(0,0,0,.24)", fontSize: 12, whiteSpace: "nowrap" }}><span>{error ? "Update failed. Reconnect and try again." : "Mind is ready to update"}</span><button disabled={updating} onClick={() => void update()} style={{ border: 0, borderRadius: 6, background: "#fff", color: "#222", padding: "5px 8px", fontWeight: 700 }}>{updating ? "Updating…" : "Update"}</button></div>
+  return <div role="status" style={{ position: "fixed", left: "50%", bottom: "max(16px,env(safe-area-inset-bottom))", transform: "translateX(-50%)", zIndex: 500, width: "max-content", maxWidth: "calc(100vw - 32px)", boxSizing: "border-box", borderRadius: 10, background: "#222", color: "#fff", padding: "9px 10px 9px 13px", display: "flex", alignItems: "center", gap: 12, boxShadow: "0 8px 25px rgba(0,0,0,.24)", fontSize: 12 }}><span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{error ?? "Mind is ready to update"}</span><button disabled={updating} onClick={() => void update()} style={{ flexShrink: 0, whiteSpace: "nowrap", border: 0, borderRadius: 6, background: "#fff", color: "#222", padding: "5px 8px", fontWeight: 700 }}>{updating ? "Updating…" : error ? "Try again" : "Update"}</button></div>
 }

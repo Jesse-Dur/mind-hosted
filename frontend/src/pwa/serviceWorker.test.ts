@@ -1,10 +1,11 @@
-import { afterAll, expect, test } from "bun:test"
+import { afterAll, expect, spyOn, test } from "bun:test"
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import vm from "node:vm"
 import { writeServiceWorker } from "../../pwa/build"
 import { respondToBuildQuery } from "./buildIdentity"
+import { messageWorker, UpdateError, updateErrorMessage } from "./updateRequest"
 
 const root = await mkdtemp(join(tmpdir(), "mind-pwa-test-"))
 afterAll(() => rm(root, { recursive: true, force: true }))
@@ -27,9 +28,11 @@ async function build(label: string) {
   return { directory, source: await readFile(join(directory, "sw.js"), "utf8") }
 }
 
-function harness({ locksAvailable = true } = {}) {
+function harness({ locksAvailable = true, activateOnSkipWaiting = false } = {}) {
   const cachesByName = new Map<string, Map<string, Response>>()
   let cacheOpenError: Error | null = null
+  let cachePutError: Error | null = null
+  let skipWaitingError: Error | null = null
   const key = (value: string | Request) => new URL(typeof value === "string" ? value : value.url, origin).href
   const caches = {
     keys: async () => [...cachesByName.keys()],
@@ -44,7 +47,14 @@ function harness({ locksAvailable = true } = {}) {
       const entries = cachesByName.get(name)!
       return {
         match: async (request: string | Request) => entries.get(key(request))?.clone(),
-        put: async (request: string | Request, response: Response) => { entries.set(key(request), response.clone()) },
+        put: async (request: string | Request, response: Response) => {
+          if (cachePutError) {
+            const error = cachePutError
+            cachePutError = null
+            throw error
+          }
+          entries.set(key(request), response.clone())
+        },
       }
     },
     match: async (request: string | Request) => {
@@ -85,7 +95,7 @@ function harness({ locksAvailable = true } = {}) {
       URL, Response, Request, crypto, caches, MessageChannel, setTimeout, clearTimeout,
       console: { ...console, error: (...args: unknown[]) => errors.push(args) }, fetch: fetchResource,
       self: {
-        location: { origin }, registration, navigator: { locks: locksAvailable ? locks : undefined },
+        location: { origin }, registration, navigator: { locks: locksAvailable ? locks : undefined, get onLine() { return online } },
         clients: {
           claim: async () => {},
           matchAll: async (options: { includeUncontrolled: boolean }) => {
@@ -100,7 +110,19 @@ function harness({ locksAvailable = true } = {}) {
             }))
           },
         },
-        skipWaiting: async () => { activated = true },
+        skipWaiting: async () => {
+          if (skipWaitingError) {
+            const error = skipWaitingError
+            skipWaitingError = null
+            throw error
+          }
+          // Chromium resolves skipWaiting only after the activate event completes.
+          if (activateOnSkipWaiting) {
+            registration.waiting = null
+            await dispatch("activate")
+          }
+          activated = true
+        },
         addEventListener: (name: string, fn: (event: any) => void) => handlers.set(name, fn),
       },
     })
@@ -132,9 +154,11 @@ function harness({ locksAvailable = true } = {}) {
       cleanup: () => dispatch("message", { data: { type: "CLEANUP_CACHES" } }),
       navigate: () => dispatch("fetch", { request: { method: "GET", mode: "navigate", url: origin + "/" } }),
       asset: (path: string) => dispatch("fetch", { request: new Request(origin + path) }),
+      state: "installed" as const,
+      postMessage: (data: unknown, ports: MessagePort[]) => { void dispatch("message", { data, ports }) },
       message: async (type: string, workspace: string, urls: string[] = []) => {
-        let result: { ok: boolean } | undefined
-        await dispatch("message", { data: { type, workspace, urls }, ports: [{ postMessage: (data: { ok: boolean }) => { result = data } }] })
+        let result: { ok: boolean; code?: string; error?: string } | undefined
+        await dispatch("message", { data: { type, workspace, urls }, ports: [{ postMessage: (data: typeof result) => { result = data } }] })
         return result
       },
       activated: () => activated,
@@ -143,6 +167,8 @@ function harness({ locksAvailable = true } = {}) {
   return {
     worker, requests, errors,
     failNextCacheOpen: (error: Error) => { cacheOpenError = error },
+    failNextCachePut: (error: Error) => { cachePutError = error },
+    failNextActivation: (error: Error) => { skipWaitingError = error },
     cacheNames: () => caches.keys(),
     cache: caches.open,
     hold: (path: string) => {
@@ -446,6 +472,158 @@ test.each(["mobile", "desktop"])("a complete %s update activates and starts offl
   expect(await (await b.asset(`/assets/${layout}-B.js`))!.text()).toContain("B")
   // A second tab can still request A's hashed modules after B takes control.
   expect(await (await b.asset(`/assets/${layout}-A.js`))!.text()).toContain("A")
+})
+
+test.each([true, false])("activation completes before skipWaiting resolves with locks=%s", async (locksAvailable) => {
+  const browser = harness({ locksAvailable, activateOnSkipWaiting: true })
+  const a = await activateRelease(browser, releaseA)
+  const b = browser.worker(releaseB.source)
+  await browser.deploy(releaseB.directory, b.config)
+  await b.install()
+  expect((await b.message("PREPARE_UPDATE", "mobile"))?.ok).toBe(true)
+  const requests = browser.requests.length
+  browser.offline()
+
+  // Activation itself takes the cache lock. Awaiting skipWaiting while holding
+  // that lock would deadlock this request, even with every file already cached.
+  expect((await b.message("SKIP_WAITING", "mobile"))?.ok).toBe(true)
+  expect(b.activated()).toBe(true)
+  expect(browser.requests).toHaveLength(requests)
+  expect(await (await b.navigate())!.text()).toContain(b.config.cache)
+  expect(await (await b.asset("/assets/mobile-A.js"))!.text()).toContain("A")
+  expect(await buildCaches(browser)).toContain(a.config.cache)
+}, 1000)
+
+const updatePayload = { workspace: "mobile", urls: [] }
+
+test.each([
+  ["QuotaExceededError", "storage-full", "Not enough storage"],
+  ["SecurityError", "storage-unavailable", "Couldn’t save"],
+  ["InvalidStateError", "storage-unavailable", "Couldn’t save"],
+  ["Error", "prepare-failed", "Couldn’t prepare"],
+])("%s survives the worker round trip and allows a retry", async (name, code, text) => {
+  const browser = harness({ activateOnSkipWaiting: true })
+  const worker = browser.worker(releaseA.source)
+  await browser.deploy(releaseA.directory, worker.config)
+  await worker.install()
+  const failure = Object.assign(new Error("Cache operation failed"), { name })
+  if (name === "QuotaExceededError") browser.failNextCachePut(failure)
+  else browser.failNextCacheOpen(failure)
+
+  const error = await messageWorker(worker as unknown as ServiceWorker, "SKIP_WAITING", updatePayload).catch(error => error)
+  expect(error).toBeInstanceOf(UpdateError)
+  expect(error.code).toBe(code)
+  expect(error.message).toContain("Cache operation failed")
+  expect(updateErrorMessage(error)).toContain(text)
+  expect(updateErrorMessage(error)).not.toContain("Reconnect")
+  expect(worker.activated()).toBe(false)
+
+  await messageWorker(worker as unknown as ServiceWorker, "SKIP_WAITING", updatePayload)
+  expect(worker.activated()).toBe(true)
+})
+
+test.each([true, false])("download failure gives reconnect advice only when offline=%s", async (offline) => {
+  const browser = harness()
+  const worker = browser.worker(releaseA.source)
+  await browser.deploy(releaseA.directory, worker.config)
+  await worker.install()
+  if (offline) browser.offline()
+  else browser.block("/assets/mobile-A.js")
+
+  const error = await messageWorker(worker as unknown as ServiceWorker, "SKIP_WAITING", updatePayload).catch(error => error)
+  expect(error.code).toBe(offline ? "offline" : "download-failed")
+  expect(updateErrorMessage(error)).toBe(offline
+    ? "You appear to be offline. Reconnect and try again."
+    : "Couldn’t download the update. Try again.")
+  expect(worker.activated()).toBe(false)
+})
+
+test("a missing deployment asset is a download failure", async () => {
+  const browser = harness()
+  const worker = browser.worker(releaseA.source)
+  await browser.deploy(releaseB.directory, browser.worker(releaseB.source).config)
+  const result = await worker.message("PREPARE_UPDATE", "mobile")
+  expect(result?.code).toBe("download-failed")
+  expect(result?.error).toContain("HTTP 404")
+})
+
+test("activation failure is reported separately and can be retried", async () => {
+  const browser = harness({ activateOnSkipWaiting: true })
+  const worker = browser.worker(releaseA.source)
+  await browser.deploy(releaseA.directory, worker.config)
+  await worker.install()
+  browser.failNextActivation(new Error("Activation rejected"))
+
+  const error = await messageWorker(worker as unknown as ServiceWorker, "SKIP_WAITING", updatePayload).catch(error => error)
+  expect(error.code).toBe("activation-failed")
+  expect(error.message).toContain("Activation rejected")
+  expect(updateErrorMessage(error)).toBe("Couldn’t finish installing the update. Close and reopen Mind, then try again.")
+  expect(worker.activated()).toBe(false)
+
+  await messageWorker(worker as unknown as ServiceWorker, "SKIP_WAITING", updatePayload)
+  expect(worker.activated()).toBe(true)
+})
+
+test("an unresponsive worker times out without blaming connectivity, then accepts a retry", async () => {
+  let expire!: () => void
+  let port!: MessagePort
+  let reply = false
+  const timer = spyOn(globalThis, "setTimeout").mockImplementation((callback, delay) => {
+    expect(delay).toBe(20000)
+    expire = callback as () => void
+    return 1 as unknown as ReturnType<typeof setTimeout>
+  })
+  const clear = spyOn(globalThis, "clearTimeout").mockImplementation(() => {})
+  const worker = {
+    state: "installed",
+    postMessage: (_data: unknown, ports: MessagePort[]) => {
+      port = ports[0]!
+      if (reply) port.postMessage({ ok: true })
+    },
+  } as unknown as ServiceWorker
+  try {
+    const pending = messageWorker(worker, "SKIP_WAITING", updatePayload).catch(error => error)
+    expire()
+    const error = await pending
+    expect(error.code).toBe("timeout")
+    expect(updateErrorMessage(error)).toBe("The update took too long. Try again.")
+    expect(clear).toHaveBeenCalledTimes(1)
+    port.close()
+
+    reply = true
+    await messageWorker(worker, "SKIP_WAITING", updatePayload)
+    expect(clear).toHaveBeenCalledTimes(2)
+  } finally {
+    port?.close()
+    timer.mockRestore()
+    clear.mockRestore()
+  }
+})
+
+test.each(["redundant", "throws"])("a worker that %s is unavailable rather than a network error", async (kind) => {
+  const worker = {
+    state: kind === "redundant" ? "redundant" : "installed",
+    postMessage: () => { throw new Error("Worker unavailable") },
+  } as unknown as ServiceWorker
+  const error = await messageWorker(worker, "SKIP_WAITING", updatePayload).catch(error => error)
+  expect(error.code).toBe("worker-unavailable")
+  expect(updateErrorMessage(error)).toContain("Close and reopen Mind")
+  expect(updateErrorMessage(error)).not.toContain("Reconnect")
+})
+
+test("older workers and unknown failures use a safe message without displaying raw errors", async () => {
+  const worker = {
+    state: "installed",
+    postMessage: (_data: unknown, ports: MessagePort[]) => {
+      ports[0]!.postMessage({ ok: false, error: "Internal failure at https://mind.test/private-asset.js" })
+      ports[0]!.close()
+    },
+  } as unknown as ServiceWorker
+  const error = await messageWorker(worker, "SKIP_WAITING", updatePayload).catch(error => error)
+  expect(error.message).toContain("private-asset.js")
+  expect(updateErrorMessage(error)).toBe("Couldn’t update Mind. Try again.")
+  expect(updateErrorMessage(new UpdateError("future-error"))).toBe("Couldn’t update Mind. Try again.")
+  expect(updateErrorMessage(new Error("Unknown error"))).toBe("Couldn’t update Mind. Try again.")
 })
 
 test("build cache identity changes for HTML-only changes without a version bump", async () => {
