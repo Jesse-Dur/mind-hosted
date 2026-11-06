@@ -3,9 +3,9 @@ import { cors } from "hono/cors"
 import { clerkMiddleware } from "@clerk/hono"
 import { tilesRoute } from "./routes/tiles"
 import { thoughtsRoute } from "./routes/thoughts"
-import { groqRoute } from "./routes/groq"
+import { aiRoute } from "./routes/ai"
 import { historyRoute } from "./routes/history"
-import { whisperRoute } from "./routes/whisper"
+import { transcriptionRoute } from "./routes/transcription"
 import { syncRoute } from "./routes/sync"
 import { billingRoute } from "./routes/billing"
 import { preferencesRoute } from "./routes/preferences"
@@ -18,9 +18,9 @@ app.use("*", clerkMiddleware())
 
 app.route("/api/tiles", tilesRoute)
 app.route("/api/thoughts", thoughtsRoute)
-app.route("/api/ai", groqRoute)
+app.route("/api/ai", aiRoute)
 app.route("/api/history", historyRoute)
-app.route("/api/whisper", whisperRoute)
+app.route("/api/whisper", transcriptionRoute)
 app.route("/api/sync", syncRoute)
 app.route("/api/billing", billingRoute)
 app.route("/api/preferences", preferencesRoute)

@@ -2,7 +2,7 @@
   "name": "mind",
   "private": true,
   "scripts": {
-    "test": "bun run test:automation && bun run test:backend && bun run test:frontend-sync && bun run test:store && bun run typecheck && bun run test:mobile",
+    "test": "bun run test:automation && bun run test:ai-integration && bun run test:backend && bun run test:frontend-sync && bun run test:store && bun run typecheck && bun run test:mobile",
     "test:backend": "bun test backend/test/snapshot.test.ts && AUTUMN_DISABLED=true bun --env-file=.env.local test backend/test/sync.test.ts backend/test/syncHistory.test.ts backend/test/billing.test.ts",
     "test:frontend-sync": "bun test frontend/src/sync/sync.test.ts frontend/src/sync/flush.test.ts frontend/src/sync/pull.test.ts frontend/src/sync/reconciliation.test.ts frontend/src/sync/thoughtPresentation.test.ts frontend/src/sync/canvasPresentation.test.ts",
     "test:store": "bun test frontend/src/store/store.test.ts frontend/src/store/syncStatus.test.ts",
@@ -14,7 +14,8 @@
     "dev:backend": "bun run backend/index.ts",
     "dev:frontend": "bun run --cwd frontend dev",
     "start": "bun run backend/index.ts",
-    "test:automation": "bun test ./.github/scripts/dependency-gate.test.ts ./.github/scripts/runtime.test.ts"
+    "test:automation": "bun test ./.github/scripts/dependency-gate.test.ts ./.github/scripts/runtime.test.ts",
+    "test:ai-integration": "bun test backend/test/openrouter.test.ts frontend/src/utils/audioRecording.test.ts && bun test backend/test/aiProcessing.test.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

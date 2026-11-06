@@ -1,4 +1,5 @@
 import { useState, useRef } from "react"
+import { recordingBlob } from "../utils/audioRecording"
 import { createApi } from "../api/client"
 import { isApiRateLimitError } from "../api/errors"
 import { useStore } from "../store"
@@ -109,11 +110,11 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
       }
       const durationMs = Date.now() - recordingStartRef.current
       if (durationMs < 1000) return showError("Recording too short (min 1 second)")
-      const blob = new Blob(audioChunksRef.current, { type: "audio/webm" })
+      const blob = recordingBlob(audioChunksRef.current, recorder.mimeType)
       if (blob.size < 1000) return showError("No audio detected")
       setMicState("transcribing")
       try {
-        const { text } = await createApi(getToken).whisper.transcribe(blob)
+        const { text } = await createApi(getToken).transcription.transcribe(blob)
         if (text.trim()) onTranscript(text.trim())
         else showError("No speech detected")
       } catch (error: unknown) {
@@ -166,11 +167,11 @@ export function useMicRecording(getToken: GetToken, onTranscript: (text: string)
     recorder.onstop = async () => {
       audioContextRef.current?.close()
       stopTracks()
-      const blob = new Blob(audioChunksRef.current, { type: "audio/webm" })
+      const blob = recordingBlob(audioChunksRef.current, recorder.mimeType)
       if (blob.size < 1000) { showError("No audio detected"); return }
       setMicState("transcribing")
       try {
-        const { text } = await createApi(getToken).whisper.transcribe(blob)
+        const { text } = await createApi(getToken).transcription.transcribe(blob)
         if (text.trim()) onDone(text.trim())
         else showError("No speech detected")
       } catch (error: unknown) {
