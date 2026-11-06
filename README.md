@@ -180,6 +180,8 @@ Open `http://localhost:5173` in your browser.
 
 The development service worker prefers network responses while online so reloads use current Vite modules, with cached files as an offline fallback. Production uses separate build-specific caches.
 
+Production updates finish caching files and release the cache lock before requesting activation. Update failures distinguish timeouts, downloads, device storage, and activation errors; reconnect advice appears only after a failed download when the browser reports being offline. The update prompt offers **Try again** after a failure.
+
 ---
 
 ## Credits
