@@ -162,7 +162,7 @@ cd frontend && bun install && cd ..
 
 In OpenRouter, enforce ZDR for all model groups, select **ZDR only** for both Google and other models (exclude Safety Retention), and keep prompt/completion logging and training opt-ins disabled. Apply these settings to the workspace/key used by the backend before sending user data. Requests fail when no eligible provider is available; retries do not relax privacy settings. Never put the API key in frontend variables.
 
-The browser preserves its recorded audio format, including WebM and MP4/M4A. Uploads are limited to 25 MB, with request sizes capped before parsing. Scribe v2 detects the language automatically and serves the existing `/api/whisper/transcribe` URL.
+The browser preserves its recorded audio format, including WebM and MP4/M4A. Uploads are limited to 25 MB, with request sizes capped before parsing. Scribe v2 detects the language automatically and serves the existing `/api/whisper/transcribe` URL. OpenRouter attempts time out after five minutes for transcription and one minute for thought processing; uncertain network failures are not replayed automatically.
 
 Run `bun run test:ai-integration` for mocked provider, tool-mutation, and recording-format regression checks. The existing `bun run bench:ai-prompts` command makes live model calls and writes benchmark fixtures; use an isolated test database.
 

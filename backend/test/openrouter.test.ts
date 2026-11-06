@@ -72,6 +72,39 @@ describe("OpenRouter requests", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  test.each([
+    ["/audio/transcriptions", 61000, true],
+    ["/audio/transcriptions", 300001, false],
+    ["/chat/completions", 61000, false],
+  ] as const)("applies the %s deadline to a %i ms request", async (path, elapsedMs, completes) => {
+    const deadlines: Array<{ milliseconds: number; controller: AbortController }> = []
+    const timeout = spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
+      const controller = new AbortController()
+      deadlines.push({ milliseconds, controller })
+      return controller.signal
+    })
+    fetchMock.mockImplementation(Object.assign(async (_input: unknown, init?: RequestInit) => {
+      // Advance the request's simulated clock without waiting minutes in the suite.
+      for (const { milliseconds, controller } of deadlines) {
+        if (elapsedMs >= milliseconds) controller.abort(new DOMException("PRIVATE NOTE", "TimeoutError"))
+      }
+      init?.signal?.throwIfAborted()
+      return Response.json({ text: "Completed recording" })
+    }, { preconnect: () => {} }))
+    try {
+      const request = openRouterRequest(path, {})
+      if (completes) {
+        await expect(request).resolves.toEqual({ text: "Completed recording" })
+      } else {
+        const error = await request.catch((error) => error)
+        expect(error).toBeInstanceOf(OpenRouterError)
+        expect(error).toMatchObject({ status: 504 })
+        expect(String(error)).not.toContain("PRIVATE NOTE")
+      }
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    } finally { timeout.mockRestore() }
+  })
+
   test("handles numeric and HTTP-date delays and invalid headers", () => {
     const now = Date.parse("2026-11-06T00:00:00Z")
     expect(retryDelayMs("2", 0, now)).toBe(2000)

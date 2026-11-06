@@ -44,7 +44,7 @@ export async function openRouterRequest(
   })
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const signal = AbortSignal.timeout(60000)
+    const signal = AbortSignal.timeout(path === "/audio/transcriptions" ? 300000 : 60000)
     let response: Response
     try {
       response = await fetch(`${BASE_URL}${path}`, {
