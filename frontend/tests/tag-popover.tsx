@@ -3,12 +3,13 @@ import { createRoot } from "react-dom/client"
 import { ThoughtTags } from "../src/components/ThoughtTags"
 import { TagMenu } from "../src/components/TagMenu"
 import { Thought } from "../src/components/Thought"
+import { TileHeader } from "../src/components/TileHeader"
 import { MobileFocusedTile } from "../src/layout/mobile/MobileFocusedTile"
 import { runThoughtSyncChecks } from "./thought-sync"
 import { syncEntityKey } from "../src/sync/status"
 import type { SyncVisualState } from "../src/sync/types"
 import { useStore } from "../src/store"
-import type { Thought as ThoughtType } from "../src/types"
+import type { Thought as ThoughtType, Tile as TileType } from "../src/types"
 
 const params = new URLSearchParams(location.search)
 const names = params.has("many") ? Array.from({ length: 40 }, (_, i) => `Tag ${i + 1}`)
@@ -64,15 +65,23 @@ const syncSamples = [
   { id: 106, width: 430, fontSize: 36, content: "Largest text" },
   { id: 107, width: 430, fontSize: 36, content: "" },
 ]
+const syncTile: TileType = { id: 1, client_id: "fixture-tile", canvas_id: null, title: "Sync sizing", x: 0, y: 0, width: 1, height: 1, importance: 0, visible: true, created_at: "" }
 
 function fixtureSyncStatus(state: SyncVisualState | null) {
-  useStore.setState({ syncEntityStatuses: new Map(syncSamples.flatMap(({ id }) => {
-    const clientId = `fixture-${id}`
-    const key = syncEntityKey("thought", clientId)
-    return state ? [[key, { key, entityType: "thought" as const, clientId, state, opId: null, action: null, error: null, updatedAt: Date.now() }]] : []
+  const entities = [{ entityType: "tile" as const, clientId: "fixture-tile" }, ...syncSamples.map(({ id }) => ({ entityType: "thought" as const, clientId: `fixture-${id}` }))]
+  useStore.setState({ syncEntityStatuses: new Map(entities.flatMap(({ entityType, clientId }) => {
+    const key = syncEntityKey(entityType, clientId)
+    return state ? [[key, { key, entityType, clientId, state, opId: null, action: null, error: null, updatedAt: Date.now() }]] : []
   })) })
 }
 window.runThoughtSyncChecks = () => runThoughtSyncChecks(fixtureSyncStatus)
+
+function TileHeaderSample({ fontSize }: { fontSize: number }) {
+  const [editing, setEditing] = useState(false)
+  return <div data-sync-tile-font={fontSize} style={{ margin: 16, width: 430, background: "white" }}>
+    <TileHeader tile={syncTile} fontSize={fontSize} onDragDown={() => {}} editing={editing} setEditing={setEditing} />
+  </div>
+}
 
 function SyncFixture() {
   const fontSize = useStore((state) => state.canvasFontSize)
@@ -88,7 +97,8 @@ function SyncFixture() {
     {mobile && <label>Font size <select aria-label="Font size" value={fontSize} onChange={(event) => useStore.setState({ canvasFontSize: Number(event.target.value) })}>
       {[8, 13, 24, 36].map((size) => <option key={size} value={size}>{size}</option>)}
     </select></label>}
-    {mobile ? <div style={{ height: 1400 }}><MobileFocusedTile tile={{ id: 1, canvas_id: null, title: "Sync sizing", x: 0, y: 0, width: 1, height: 1, importance: 0, visible: true, created_at: "" }} thoughts={syncSamples.map(({ id, content, tags = names.slice(0, 2) }) => ({ id, client_id: `fixture-${id}`, tile_id: 1, content, tags, sort_order: id, created_at: "" }))} onFocusTarget={() => {}} /></div>
+    {mobile ? <div style={{ height: 1400 }}><MobileFocusedTile tile={syncTile} thoughts={syncSamples.map(({ id, content, tags = names.slice(0, 2) }) => ({ id, client_id: `fixture-${id}`, tile_id: 1, content, tags, sort_order: id, created_at: "" }))} onFocusTarget={() => {}} /></div>
+    : params.has("tile") ? [8, 13, 24, 36].map((size) => <TileHeaderSample key={size} fontSize={size} />)
     : syncSamples.map(({ id, width, fontSize, content, tags = names.slice(0, 2) }) => <div key={id} data-sync-sample={id} style={{ width, margin: 16 }}>
       <Thought thought={{ id, client_id: `fixture-${id}`, tile_id: 1, content, tags, sort_order: 0, created_at: "" }} fontSize={fontSize} dragging={false} onDragStart={() => {}} onDragMove={() => {}} onDragOver={() => {}} onDrop={() => {}} />
     </div>)}
@@ -107,6 +117,8 @@ function App() {
   </>
 }
 if (params.has("sync")) useStore.setState({
+  updateTile: async () => { fixtureSyncStatus("pending") },
+  removeTile: async () => {},
   updateThoughtTags: async () => { fixtureSyncStatus("pending") },
   updateThoughtContent: async () => { fixtureSyncStatus("pending") },
   removeThought: async () => {},

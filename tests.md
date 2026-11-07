@@ -50,6 +50,8 @@ Desktop hover closing also needs native pointer hit testing. Hover the center cl
 
 `?sync&mobile` mounts the real mobile focused tile with the same sample thoughts and a Font Size selector. Run `await window.runThoughtSyncChecks()` on either sync fixture: all results must pass. These checks measure every frame through pending, acknowledged, failed, local-only, and cleared status, including blank thoughts at the largest size. They verify fixed thought bounds and text wrapping, scaled and centred spinners, and separation from the tag circles. Mobile checks cover all four font settings; desktop samples include each displayed font size.
 
+`?sync&tile` mounts real desktop tile headers at font sizes 8, 13, 24, and 36. Tile headers use the same spinner sizing as thoughts; mobile tile headers follow the Font Size selector in `?sync&mobile`. Chromium and Linux WebKit checks cover all four settings, pending and acknowledgement sizes, completed fades, and unchanged header bounds through every sync state. A tile-only pending save shows the header spinner while thought indicators stay absent. History pagination, AI status, and microphone transcription also use loading indicators; these belong to controls with fixed typography or icon sizes and do not follow the canvas Font Size preference.
+
 Shared-browser checks against the running backend cover tag creation, renaming, and deletion through the UI. Concurrent authenticated pushes use server-only and client-only identities in both request orders; server snapshots, pulled local caches, and the History panel preserve the rename chain and unrelated thought labels. The temporary tag and canvas are removed after the checks, and the original canvas is restored.
 
 ## Browser Publication Checks

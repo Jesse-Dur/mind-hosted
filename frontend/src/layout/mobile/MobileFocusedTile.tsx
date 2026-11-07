@@ -63,7 +63,7 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
     <section data-mobile-tile-id={tile.id} style={{ height: "100%", background: thoughtDropTarget ? "#faf7ff" : "#fff", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: thoughtDropTarget ? "inset 0 0 0 3px rgba(124,58,237,.42)" : "inset 0 0 0 0 rgba(124,58,237,0)", transition: "background-color 160ms ease, box-shadow 160ms ease" }}>
       <div style={{ height: 46, flexShrink: 0, display: "flex", alignItems: "center", borderBottom: "1px solid #e9e9e9", padding: "0 10px", gap: 8 }}>
         <input value={title} onChange={(event) => setTitle(event.target.value)} onBlur={(event) => commitTitle(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { event.currentTarget.value = tile.title; setTitle(tile.title); event.currentTarget.blur() } }} aria-label="Tile title" style={{ flex: 1, minWidth: 0, border: 0, outline: 0, background: "transparent", fontSize: canvasFontSize + 2, fontWeight: 700, color: "#171717" }} />
-        <SyncStatusDot entities={[{ entityType: "tile", id: tile.id, clientId: tile.client_id }, ...tileThoughts.map((thought) => ({ entityType: "thought" as const, id: thought.id, clientId: thought.client_id }))]} />
+        <SyncStatusDot entities={[{ entityType: "tile", id: tile.id, clientId: tile.client_id }, ...tileThoughts.map((thought) => ({ entityType: "thought" as const, id: thought.id, clientId: thought.client_id }))]} fontSize={canvasFontSize} />
         <CloseButton onClick={() => setConfirmDelete(true)} ariaLabel="Delete tile" size={28} iconSize={12} />
       </div>
       <MobileThoughtList
