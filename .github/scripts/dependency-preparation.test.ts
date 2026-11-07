@@ -92,7 +92,7 @@ describe("dependency preparation Git objects", () => {
 
 const sourceClassification = { headSha: "source", updateLevel: "minor", githubActions: false, security: false, securityLookupAvailable: false };
 
-function apiFixture({ movedHead = false, movedBase = false, changed = true } = {}) {
+function apiFixture({ movedHead = false, movedBase = false, retargeted = false, changed = true } = {}) {
   const pullRequest = {
     number: 65, state: "open", draft: false, user: { login: "dependabot[bot]" },
     base: { ref: "main", sha: "base" },
@@ -106,7 +106,7 @@ function apiFixture({ movedHead = false, movedBase = false, changed = true } = {
     async request(path: string, options?: any): Promise<any> {
       events.push(`${options?.method ?? "GET"} ${path}`);
       if (path === "/git/ref/heads/main") return { object: { sha: movedBase && baseReads++ > 0 ? "new-base" : "base" } };
-      if (path === "/pulls/65") return { ...pullRequest, head: { ...pullRequest.head, sha: movedHead ? "new-head" : "source" } };
+      if (path === "/pulls/65") return { ...pullRequest, head: { ...pullRequest.head, sha: movedHead ? "new-head" : "source" }, base: { ...pullRequest.base, ref: retargeted ? "another-branch" : "main" } };
       if (path === "/issues/65/comments" && options?.method === "POST") {
         comments.push({ user: { id: GITHUB_ACTIONS_BOT_ID, login: GITHUB_ACTIONS_BOT_LOGIN }, body: options.body.body });
         return {};
@@ -134,7 +134,7 @@ describe("trusted dependency preparation", () => {
     });
   });
 
-  for (const race of [{ movedHead: true }, { movedBase: true }]) {
+  for (const race of [{ movedHead: true }, { movedBase: true }, { retargeted: true }]) {
     test(`a concurrent change prevents attestation and push: ${JSON.stringify(race)}`, async () => {
       const f = apiFixture(race);
       expect((await prepareDependency(f.api, f.pullRequest, sourceClassification, f.options)).state).toBe("stale");

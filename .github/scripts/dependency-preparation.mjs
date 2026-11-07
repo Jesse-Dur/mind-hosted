@@ -102,7 +102,7 @@ export async function prepareDependency(api, pullRequest, classification, {
   const prepared = createCommit({ cwd, baseSha, headSha, appSlug });
   const latest = await api.request(`/pulls/${pullRequest.number}`);
   const latestBase = await api.request("/git/ref/heads/main");
-  if (latest.state !== "open" || latest.head.sha !== headSha || latestBase.object.sha !== baseSha) {
+  if (latest.state !== "open" || latest.head.sha !== headSha || latest.base.ref !== "main" || latestBase.object.sha !== baseSha) {
     return { state: "stale" };
   }
 

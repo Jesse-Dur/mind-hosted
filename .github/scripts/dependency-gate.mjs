@@ -640,13 +640,14 @@ The merge is complete. Check the [deployment runs](https://github.com/${api.repo
   throw new Error(message, { cause: dispatchError });
 }
 
-export async function mergeCurrentRevision(api, pullRequest, policy) {
+export async function mergeCurrentRevision(api, pullRequest, policy, preparedBaseSha) {
+  if (!preparedBaseSha) throw new Error("The attested preparation base SHA is required before merging.");
   const latestPullRequest = await api.request(`/pulls/${pullRequest.number}`);
 
   if (
     latestPullRequest.state !== "open" ||
     latestPullRequest.head.sha !== pullRequest.head.sha ||
-    latestPullRequest.base.sha !== pullRequest.base.sha
+    latestPullRequest.base.ref !== "main" || pullRequest.base.ref !== "main"
   ) {
     return false;
   }
@@ -661,6 +662,11 @@ export async function mergeCurrentRevision(api, pullRequest, policy) {
   ) {
     return false;
   }
+
+  // PR base.sha can be a cached snapshot. Resolve the branch after checking the
+  // current head's gates, immediately before the guarded merge request.
+  const liveBase = await api.request("/git/ref/heads/main");
+  if (liveBase.object.sha !== preparedBaseSha) return false;
 
   const mergeResult = await api.request(
     `/pulls/${latestPullRequest.number}/merge`,
@@ -736,8 +742,9 @@ async function processPullRequest(
   }
 
   const pullRequest = await api.request(`/pulls/${pullRequestNumber}`);
+  const liveBase = await api.request("/git/ref/heads/main");
   if (pullRequest.state !== "open" || pullRequest.head.sha !== initialPullRequest.head.sha ||
-      pullRequest.base.sha !== classification.preparation.baseSha) return "stale";
+      pullRequest.base.ref !== "main" || liveBase.object.sha !== classification.preparation.baseSha) return "stale";
   const gates = await evaluateGates(api, pullRequest);
   if (gates.ci.state === "failure" || gates.version.state === "failure" ||
       ["CHANGES_REQUESTED", "COMMENTED", "DISMISSED"].includes(gates.kodyReview)) {
@@ -750,7 +757,7 @@ async function processPullRequest(
   if (!policy.autoMerge && !gates.maintainerApproved) return "manual";
   if (gates.ci.state !== "success" || gates.version.state !== "success" || !kodyReviewPassed(policy, gates.kodyReview)) return "waiting";
   if (!allowMerge) return "waiting";
-  return await mergeCurrentRevision(api, pullRequest, policy) ? "merged" : "stale";
+  return await mergeCurrentRevision(api, pullRequest, policy, classification.preparation.baseSha) ? "merged" : "stale";
 }
 
 export async function requestCurrentKodyReview(api, pullRequest) {

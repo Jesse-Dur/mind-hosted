@@ -704,7 +704,7 @@ describe("final merge revalidation", () => {
       state: "open",
       title: "Update Hono",
       created_at: "2026-11-06T00:00:00Z",
-      base: { ref: "main", sha: "main-sha" },
+      base: { ref: "main", sha: "cached-pr-base" },
       head: {
         sha: "current-sha",
         ref: "dependabot/bun/hono-4.13.16",
@@ -717,8 +717,9 @@ describe("final merge revalidation", () => {
       async request(path: string, options?: any) {
         requests.push({ path, options });
         if (path === "/pulls/30") {
-          return { ...pullRequest, head: { ...pullRequest.head, sha: latestSha }, base: { ...pullRequest.base, sha: latestBase } };
+          return { ...pullRequest, head: { ...pullRequest.head, sha: latestSha } };
         }
+        if (path === "/git/ref/heads/main") return { object: { sha: latestBase } };
         if (path === "/commits/current-sha/check-runs?per_page=100") {
           return { check_runs: [{
             name: "Test suite", app: { slug: "github-actions" },
@@ -763,14 +764,16 @@ describe("final merge revalidation", () => {
     return { api, pullRequest, requests };
   }
 
-  test("merges only the tested and approved SHA, then dispatches deployment", async () => {
+  test("merges the tested SHA against live main despite a cached PR base, then dispatches deployment", async () => {
     const { api, pullRequest, requests } = fixture();
-    expect(await mergeCurrentRevision(api, pullRequest, classifyPolicy({ updateLevel: "patch" }))).toBe(true);
+    expect(await mergeCurrentRevision(api, pullRequest, classifyPolicy({ updateLevel: "patch" }), "main-sha")).toBe(true);
     const merge = requests.find(({ path }) => path === "/pulls/30/merge");
     expect(merge?.options.body.sha).toBe("current-sha");
     const dispatch = requests.find(({ path }) => path === "/actions/workflows/deploy-backend.yml/dispatches");
     expect(dispatch?.options).toEqual({ method: "POST", body: { ref: "main" } });
     expect(requests.indexOf(dispatch!)).toBeGreaterThan(requests.indexOf(merge!));
+    const baseRead = requests.findIndex(({ path }) => path === "/git/ref/heads/main");
+    expect(baseRead).toBe(requests.indexOf(merge!) - 1);
     expect(requests.some(({ path }) => path === "/pulls/30/reviews")).toBe(false);
   });
 
@@ -778,7 +781,7 @@ describe("final merge revalidation", () => {
     const { api, pullRequest, requests } = fixture({ failedBranchCleanup: true });
     const warning = spyOn(console, "warn").mockImplementation(() => {});
     try {
-      expect(await mergeCurrentRevision(api, pullRequest, classifyPolicy({ updateLevel: "patch" }))).toBe(true);
+      expect(await mergeCurrentRevision(api, pullRequest, classifyPolicy({ updateLevel: "patch" }), "main-sha")).toBe(true);
       expect(requests.filter(({ path }) => path === "/actions/workflows/deploy-backend.yml/dispatches")).toHaveLength(1);
       expect(warning).toHaveBeenCalledTimes(1);
     } finally { warning.mockRestore(); }
@@ -801,16 +804,16 @@ describe("final merge revalidation", () => {
   ] as const) {
     test(`does not merge or deploy when ${name}`, async () => {
       const { api, pullRequest, requests } = fixture(options);
-      expect(await mergeCurrentRevision(api, pullRequest, classifyPolicy({ updateLevel: "minor" }))).toBe(false);
+      expect(await mergeCurrentRevision(api, pullRequest, classifyPolicy({ updateLevel: "minor" }), "main-sha")).toBe(false);
       expect(requests.some(({ options }) => options?.method === "PUT" || options?.method === "POST")).toBe(false);
     });
   }
 
   test("a normal major waits for maintainer approval despite passing CI and Kody", async () => {
     const { api, pullRequest } = fixture();
-    expect(await mergeCurrentRevision(api, pullRequest, classifyPolicy({ updateLevel: "major" }))).toBe(false);
+    expect(await mergeCurrentRevision(api, pullRequest, classifyPolicy({ updateLevel: "major" }), "main-sha")).toBe(false);
     const approved = fixture({ maintainerApproval: true });
-    expect(await mergeCurrentRevision(approved.api, approved.pullRequest, classifyPolicy({ updateLevel: "major" }))).toBe(true);
+    expect(await mergeCurrentRevision(approved.api, approved.pullRequest, classifyPolicy({ updateLevel: "major" }), "main-sha")).toBe(true);
   });
 
   test("does not merge a patch when Kody requests changes", async () => {
@@ -897,7 +900,7 @@ describe("final merge revalidation", () => {
       autoMerge: true,
       needsMaintainerApproval: false,
       requiresKodyReview: true,
-    });
+    }, "main-sha");
 
     expect(merged).toBe(false);
     expect(requests.some(({ path }) => path === "/pulls/29/merge")).toBe(false);
@@ -905,11 +908,11 @@ describe("final merge revalidation", () => {
 });
 
 describe("sequential dependency processing", () => {
-  function fixture({ failed = false, pending = true, review = "APPROVED" } = {}) {
+  function fixture({ failed = false, pending = true, review = "APPROVED", liveBase = "main-sha", kodyRunning = false } = {}) {
     const candidates = [11, 10].map((number) => ({
       number, state: "open", draft: false, user: { login: "dependabot[bot]" },
       created_at: "2026-11-07T00:00:00Z", assignees: [],
-      base: { ref: "main", sha: "main-sha" },
+      base: { ref: "main", sha: "cached-pr-base" },
       head: { sha: `head-${number}`, ref: `dependabot/bun/example-${number}`, repo: { full_name: "owner/mind" } },
     }));
     const classification = (number: number) => ({
@@ -928,9 +931,13 @@ describe("sequential dependency processing", () => {
         requests.push({ path, options });
         if (path === "/pulls/10") return candidates[1];
         if (path === "/pulls/11") return candidates[0];
-        if (path === "/commits/head-10/check-runs?per_page=100") return { check_runs: ["Test suite", "Version policy"].map((name) => ({
-          name, app: { slug: "github-actions" }, status: pending ? "in_progress" : "completed", conclusion: failed ? "failure" : "success",
-        })) };
+        if (path === "/git/ref/heads/main") return { object: { sha: liveBase } };
+        if (path === "/commits/head-10/check-runs?per_page=100") return { check_runs: [
+          ...["Test suite", "Version policy"].map((name) => ({
+            name, app: { slug: "github-actions" }, status: pending ? "in_progress" : "completed", conclusion: failed ? "failure" : "success",
+          })),
+          ...(kodyRunning ? [{ name: "Kody Code Review", app: { slug: "kody-ai", id: 413034 }, status: "in_progress", conclusion: null }] : []),
+        ] };
         if (path === "/commits/head-10") return {};
         if (path.startsWith("/statuses/")) return {};
         if (path === "/pulls/10/merge") return { merged: true };
@@ -991,6 +998,20 @@ describe("sequential dependency processing", () => {
     await runGate(f.api, { prepare: f.prepare, requestedPullRequest: 0, allowMerge: true });
     expect(f.prepared).toEqual([10, 11]);
     expect(f.requests.some(({ path }) => path.endsWith("/merge"))).toBe(false);
+  });
+
+  test("live main advancing invalidates preparation even when the PR base snapshot stays unchanged", async () => {
+    const f = fixture({ pending: false, liveBase: "new-main-sha" });
+    await runGate(f.api, { prepare: f.prepare, requestedPullRequest: 0, allowMerge: true });
+    expect(f.requests.some(({ path }) => path.endsWith("/merge"))).toBe(false);
+    expect(f.requests.some(({ path }) => path.includes("/check-runs"))).toBe(false);
+  });
+
+  test("the hosted Kody check suppresses a duplicate review request while it is in progress", async () => {
+    const f = fixture({ review: "PENDING", kodyRunning: true });
+    await runGate(f.api, { prepare: f.prepare, requestedPullRequest: 0, allowMerge: true });
+    expect(f.requests.some(({ path, options }) => path === "/issues/10/comments" && options?.method === "POST")).toBe(false);
+    expect(f.prepared).toEqual([10]);
   });
 });
 
