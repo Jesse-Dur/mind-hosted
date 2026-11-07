@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { appendFileSync } from "node:fs";
 
 export const GITHUB_ACTIONS_BOT_ID = 41898282;
 export const GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]";
@@ -7,12 +8,11 @@ export const KODY_BOT_LOGIN = "kody-ai[bot]";
 export const KODY_STATUS_CONTEXT = "Kody approval status";
 export const MAINTAINER_LOGIN = "Jesse-Dur";
 export const TEST_CHECK_NAME = "Test suite";
+export const VERSION_CHECK_NAME = "Version policy";
 
 const AUTOMATION_LABEL_PREFIX = "automation/";
 const CLASSIFICATION_COMMENT_MARKER = "<!-- mind-dependency-classification:";
 const STATUS_COMMENT_MARKER = "<!-- mind-dependency-gate -->";
-const DEFAULT_WAIT_MINUTES = 30;
-const DEFAULT_POLL_SECONDS = 60;
 
 const LABELS = {
   dependency: {
@@ -395,7 +395,8 @@ async function ensureLabel(api, label) {
 async function classifyPullRequest(api, pullRequestNumber) {
   const pullRequest = await api.request(`/pulls/${pullRequestNumber}`);
 
-  if (!isDependabotPullRequest(pullRequest, api.repository)) {
+  if (!isDependabotPullRequest(pullRequest, api.repository) ||
+      (process.env.CLASSIFY_HEAD_SHA && process.env.CLASSIFY_HEAD_SHA !== pullRequest.head.sha)) {
     return;
   }
 
@@ -451,7 +452,7 @@ async function classifyPullRequest(api, pullRequestNumber) {
   await upsertClassificationComment(api, pullRequest, classification);
 }
 
-async function upsertClassificationComment(api, pullRequest, classification) {
+export async function upsertClassificationComment(api, pullRequest, classification) {
   const classificationJson = JSON.stringify(classification);
   const classificationName = classification.githubActions
     ? "GitHub Actions"
@@ -465,7 +466,7 @@ Dependency automation classified revision \`${pullRequest.head.sha.slice(0, 7)}\
     (comment) =>
       comment.user?.id === GITHUB_ACTIONS_BOT_ID &&
       comment.user?.login === GITHUB_ACTIONS_BOT_LOGIN &&
-      comment.body?.includes(CLASSIFICATION_COMMENT_MARKER),
+      trustedClassification([comment], classification.headSha),
   );
 
   if (existingComment?.body === completeBody) {
@@ -506,7 +507,9 @@ async function evaluateGates(api, pullRequest) {
 
   return {
     ci: latestTestResult(checkRunsResponse.check_runs),
+    version: latestCheckResult(checkRunsResponse.check_runs, VERSION_CHECK_NAME),
     kodyReview: currentKodyReviewOutcome(reviews, headSha),
+    kodyReviewRunning: checkRunsResponse.check_runs.some((check) => check.name === "Kody Code Review" && check.status !== "completed"),
     maintainerApproved: hasCurrentApproval(reviews, MAINTAINER_LOGIN, headSha),
     revisionTime,
   };
@@ -579,6 +582,7 @@ function gateSummary(pullRequest, classification, policy, gates, reason) {
 Revision: \`${shortSha}\`
 
 - Test suite: **${ci}**
+- Version policy: **${gates.version.state}**
 - Kody review: **${kodyReview}**
 - Policy: **${policy.kind}**
 
@@ -641,7 +645,8 @@ export async function mergeCurrentRevision(api, pullRequest, policy) {
 
   if (
     latestPullRequest.state !== "open" ||
-    latestPullRequest.head.sha !== pullRequest.head.sha
+    latestPullRequest.head.sha !== pullRequest.head.sha ||
+    latestPullRequest.base.sha !== pullRequest.base.sha
   ) {
     return false;
   }
@@ -650,6 +655,7 @@ export async function mergeCurrentRevision(api, pullRequest, policy) {
 
   if (
     latestGates.ci.state !== "success" ||
+    latestGates.version.state !== "success" ||
     !kodyReviewPassed(policy, latestGates.kodyReview) ||
     (policy.needsMaintainerApproval && !latestGates.maintainerApproved)
   ) {
@@ -690,25 +696,30 @@ export async function mergeCurrentRevision(api, pullRequest, policy) {
 async function processPullRequest(
   api,
   pullRequestNumber,
-  { poll, waitMinutes, pollSeconds },
+  { prepare, allowMerge },
 ) {
   const initialPullRequest = await api.request(`/pulls/${pullRequestNumber}`);
 
   if (
     initialPullRequest.state !== "open" ||
     initialPullRequest.draft ||
+    initialPullRequest.base.ref !== "main" ||
     !isDependabotPullRequest(initialPullRequest, api.repository)
   ) {
-    return;
+    return "blocked";
   }
 
   const classificationComments = await api.paginate(
     `/issues/${initialPullRequest.number}/comments`,
   );
-  const classification = trustedClassification(
+  let classification = trustedClassification(
     classificationComments,
     initialPullRequest.head.sha,
   );
+  if (!classification) return "blocked";
+  const preparation = await prepare(api, initialPullRequest, classification);
+  if (preparation.state !== "ready") return preparation.state;
+  classification = preparation.classification;
   const policy = classifyPolicy(classification);
 
   // Do not add a fallback PR warning comment here. Statuses are scoped to the
@@ -724,119 +735,33 @@ async function processPullRequest(
     await assignMaintainer(api, initialPullRequest);
   }
 
-  const deadline = Date.now() + waitMinutes * 60_000;
-
-  while (true) {
-    const pullRequest = await api.request(`/pulls/${pullRequestNumber}`);
-
-    if (
-      pullRequest.state !== "open" ||
-      pullRequest.head.sha !== initialPullRequest.head.sha
-    ) {
-      return;
-    }
-
-    const gates = await evaluateGates(api, pullRequest);
-
-    if (
-      gates.ci.state === "failure" ||
-      (policy.requiresKodyReview &&
-        gates.kodyReview === "CHANGES_REQUESTED")
-    ) {
-      await assignMaintainer(api, pullRequest);
-      await upsertStatusComment(
-        api,
-        pullRequest.number,
-        gateSummary(
-          pullRequest,
-          classification,
-          policy,
-          gates,
-          "attention required",
-        ),
-      );
-      return;
-    }
-
-    if (
-      gates.ci.state === "success" &&
-      kodyReviewPassed(policy, gates.kodyReview)
-    ) {
-      if (policy.kind === "actions") {
-        await assignMaintainer(api, pullRequest);
-        await upsertStatusComment(
-          api,
-          pullRequest.number,
-          gateSummary(
-            pullRequest,
-            classification,
-            policy,
-            gates,
-            "checks complete; manual workflow review required",
-          ),
-        );
-        return;
-      }
-
-      if (policy.needsMaintainerApproval && !gates.maintainerApproved) {
-        await assignMaintainer(api, pullRequest);
-        await upsertStatusComment(
-          api,
-          pullRequest.number,
-          gateSummary(
-            pullRequest,
-            classification,
-            policy,
-            gates,
-            "checks complete; maintainer approval required",
-          ),
-        );
-        return;
-      }
-
-      if (policy.autoMerge || gates.maintainerApproved) {
-        await mergeCurrentRevision(api, pullRequest, policy);
-        return;
-      }
-
-      await assignMaintainer(api, pullRequest);
-      await upsertStatusComment(
-        api,
-        pullRequest.number,
-        gateSummary(
-          pullRequest,
-          classification,
-          policy,
-          gates,
-          "manual review required",
-        ),
-      );
-      return;
-    }
-
-    const revisionAge = Date.now() - new Date(gates.revisionTime).getTime();
-    const hasTimedOut = revisionAge >= waitMinutes * 60_000;
-
-    if (!poll || Date.now() >= deadline) {
-      if (hasTimedOut) {
-        await assignMaintainer(api, pullRequest);
-        await upsertStatusComment(
-          api,
-          pullRequest.number,
-          gateSummary(
-            pullRequest,
-            classification,
-            policy,
-            gates,
-            "waiting for a gate",
-          ),
-        );
-      }
-      return;
-    }
-
-    await sleep(pollSeconds * 1_000);
+  const pullRequest = await api.request(`/pulls/${pullRequestNumber}`);
+  if (pullRequest.state !== "open" || pullRequest.head.sha !== initialPullRequest.head.sha ||
+      pullRequest.base.sha !== classification.preparation.baseSha) return "stale";
+  const gates = await evaluateGates(api, pullRequest);
+  if (gates.ci.state === "failure" || gates.version.state === "failure" ||
+      ["CHANGES_REQUESTED", "COMMENTED", "DISMISSED"].includes(gates.kodyReview)) {
+    await assignMaintainer(api, pullRequest);
+    await upsertStatusComment(api, pullRequest.number, gateSummary(pullRequest, classification, policy, gates, "attention required"));
+    return "blocked";
   }
+  if (!kodyReviewPassed(policy, gates.kodyReview) && !gates.kodyReviewRunning) await requestCurrentKodyReview(api, pullRequest);
+  if (policy.kind === "actions" || (policy.needsMaintainerApproval && !gates.maintainerApproved)) return "manual";
+  if (!policy.autoMerge && !gates.maintainerApproved) return "manual";
+  if (gates.ci.state !== "success" || gates.version.state !== "success" || !kodyReviewPassed(policy, gates.kodyReview)) return "waiting";
+  if (!allowMerge) return "waiting";
+  return await mergeCurrentRevision(api, pullRequest, policy) ? "merged" : "stale";
+}
+
+export async function requestCurrentKodyReview(api, pullRequest) {
+  const marker = `<!-- mind-dependency-review:${pullRequest.head.sha} -->`;
+  const comments = await api.paginate(`/issues/${pullRequest.number}/comments`);
+  if (comments.some((comment) => comment.user?.id === GITHUB_ACTIONS_BOT_ID &&
+      comment.user?.login === GITHUB_ACTIONS_BOT_LOGIN && comment.body?.includes(marker))) return;
+  await api.request(`/issues/${pullRequest.number}/comments`, {
+    method: "POST",
+    body: { body: `@kody start-review\n\nPlease review dependency revision \`${pullRequest.head.sha}\`, including its app version and current main changes.\n\n${marker}` },
+  });
 }
 
 async function recordFailure(api, pullRequestNumber, error) {
@@ -864,28 +789,44 @@ The policy workflow could not complete for revision \`${pullRequest.head.sha.sli
   }
 }
 
-async function runGate(api) {
-  const requestedPullRequest = Number(process.env.PR_NUMBER || 0);
-  const waitMinutes = Number(process.env.WAIT_MINUTES || DEFAULT_WAIT_MINUTES);
-  const pollSeconds = Number(process.env.POLL_SECONDS || DEFAULT_POLL_SECONDS);
-  const poll = process.env.POLL === "true";
+export async function runGate(api, {
+  prepare,
+  requestedPullRequest = Number(process.env.PR_NUMBER || 0),
+  allowMerge = process.env.ALLOW_MERGE !== "false",
+} = {}) {
+  if (!prepare) {
+    const { prepareDependency } = await import("./dependency-preparation.mjs");
+    if (!process.env.DEPENDENCY_PREPARATION_TOKEN || !process.env.DEPENDENCY_APP_SLUG) {
+      throw new Error("Configure DEPENDENCY_APP_ID and DEPENDENCY_APP_PRIVATE_KEY before preparing dependencies.");
+    }
+    prepare = (client, pullRequest, classification) => prepareDependency(client, pullRequest, classification, {
+      token: process.env.DEPENDENCY_PREPARATION_TOKEN, appSlug: process.env.DEPENDENCY_APP_SLUG,
+    });
+  }
   let failures = 0;
 
-  const pullRequestNumbers = requestedPullRequest
-    ? [requestedPullRequest]
+  const candidates = requestedPullRequest
+    ? [await api.request(`/pulls/${requestedPullRequest}`)]
     : (await api.paginate("/pulls?state=open&sort=updated&direction=desc"))
-        .filter((pullRequest) =>
-          isDependabotPullRequest(pullRequest, api.repository),
-        )
-        .map((pullRequest) => pullRequest.number);
+        .filter((pullRequest) => isDependabotPullRequest(pullRequest, api.repository) &&
+          pullRequest.base.ref === "main" && !pullRequest.draft);
+  const classified = await Promise.all(candidates.map(async (pullRequest) => {
+    const comments = await api.paginate(`/issues/${pullRequest.number}/comments`);
+    const classification = trustedClassification(comments, pullRequest.head.sha);
+    const automatic = classifyPolicy(classification).autoMerge;
+    return { pullRequest, priority: automatic ? (classification?.preparation ? 0 : 1) : 2 };
+  }));
+  const pullRequestNumbers = classified.sort((left, right) => left.priority - right.priority)
+    .map(({ pullRequest }) => pullRequest.number);
 
   for (const pullRequestNumber of pullRequestNumbers) {
     try {
-      await processPullRequest(api, pullRequestNumber, {
-        poll: poll && pullRequestNumbers.length === 1,
-        waitMinutes,
-        pollSeconds,
+      const result = await processPullRequest(api, pullRequestNumber, {
+        prepare, allowMerge,
       });
+      // One active update at a time; real failures and manual approvals do not
+      // hold up unrelated updates. The next event or schedule resumes the gate.
+      if (["prepared", "waiting", "merged", "stale"].includes(result)) break;
     } catch (error) {
       failures += 1;
       console.error(
@@ -978,6 +919,16 @@ async function main() {
   }
 
   const api = new GitHubApi(repository, token);
+
+  if (mode === "classified") {
+    const number = Number(process.env.PR_NUMBER);
+    if (!number || !process.env.GITHUB_OUTPUT) throw new Error("PR_NUMBER and GITHUB_OUTPUT are required.");
+    const pullRequest = await api.request(`/pulls/${number}`);
+    const comments = await api.paginate(`/issues/${number}/comments`);
+    const exists = isDependabotPullRequest(pullRequest, repository) && trustedClassification(comments, pullRequest.head.sha);
+    appendFileSync(process.env.GITHUB_OUTPUT, `reuse=${Boolean(exists)}\n`);
+    return;
+  }
 
   if (mode === "classify") {
     const pullRequestNumber = Number(process.env.PR_NUMBER || 0);
