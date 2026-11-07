@@ -10,6 +10,7 @@ changes; it is not the pass/fail gate for application behavior.
 - `bun run test:backend`: run snapshot revision tests, then backend sync database integration tests in a separate process to isolate the mocked database client.
 - `bun run test:frontend-sync`: run frontend offline sync tests.
 - `bun run test:store`: run frontend optimistic store tests.
+- `bun run test:recording`: run audio-format checks and DOM-based microphone lifecycle regressions in separate processes.
 - `bun run typecheck`: run backend TypeScript checking and the frontend production build.
 - `bun run bench:ai-prompts`: run the AI prompt benchmark harness.
 - `bun run test:ai`: kept as the existing AI benchmark entrypoint for compatibility.
@@ -66,6 +67,7 @@ Preference recovery checks mount the real App in an isolated browser harness wit
 
 ## Current Frontend Coverage
 
+- Microphone lifecycle checks mount the shared recording hook and Spotlight in Happy DOM with simulated media devices. Button, typing, shortcut, silence, Escape, dismissal, and page exit release every audio track and close the audio context. Checks cover pending permission cancellation, setup and recorder failures, final audio chunks, rapid restarts, ignored late transcription results, and shortcut startup under React Strict Mode.
 - Completed upserts keep separate durable operations and flush in order for each entity, preserving their History actions.
 - Local History reads start with a bounded page, retain old pending/error/device-only entries, and load every retained entry on demand. Hidden acknowledgement markers remain durable without filling visible pages.
 - Paging upgrades index existing visible activity without deleting hidden markers. Status notifications are batched, and an update arriving during a read receives a follow-up refresh.

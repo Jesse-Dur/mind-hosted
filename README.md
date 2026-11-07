@@ -182,7 +182,9 @@ In OpenRouter, enforce ZDR for all model groups, select **ZDR only** for both Go
 
 The browser preserves its recorded audio format, including WebM and MP4/M4A. Uploads are limited to 25 MB, with request sizes capped before parsing. Scribe v2 detects the language automatically and serves the existing `/api/whisper/transcribe` URL. OpenRouter attempts time out after five minutes for transcription and one minute for thought processing; uncertain network failures are not replayed automatically.
 
-Run `bun run test:ai-integration` for mocked provider, tool-mutation, and recording-format regression checks. The existing `bun run bench:ai-prompts` command makes live model calls and writes benchmark fixtures; use an isolated test database.
+Desktop and mobile share the recording lifecycle. Stopping by button, typing, shortcut, or silence releases the microphone before transcription. Escape cancels without transcribing; closing Spotlight or leaving the page also releases the microphone. If permission arrives after cancellation, that stream is released immediately.
+
+Run `bun run test:ai-integration` for mocked provider, tool-mutation, recording-format, and microphone lifecycle regression checks. The existing `bun run bench:ai-prompts` command makes live model calls and writes benchmark fixtures; use an isolated test database.
 
 ### Running
 
