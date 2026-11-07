@@ -10,7 +10,9 @@ changes; it is not the pass/fail gate for application behavior.
 - `bun run test:backend`: run snapshot revision tests, then backend sync database integration tests in a separate process to isolate the mocked database client.
 - `bun run test:frontend-sync`: run frontend offline sync tests.
 - `bun run test:store`: run frontend optimistic store tests.
+- `bun run test:recording`: run audio-format checks and DOM-based microphone lifecycle regressions in separate processes.
 - `bun run typecheck`: run backend TypeScript checking and the frontend production build.
+- `bun run test:mobile`: run the mobile regression suite, including thought keyboard dismissal checks. The runner preloads IndexedDB before shared modules load.
 - `bun run bench:ai-prompts`: run the AI prompt benchmark harness.
 - `bun run test:ai`: kept as the existing AI benchmark entrypoint for compatibility.
 
@@ -74,6 +76,12 @@ Mobile editing checks use isolated tile and thought data with captured writes. E
 
 Mobile tile and thought delete controls use the desktop SVG cross, centered at 12 pixels within the existing 28-pixel buttons. Isolated component checks at narrow desktop and phone widths verify centering, touch-hold isolation from parent gestures, confirmation before deletion, cancellation without writes, and one deletion per confirmation. Safari desktop rendering still needs a Safari check.
 
+Mobile thought scroll checks mount the real focused-tile component with captured writes. Touch-down leaves text read-only; a completed tap accepts up to 9px of movement and places the caret at the tapped text. Movement beyond that distance, cancellation, or another pointer cannot start editing. Repeated swipes after editing stay out of edit mode. Simulated keyboard dismissal and scroll intent save a changed draft once, including a native pan that cancels before the movement threshold. Dismissal waits for active text composition to finish. Native mouse typing, Enter/Escape, text selection, tag long presses, and cancelled thought dragging are also checked. Software keyboard visibility and native touch panning still need physical-device verification.
+
+Keyboard observer unit tests cover animated opening and dismissal, toolbar movement, keyboard height changes, rotation, pinch zoom, the window-resize fallback, and listener cleanup.
+
+Selection-drag regression checks start with a collapsed caret in the active thought. Crossing the movement threshold keeps the draft focused and unsaved before the selection expands. An actual list scroll after native pointer cancellation still commits the draft.
+
 Desktop thought editing checks use isolated data with captured writes. Escape restores the original text and exits editing without saving. Enter and clicking outside the editor each save the changed text once.
 
 Desktop drag and resize checks use the real hook with in-memory writes. Rejected drops, cross-canvas no-ops, missing canvas rectangles, and rejected resizes restore transitions. Successful releases flush final geometry before transitions resume. Delayed completions cannot end a newer gesture. Checks also cover remounting, a click after a pending write, and Canvas-style delayed tile props.
@@ -88,6 +96,7 @@ Preference recovery checks mount the real App in an isolated browser harness wit
 
 ## Current Frontend Coverage
 
+- Microphone lifecycle checks mount the shared recording hook and Spotlight in Happy DOM with simulated media devices. Button, typing, shortcut, silence, Escape, dismissal, and page exit release every audio track and close the audio context. Checks cover pending permission cancellation, setup and recorder failures, final audio chunks, rapid restarts, ignored late transcription results, and shortcut startup under React Strict Mode.
 - Completed upserts keep separate durable operations and flush in order for each entity, preserving their History actions.
 - Local History reads start with a bounded page, retain old pending/error/device-only entries, and load every retained entry on demand. Hidden acknowledgement markers remain durable without filling visible pages.
 - Paging upgrades index existing visible activity without deleting hidden markers. Status notifications are batched, and an update arriving during a read receives a follow-up refresh.

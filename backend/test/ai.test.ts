@@ -5,7 +5,7 @@
  */
 
 import { sql } from "../db/client"
-import { classifyAndStore } from "../routes/groq"
+import { classifyAndStore } from "../routes/ai"
 
 const TEST_USER = "test_ai_suite"
 

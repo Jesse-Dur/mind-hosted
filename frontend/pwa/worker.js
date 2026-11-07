@@ -62,14 +62,18 @@ async function cleanupCaches() {
 async function cacheRequired(cache, urls) {
   await completeAll(urls.map(async url => {
     if (await cache.match(url)) return;
-    const response = await fetch(url, { cache: "reload" });
+    const response = await fetch(url, { cache: "reload" }).catch(error => {
+      throw Object.assign(new Error(`Could not download ${url}: ${error}`), {
+        code: self.navigator.onLine === false ? "offline" : "download-failed",
+      });
+    });
     if (!response.ok || (url.endsWith(".js") && !/javascript/.test(response.headers.get("Content-Type") || ""))) {
-      throw new Error(`Could not cache ${url}`);
+      throw Object.assign(new Error(`Could not download ${url} (HTTP ${response.status})`), { code: "download-failed" });
     }
     if (url === SHELL) {
       const digest = await crypto.subtle.digest("SHA-256", await response.clone().arrayBuffer());
       const hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
-      if (hex !== CONFIG.shellDigest) throw new Error("App shell belongs to a different build");
+      if (hex !== CONFIG.shellDigest) throw Object.assign(new Error("App shell belongs to a different build"), { code: "download-failed" });
     }
     await cache.put(url, response);
   }));
@@ -136,11 +140,23 @@ self.addEventListener("message", event => {
       if (previous) await cache.put(url, previous);
       else await cacheRequired(cache, [url]);
     }));
-    if (data.type === "SKIP_WAITING") await self.skipWaiting();
-    event.ports[0]?.postMessage({ ok: true });
     if (data.type === "CACHE_URLS") await cleanupCaches();
+  }).then(async () => {
+    // Chromium can wait for activation before resolving skipWaiting(). The
+    // activate handler needs the cache lock, so release it before requesting activation.
+    if (data.type === "SKIP_WAITING") {
+      try {
+        await self.skipWaiting();
+      } catch (error) {
+        throw Object.assign(new Error(`Could not activate update: ${error}`), { code: "activation-failed" });
+      }
+    }
+    event.ports[0]?.postMessage({ ok: true });
   }).catch(error => {
-    event.ports[0]?.postMessage({ ok: false, error: String(error) });
+    const code = error?.name === "QuotaExceededError" ? "storage-full"
+      : ["SecurityError", "InvalidStateError", "UnknownError"].includes(error?.name) ? "storage-unavailable"
+      : error?.code ?? "prepare-failed";
+    event.ports[0]?.postMessage({ ok: false, code, error: String(error) });
   }));
 });
 

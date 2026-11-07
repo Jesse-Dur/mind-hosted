@@ -9,13 +9,14 @@ import { autumnAccessDeniedResponse, isAutumnAccessDeniedError } from "../billin
 import { consumeAutumnFeature } from "../billing/entitlements"
 import { autumnFeatures } from "../billing/features"
 import type { Thought } from "../types"
+import { openRouterModel, openRouterRequest, OpenRouterError } from "../ai/openrouter"
 
-export const groqRoute = new Hono()
+export const aiRoute = new Hono()
 
 const CONCURRENCY: Record<string, number> = { low: 1, medium: 2, high: 4 }
 let running = 0
 
-export type AiStatus = "idle" | "processing" | "queued" | "limited"
+export type AiStatus = "idle" | "processing" | "queued"
 const userStatus = new Map<string, AiStatus>()
 const userStatusTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -33,7 +34,7 @@ function getStatus(userId: string): AiStatus {
   return userStatus.get(userId) ?? "idle"
 }
 
-groqRoute.get("/status", async (c) => {
+aiRoute.get("/status", async (c) => {
   const auth = getAuth(c)
   if (!auth?.userId) return c.json({ status: "idle" })
   return c.json({ status: getStatus(auth.userId), latest_revision: await syncDb.latestRevision(auth.userId) })
@@ -142,47 +143,11 @@ const TOOLS = [
 ]
 
 const SEARCH_TOOLS = new Set(["search_by_tag", "search_by_tile", "search_thoughts"])
-// Low-limit logs are intentionally metadata-only so backend diagnostics never expose user thoughts.
-const LOW_REMAINING_REQUESTS = 2
-const LOW_REMAINING_TOKENS = 2000
-
-type AiUsageStats = { totalInput: number; totalOutput: number; totalTokens: number; iterations: number }
-type RateLimitSnapshot = { remainingReqs: string | null; remainingTokens: string | null; resetTokens: string | null }
-
-function parseRateLimitValue(value: string | null) {
-  if (value === null) return null
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-function isLowRateLimit(snapshot: RateLimitSnapshot) {
-  const remainingReqs = parseRateLimitValue(snapshot.remainingReqs)
-  const remainingTokens = parseRateLimitValue(snapshot.remainingTokens)
-  return (remainingReqs !== null && remainingReqs <= LOW_REMAINING_REQUESTS)
-    || (remainingTokens !== null && remainingTokens <= LOW_REMAINING_TOKENS)
-}
-
-function logRateLimitStatus(reqId: string, reason: "low" | "hit", snapshot: RateLimitSnapshot, stats: AiUsageStats, waitMs?: number) {
-  const wait = waitMs === undefined ? "" : ` wait_seconds=${waitMs / 1000}`
-  console.warn(
-    `[ai:${reqId}] rate_limit_${reason}`
-    + ` remaining_requests=${snapshot.remainingReqs ?? "unknown"}`
-    + ` remaining_tokens=${snapshot.remainingTokens ?? "unknown"}`
-    + ` reset_tokens=${snapshot.resetTokens ?? "unknown"}`
-    + ` token_input=${stats.totalInput}`
-    + ` token_output=${stats.totalOutput}`
-    + ` token_total=${stats.totalTokens}`
-    + ` iterations=${stats.iterations}`
-    + wait
-  )
-}
-
 function logAiProcessError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error)
-  console.error(`[ai] process failed: ${message}`)
+  console.error(`[ai] process failed status=${error instanceof OpenRouterError ? error.status : "internal"}`)
 }
 
-export async function classifyAndStore(input: string, userId: string): Promise<{ totalInput: number; totalOutput: number; totalTokens: number; iterations: number }> {
+async function processThoughts(input: string, userId: string): Promise<{ totalInput: number; totalOutput: number; totalTokens: number; iterations: number }> {
   const stats = { totalInput: 0, totalOutput: 0, totalTokens: 0, iterations: 0 }
   const tiles = await tilesDb.list(userId)
   const tags = await tagsDb.list(userId)
@@ -280,67 +245,28 @@ Available tags: ${tagList || "none"}
     const sessionMsg = buildSessionState()
     const messages: Message[] = sessionMsg ? [...baseMessages, sessionMsg] : [...baseMessages]
 
-    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "qwen/qwen3.6-27b",
-        messages,
-        tools: searchIterations >= MAX_SEARCH_ITERATIONS ? TOOLS.filter((t) => !SEARCH_TOOLS.has(t.function.name)) : TOOLS,
-        temperature: 0.1,
-        // Reasoning helps resolve ambiguous create, update, and move requests without exposing it in the response.
-        reasoning_effort: "default",
-        include_reasoning: false,
-      }),
-      signal: AbortSignal.timeout(60000),
-    })
-
-    const data = await res.json() as {
-      choices?: { message: { role: string; content: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[]
-      usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number; completion_tokens_details?: { reasoning_tokens?: number } }
-      prompt_eval_count?: number
-      eval_count?: number
-      error?: { message: string }
+    const data = await openRouterRequest("/chat/completions", {
+      model: openRouterModel("ai"),
+      messages,
+      tools: searchIterations >= MAX_SEARCH_ITERATIONS ? TOOLS.filter((t) => !SEARCH_TOOLS.has(t.function.name)) : TOOLS,
+      temperature: 0.1,
+      max_tokens: 4096,
+      reasoning: { effort: "low", exclude: true },
+      provider: { require_parameters: true },
+    }, {
+      onRetry: () => setStatus(userId, "queued"),
+    }) as {
+      choices?: { message?: { content?: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[]
+      usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
     }
-
-    const remainingReqs = res.headers.get("x-ratelimit-remaining-requests")
-    const remainingTokens = res.headers.get("x-ratelimit-remaining-tokens")
-    const resetTokens = res.headers.get("x-ratelimit-reset-tokens")
-    const rateLimitSnapshot = { remainingReqs, remainingTokens, resetTokens }
+    setStatus(userId, "processing")
     stats.iterations++
-    if (data.usage || data.eval_count) {
-      const inp = data.usage?.prompt_tokens ?? data.prompt_eval_count ?? 0
-      const out = data.usage?.completion_tokens ?? data.eval_count ?? 0
-      const total = data.usage?.total_tokens ?? (inp + out)
-      stats.totalInput += inp
-      stats.totalOutput += out
-      stats.totalTokens += total
+    if (data.usage) {
+      stats.totalInput += data.usage.prompt_tokens ?? 0
+      stats.totalOutput += data.usage.completion_tokens ?? 0
+      stats.totalTokens += data.usage.total_tokens ?? ((data.usage.prompt_tokens ?? 0) + (data.usage.completion_tokens ?? 0))
     }
-    if (res.status !== 429 && isLowRateLimit(rateLimitSnapshot)) {
-      logRateLimitStatus(reqId, "low", rateLimitSnapshot, stats)
-    }
-
-    if (!data.choices?.[0]) {
-      const errMsg = data.error?.message ?? "unknown"
-      if (res.status === 429) {
-        const retryAfter = res.headers.get("retry-after")
-        const wait = retryAfter ? Number(retryAfter) * 1000 : 10000
-        setStatus(userId, wait > 60000 ? "limited" : "queued")
-        logRateLimitStatus(reqId, "hit", rateLimitSnapshot, stats, wait)
-        await new Promise((r) => setTimeout(r, wait))
-        setStatus(userId, "processing")
-        continue
-      }
-      console.error(`[ai:${reqId}] bad response ${res.status}: ${errMsg}`)
-      if (res.status >= 400 && res.status < 500) {
-        setStatus(userId, "idle")
-        return stats
-      }
-      continue
-    }
+    if (!data.choices?.[0]?.message) throw new OpenRouterError(502)
 
     const msg = data.choices[0].message
     const MAX_TOOL_CALLS = 10
@@ -550,7 +476,15 @@ Available tags: ${tagList || "none"}
   return stats
 }
 
-groqRoute.post("/process", async (c) => {
+export async function classifyAndStore(input: string, userId: string) {
+  try {
+    return await processThoughts(input, userId)
+  } finally {
+    setStatus(userId, "idle")
+  }
+}
+
+aiRoute.post("/process", async (c) => {
   const auth = getAuth(c)
   if (!auth?.userId) return c.json({ error: "Unauthorized" }, 401)
 

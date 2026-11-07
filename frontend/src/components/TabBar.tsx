@@ -592,6 +592,7 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
                   onContextMenu={(e) => {
                     e.preventDefault()
                     if (dragRef.current?.touchMode) return
+                    cancelDrag()
                     const menuWidth = 160
                     const x = e.clientX + menuWidth > window.innerWidth ? e.clientX - menuWidth : e.clientX
                     setContextMenu({ x, y: e.clientY, canvas })
@@ -713,12 +714,15 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
             {[
               { label: contextMenu.canvas.is_favourite ? "Unfavourite" : "★ Favourite", action: () => handleFavourite(contextMenu.canvas) },
               { label: "Rename", action: () => startRename(contextMenu.canvas) },
-              { label: "Delete", action: () => handleRemove(contextMenu.canvas), danger: true },
-            ].map(({ label, action, danger }) => (
-              <div key={label} onClick={action} style={{ padding: "7px 12px", fontSize: 13, cursor: "pointer", borderRadius: 5, color: danger ? "#ef4444" : "#1a1a1a" }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "#f5f5f5")}
+              { label: "Delete", action: () => handleRemove(contextMenu.canvas), danger: true, disabled: canvases.length <= 1 },
+            ].map(({ label, action, danger, disabled }) => (
+              <div key={label} aria-disabled={disabled || undefined} onClick={disabled ? undefined : action} style={{ padding: "7px 12px", fontSize: 13, cursor: disabled ? "not-allowed" : "pointer", borderRadius: 5, color: disabled ? "#888" : danger ? "#ef4444" : "#1a1a1a" }}
+                onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = "#f5f5f5" }}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-              >{label}</div>
+              >
+                {label}
+                {disabled && <div style={{ marginTop: 3, fontSize: 11 }}>Keep at least one canvas.</div>}
+              </div>
             ))}
           </div>
         )}

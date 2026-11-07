@@ -1,4 +1,5 @@
-import { useState, useRef } from "react"
+import { useEffect, useState, useRef } from "react"
+import { createAudioRecording, recordingBlob } from "../utils/audioRecording"
 import { createApi } from "../api/client"
 import { isApiRateLimitError } from "../api/errors"
 import { useStore } from "../store"
@@ -6,182 +7,133 @@ import type { BillingLimitFeature } from "../types"
 
 type MicState = "idle" | "loading" | "recording" | "transcribing"
 type GetToken = () => Promise<string | null>
+type RecordingSession = {
+  audio: ReturnType<typeof createAudioRecording>
+  onTranscript: (text: string) => void
+  silent: boolean
+  checkDuration: boolean
+  stopping: boolean
+}
 
 export function useMicRecording(getToken: GetToken, onTranscript: (text: string) => void) {
   const [micState, setMicState] = useState<MicState>("idle")
   const [micError, setMicError] = useState<string | null>(null)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const audioChunksRef = useRef<Blob[]>([])
-  const silenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const audioContextRef = useRef<AudioContext | null>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-  // flag to skip transcription when recording stops due to silence or cancellation
-  const silentStopRef = useRef(false)
-  const recordingStartRef = useRef<number>(0)
+  const sessionRef = useRef<RecordingSession | null>(null)
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    function dispose() {
+      const session = sessionRef.current
+      sessionRef.current = null
+      session?.audio.cancel()
+      if (errorTimerRef.current !== null) clearTimeout(errorTimerRef.current)
+    }
+    function onPageHide() {
+      dispose()
+      setMicState("idle")
+      setMicError(null)
+    }
+    window.addEventListener("pagehide", onPageHide)
+    return () => {
+      window.removeEventListener("pagehide", onPageHide)
+      dispose()
+    }
+  }, [])
 
   function showError(msg: string) {
     setMicError(msg)
     setMicState("idle")
-    setTimeout(() => setMicError(null), 3000)
+    if (errorTimerRef.current !== null) clearTimeout(errorTimerRef.current)
+    errorTimerRef.current = setTimeout(() => setMicError(null), 3000)
   }
 
-  function showRateLimitNotice(error: unknown) {
-    if (!isApiRateLimitError(error)) return false
-    useStore.getState().showBillingCreationLimitNotice(error.featureId as BillingLimitFeature, { resetAt: error.resetAt })
-    setMicError(null)
-    setMicState("idle")
-    return true
-  }
-
-  // releases the microphone hardware — clears the browser recording indicator
-  function stopTracks() {
-    streamRef.current?.getTracks().forEach((t) => t.stop())
-    streamRef.current = null
-  }
-
-  // stops the MediaRecorder (triggers onstop which handles cleanup and transcription)
-  function stopRecording(silent = false) {
-    if (silenceTimerRef.current) clearInterval(silenceTimerRef.current)
-    silentStopRef.current = silent
-    if (mediaRecorderRef.current?.state === "recording") {
-      mediaRecorderRef.current.stop()
-      if (!silent) setMicState("transcribing")
+  function stopRecording(silent = false, onDone?: (text: string) => void) {
+    const session = sessionRef.current
+    if (!session || session.stopping) return
+    session.stopping = true
+    session.silent = silent
+    if (onDone) {
+      session.onTranscript = onDone
+      session.checkDuration = false
     }
-  }
-
-  async function startRecording() {
-    if (!navigator.mediaDevices?.getUserMedia) return showError("Microphone not supported")
-    let stream: MediaStream
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      streamRef.current = stream
-    } catch (e: unknown) {
-      const name = (e as Error).name
-      if (name === "NotAllowedError") return showError("Microphone access denied")
-      if (name === "NotFoundError") return showError("No microphone found")
-      return showError("Microphone unavailable")
-    }
-
-    // use AnalyserNode to detect silence — auto-stop after 3s of no audio
-    const audioCtx = new AudioContext()
-    audioContextRef.current = audioCtx
-    const analyser = audioCtx.createAnalyser()
-    analyser.fftSize = 256
-    audioCtx.createMediaStreamSource(stream).connect(analyser)
-    const dataArray = new Uint8Array(analyser.frequencyBinCount)
-    let silentMs = 0
-
-    silenceTimerRef.current = setInterval(() => {
-      analyser.getByteFrequencyData(dataArray)
-      const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length / 255
-      if (avg < 0.01) {
-        silentMs += 100
-        if (silentMs >= 3000) stopRecording(true)
-      } else {
-        silentMs = 0
-      }
-    }, 100)
-
-    audioChunksRef.current = []
-    silentStopRef.current = false
-    recordingStartRef.current = 0
-    const recorder = new MediaRecorder(stream)
-    mediaRecorderRef.current = recorder
-
-    // collect audio chunks every 100ms to avoid losing the start of speech
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) {
-        // first real audio chunk — turn red and start the duration clock
-        if (!recordingStartRef.current) {
-          recordingStartRef.current = Date.now()
-          setMicState("recording")
-        }
-        audioChunksRef.current.push(e.data)
-      }
-    }
-    recorder.onstop = async () => {
-      if (silenceTimerRef.current) clearInterval(silenceTimerRef.current)
-      audioCtx.close()
-      stopTracks()
-      if (silentStopRef.current) {
-        silentStopRef.current = false
-        return showError("No sound detected")
-      }
-      const durationMs = Date.now() - recordingStartRef.current
-      if (durationMs < 1000) return showError("Recording too short (min 1 second)")
-      const blob = new Blob(audioChunksRef.current, { type: "audio/webm" })
-      if (blob.size < 1000) return showError("No audio detected")
-      setMicState("transcribing")
-      try {
-        const { text } = await createApi(getToken).whisper.transcribe(blob)
-        if (text.trim()) onTranscript(text.trim())
-        else showError("No speech detected")
-      } catch (error: unknown) {
-        if (showRateLimitNotice(error)) return
-        showError("Transcription failed")
-      } finally {
-        setMicState("idle")
-      }
-    }
-
-    recorder.start(50)
-  }
-
-  function handleMic() {
-    if (micState === "recording") stopRecording()
-    else if (micState === "idle") {
-      setMicState("loading")
-      startRecording()
-    }
-  }
-
-  // cancel without transcribing — used for ESC
-  function cancelRecording() {
-    if (silenceTimerRef.current) clearInterval(silenceTimerRef.current)
-    silentStopRef.current = true
-    if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop()
-    audioContextRef.current?.close()
-    stopTracks()
-    setMicState("idle")
-    setMicError(null)
-  }
-
-  // stop and transcribe into the input field for editing before sending
-  function stopForEditing() {
-    if (silenceTimerRef.current) clearInterval(silenceTimerRef.current)
-    silentStopRef.current = false
-    if (mediaRecorderRef.current?.state === "recording") {
-      mediaRecorderRef.current.stop()
-      setMicState("transcribing")
-    } else {
+    setMicState("transcribing")
+    if (!session.audio.stop() && sessionRef.current === session) {
+      sessionRef.current = null
       setMicState("idle")
     }
   }
 
-  // stop, transcribe, and immediately send to AI without showing the text — used for Cmd+Shift+M shortcut
-  function stopAndTranscribe(onDone: (text: string) => void) {
-    if (mediaRecorderRef.current?.state !== "recording") return
-    if (silenceTimerRef.current) clearInterval(silenceTimerRef.current)
-    const recorder = mediaRecorderRef.current
-    recorder.onstop = async () => {
-      audioContextRef.current?.close()
-      stopTracks()
-      const blob = new Blob(audioChunksRef.current, { type: "audio/webm" })
-      if (blob.size < 1000) { showError("No audio detected"); return }
-      setMicState("transcribing")
-      try {
-        const { text } = await createApi(getToken).whisper.transcribe(blob)
-        if (text.trim()) onDone(text.trim())
-        else showError("No speech detected")
-      } catch (error: unknown) {
-        if (showRateLimitNotice(error)) return
-        showError("Transcription failed")
-      } finally {
-        setMicState("idle")
-      }
+  function startRecording() {
+    if (sessionRef.current) return
+    if (!navigator.mediaDevices?.getUserMedia) return showError("Microphone not supported")
+    setMicState("loading")
+    setMicError(null)
+    const session: RecordingSession = {
+      silent: false,
+      checkDuration: true,
+      stopping: false,
+      onTranscript,
+      audio: createAudioRecording({
+        onRecording: () => {
+          if (sessionRef.current === session) setMicState("recording")
+        },
+        onSilence: () => {
+          if (sessionRef.current === session) stopRecording(true)
+        },
+        onError: (error) => {
+          if (sessionRef.current !== session) return
+          sessionRef.current = null
+          const name = (error as Error).name
+          showError(name === "NotAllowedError" ? "Microphone access denied"
+            : name === "NotFoundError" ? "No microphone found" : "Microphone unavailable")
+        },
+        onStop: async ({ chunks, mimeType, durationMs }) => {
+          if (sessionRef.current !== session) return
+          try {
+            if (session.silent) return showError("No sound detected")
+            if (session.checkDuration && durationMs < 1000) return showError("Recording too short (min 1 second)")
+            const blob = recordingBlob(chunks, mimeType)
+            if (blob.size < 1000) return showError("No audio detected")
+            setMicState("transcribing")
+            const { text } = await createApi(getToken).transcription.transcribe(blob)
+            if (sessionRef.current !== session) return
+            if (text.trim()) session.onTranscript(text.trim())
+            else showError("No speech detected")
+          } catch (error: unknown) {
+            if (sessionRef.current !== session) return
+            if (isApiRateLimitError(error)) {
+              useStore.getState().showBillingCreationLimitNotice(error.featureId as BillingLimitFeature, { resetAt: error.resetAt })
+              setMicError(null)
+            } else showError("Transcription failed")
+          } finally {
+            if (sessionRef.current === session) {
+              sessionRef.current = null
+              setMicState("idle")
+            }
+          }
+        },
+      }),
     }
-    recorder.stop()
+    sessionRef.current = session
+    void session.audio.start()
   }
 
-  return { micState, micError, handleMic, cancelRecording, stopForEditing, stopAndTranscribe }
+  function handleMic() {
+    if (micState === "recording") stopRecording()
+    else if (micState === "idle") startRecording()
+  }
+
+  function cancelRecording() {
+    const session = sessionRef.current
+    sessionRef.current = null
+    session?.audio.cancel()
+    setMicState("idle")
+    setMicError(null)
+  }
+
+  return {
+    micState, micError, handleMic, cancelRecording,
+    stopForEditing: () => stopRecording(),
+    stopAndTranscribe: (onDone: (text: string) => void) => stopRecording(false, onDone),
+  }
 }
