@@ -29,7 +29,7 @@ on:
         type: boolean
 
 concurrency:
-  group: dependabot-policy-${{ github.event.pull_request.number || inputs.pull_request || github.event.workflow_run.head_sha || github.event_name }}
+  group: dependabot-policy-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pull_request || github.event.workflow_run.head_sha || 'scan' }}
   cancel-in-progress: true
 
 permissions:
@@ -94,7 +94,8 @@ jobs:
       - classify
     if: >-
       always() &&
-      !(github.event_name == 'pull_request_target' && github.actor == 'dependabot[bot]') &&
+      !(github.actor == 'dependabot[bot]' &&
+        (github.event_name == 'pull_request_target' || github.event_name == 'pull_request_review')) &&
       (vars.DEPENDENCY_AUTO_MERGE_PAUSED != 'true' || inputs.prepare_only == true) &&
       (needs.classify.result == 'success' || needs.classify.result == 'skipped')
     runs-on: ubuntu-latest
