@@ -14,7 +14,7 @@
     "dev:backend": "bun run backend/index.ts",
     "dev:frontend": "bun run --cwd frontend dev",
     "start": "bun run backend/index.ts",
-    "test:automation": "bun test ./.github/scripts/dependency-gate.test.ts ./.github/scripts/runtime.test.ts",
+    "test:automation": "bun test ./.github/scripts/dependency-gate.test.ts ./.github/scripts/runtime.test.ts ./.github/scripts/version-policy.test.ts ./.github/scripts/release.test.ts",
     "test:ai-integration": "bun test backend/test/openrouter.test.ts frontend/src/utils/audioRecording.test.ts && bun test backend/test/aiProcessing.test.ts"
   },
   "devDependencies": {

@@ -3,12 +3,14 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+permissions:
+  contents: read
 concurrency:
   group: production-deployment
   cancel-in-progress: false
 jobs:
   deploy:
-    if: vars.PRODUCTION_DEPLOYMENT_PAUSED != 'true'
+    if: github.ref == 'refs/heads/main' && vars.PRODUCTION_DEPLOYMENT_PAUSED != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to VPS
@@ -27,3 +29,22 @@ jobs:
             git merge --ff-only "$DEPLOY_COMMIT"
             test "$(git rev-parse HEAD)" = "$DEPLOY_COMMIT"
             node .github/scripts/deploy-runtime.mjs
+
+  release:
+    name: Publish release
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Tag the deployed commit and publish release notes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node .github/scripts/release.mjs
