@@ -49,7 +49,7 @@ describe("responsive bundle boundaries", () => {
     expect(focusedTile).toContain("mobileThoughtInsertionIndex")
     expect(focusedTile).toContain("targetIndex")
     expect(focusedTile).toContain("textRef.current")
-    expect(focusedTile).toContain("onPointerDown={beginTextEditing}")
+    expect(focusedTile).toContain("onPointerUp={finishTextTap}")
     expect(focusedTile).toContain("onFocusTarget(id, targetCanvasId)")
     expect(focusedTile).not.toContain("Thought options")
     expect(focusedTile).not.toContain("⋯")

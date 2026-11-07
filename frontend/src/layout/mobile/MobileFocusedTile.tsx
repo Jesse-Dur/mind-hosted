@@ -11,6 +11,7 @@ import { beginCrossCanvasDrag, endCrossCanvasDrag, getCrossCanvasDrag, moveCross
 import { mobileThoughtInsertionIndex, mobileThoughtOrderIds, sameThoughtOrder } from "../../utils/mobileThoughtOrder"
 import { optimisticIdentityKey } from "../../utils/optimisticIdentity"
 import { hasExpandedTextSelection } from "../../utils/textSelection"
+import { focusThoughtText, observeMobileKeyboardDismiss, THOUGHT_TAP_SLOP } from "../../utils/mobileThoughtEditing"
 import { MobileThoughtList } from "./MobileThoughtList"
 import type { Thought, Tile } from "../../types"
 
@@ -22,7 +23,12 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [dragSession, setDragSession] = useState<CrossCanvasDragSession | null>(() => getCrossCanvasDrag())
   const thoughtInputRef = useRef<HTMLInputElement>(null)
+  const sectionRef = useRef<HTMLElement>(null)
+  const scrollTouch = useRef<{ pointerId: number; x: number; y: number; fromEditable: boolean; cancelled?: boolean } | null>(null)
+  const composingThought = useRef<EventTarget | null>(null)
+  const pendingBlur = useRef<HTMLElement | null>(null)
   const dragEndedAt = useRef(0)
+  useEffect(() => observeMobileKeyboardDismiss(finishThoughtEditing), [])
   useEffect(() => setTitle(tile?.title ?? ""), [tile?.id, tile?.title])
   useEffect(() => {
     let previousSession = getCrossCanvasDrag()
@@ -32,6 +38,25 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
       setDragSession(session)
     })
   }, [])
+
+  function finishThoughtEditing() {
+    const node = document.activeElement
+    if (!(node instanceof HTMLElement) || !sectionRef.current?.contains(node)
+      || !node.isContentEditable || !node.closest("[data-mobile-thought-id]")) return
+    if (composingThought.current === node) pendingBlur.current = node
+    else node.blur()
+  }
+
+  function moveScrollTouch(event: React.PointerEvent) {
+    const pending = scrollTouch.current
+    if (!pending || pending.pointerId !== event.pointerId
+      || Math.hypot(event.clientX - pending.x, event.clientY - pending.y) <= THOUGHT_TAP_SLOP) return
+    // A caret/selection drag may still have a collapsed selection here. Keep
+    // the editor focused, and wait for an actual list scroll before saving.
+    if (pending.fromEditable) return
+    scrollTouch.current = null
+    if (!hasExpandedTextSelection()) finishThoughtEditing()
+  }
 
   if (!tile) return <div style={{ height: "100%", display: "grid", placeItems: "center", color: "#aaa", textAlign: "center", padding: 24 }}><div><p style={{ fontSize: 15, marginBottom: 6 }}>This canvas is empty</p><p style={{ fontSize: 12 }}>Tap + in the canvas preview to add a tile.</p></div></div>
   const tileThoughts = thoughts.filter((thought) => thought.tile_id === tile.id).sort((a, b) => a.sort_order - b.sort_order)
@@ -58,7 +83,33 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
   }
 
   return (
-    <section data-mobile-tile-id={tile.id} style={{ height: "100%", background: thoughtDropTarget ? "#faf7ff" : "#fff", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: thoughtDropTarget ? "inset 0 0 0 3px rgba(124,58,237,.42)" : "inset 0 0 0 0 rgba(124,58,237,0)", transition: "background-color 160ms ease, box-shadow 160ms ease" }}>
+    <section ref={sectionRef} data-mobile-tile-id={tile.id}
+      onPointerDownCapture={(event) => {
+        if (event.pointerType === "touch" && event.isPrimary) scrollTouch.current = {
+          pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+          fromEditable: event.target instanceof Element && Boolean(event.target.closest('[contenteditable="true"]')),
+        }
+      }}
+      onPointerMoveCapture={moveScrollTouch}
+      onPointerUpCapture={(event) => { if (scrollTouch.current?.pointerId === event.pointerId) scrollTouch.current = null }}
+      onPointerCancelCapture={(event) => { if (scrollTouch.current?.pointerId === event.pointerId) scrollTouch.current.cancelled = true }}
+      onScrollCapture={(event) => {
+        // Native scrolling can cancel the pointer before it moves 9px. Wait for
+        // an actual list scroll: cancellation can also start text selection.
+        if (!scrollTouch.current?.cancelled || !(event.target instanceof HTMLElement)
+          || !event.target.hasAttribute("data-mobile-thought-list")) return
+        scrollTouch.current = null
+        if (!hasExpandedTextSelection()) finishThoughtEditing()
+      }}
+      onCompositionStartCapture={(event) => { composingThought.current = event.target }}
+      onCompositionEndCapture={() => {
+        composingThought.current = null
+        const node = pendingBlur.current
+        pendingBlur.current = null
+        if (node) queueMicrotask(() => { if (document.activeElement === node) node.blur() })
+      }}
+      onBlurCapture={() => { composingThought.current = null; pendingBlur.current = null }}
+      style={{ height: "100%", background: thoughtDropTarget ? "#faf7ff" : "#fff", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: thoughtDropTarget ? "inset 0 0 0 3px rgba(124,58,237,.42)" : "inset 0 0 0 0 rgba(124,58,237,0)", transition: "background-color 160ms ease, box-shadow 160ms ease" }}>
       <div style={{ height: 46, flexShrink: 0, display: "flex", alignItems: "center", borderBottom: "1px solid #e9e9e9", padding: "0 10px", gap: 8 }}>
         <input value={title} onChange={(event) => setTitle(event.target.value)} onBlur={(event) => commitTitle(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { event.currentTarget.value = tile.title; setTitle(tile.title); event.currentTarget.blur() } }} aria-label="Tile title" style={{ flex: 1, minWidth: 0, border: 0, outline: 0, background: "transparent", fontSize: canvasFontSize + 2, fontWeight: 700, color: "#171717" }} />
         <SyncStatusDot entities={[{ entityType: "tile", id: tile.id, clientId: tile.client_id }, ...tileThoughts.map((thought) => ({ entityType: "thought" as const, id: thought.id, clientId: thought.client_id }))]} />
@@ -95,6 +146,7 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
   const dragEndedAt = useRef(0)
   const textRef = useRef<HTMLSpanElement>(null)
   const tagMenuOpenedAt = useRef(0)
+  const textTap = useRef<{ pointerId: number; x: number; y: number } | null>(null)
   const longPress = useRef<{ timer: number; x: number; y: number; pointerId: number } | null>(null)
   useEffect(() => setLocalTags(thought.tags), [thought.tags])
   useEffect(() => () => cancelLongPress(), [])
@@ -197,6 +249,7 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
   function beginTagLongPress(event: React.PointerEvent<HTMLDivElement>) {
     if (editing || event.button !== 0) return
     cancelLongPress()
+    if (event.pointerType === "touch" && !event.isPrimary) return
     const rect = event.currentTarget.getBoundingClientRect()
     const menuWidth = Math.min(210, window.innerWidth - 20)
     const x = Math.max(10, Math.min(window.innerWidth - menuWidth - 10, event.clientX - menuWidth / 2))
@@ -217,20 +270,31 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
 
   function movePending(event: React.PointerEvent) {
     const pending = longPress.current
-    if (pending && Math.hypot(event.clientX - pending.x, event.clientY - pending.y) > 9) cancelLongPress()
+    if (pending && pending.pointerId === event.pointerId && Math.hypot(event.clientX - pending.x, event.clientY - pending.y) > THOUGHT_TAP_SLOP) cancelLongPress()
+    const tap = textTap.current
+    if (tap && tap.pointerId === event.pointerId && Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > THOUGHT_TAP_SLOP) textTap.current = null
   }
 
-  function beginTextEditing(event: React.PointerEvent<HTMLSpanElement>) {
-    if (event.button !== 0 || editing) return
+  function beginTextTap(event: React.PointerEvent<HTMLSpanElement>) {
+    textTap.current = null
+    if (event.button !== 0 || editing || (event.pointerType === "touch" && !event.isPrimary)) return
     if (Date.now() - dragEndedAt.current < 350 || Date.now() - tagMenuOpenedAt.current < 500) return
+    textTap.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY }
+  }
+
+  function finishTextTap(event: React.PointerEvent<HTMLSpanElement>) {
+    const tap = textTap.current
+    if (!tap || tap.pointerId !== event.pointerId) return
+    textTap.current = null
+    cancelLongPress()
+    if (editing || event.defaultPrevented || getCrossCanvasDrag() || hasExpandedTextSelection()
+      || Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > THOUGHT_TAP_SLOP
+      || Date.now() - dragEndedAt.current < 350 || Date.now() - tagMenuOpenedAt.current < 500) return
     setIntent()
     const node = textRef.current
-    if (node) {
-      // The element must become editable during the trusted pointer gesture so
-      // mobile browsers can place the caret and open the keyboard on this tap.
-      node.contentEditable = "true"
-      node.focus({ preventScroll: true })
-    }
+    // Keep focus inside the completed gesture so mobile browsers can open the
+    // keyboard, without opening it on the first touch of a scroll.
+    if (node) focusThoughtText(node, event.clientX, event.clientY)
     startEditing()
   }
 
@@ -238,7 +302,26 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
   return (
     <div data-mobile-thought-id={thought.id} style={{ position: "relative", display: "flex", alignItems: "center", gap: 7, padding: "8px 7px", minHeight: 38, boxSizing: "border-box", background: dragging ? "#f5f3ff" : "#fafafa", border: `1px solid ${dragging ? "#a78bfa" : "#e9e9e9"}`, borderRadius: 8, opacity: dragging ? .38 : 1, touchAction: "pan-y", transition: "opacity 150ms ease, border-color 150ms ease, transform 150ms ease", transform: dragging ? "scale(.985)" : "scale(1)" }} onPointerDown={beginTagLongPress} onPointerMove={movePending} onPointerUp={cancelLongPress} onPointerCancel={cancelLongPress} onContextMenu={(event) => event.preventDefault()}>
       <button onPointerDown={(event) => { event.stopPropagation(); beginDrag(event) }} aria-label={`Move thought${canvasName ? ` from ${canvasName}` : ""}`} style={{ width: 27, height: 27, flexShrink: 0, border: 0, background: "transparent", color: "#bbb", fontSize: 14, lineHeight: 1, touchAction: "none", display: "grid", placeItems: "center", userSelect: "none", WebkitUserSelect: "none" }}>⠿</button>
-      <span ref={textRef} contentEditable={editing || undefined} suppressContentEditableWarning onPointerDown={beginTextEditing} onClick={(event) => event.stopPropagation()} onBlur={(event) => saveEditing(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur() } if (event.key === "Escape") { event.currentTarget.textContent = thought.content; cancelEditing(); event.currentTarget.blur() } }} style={{ flex: 1, minWidth: 0, fontSize: canvasFontSize + 1, lineHeight: 1.45, color: "#222", outline: 0, cursor: "text", userSelect: "text" }}>{content}</span>
+      <span
+        ref={textRef}
+        contentEditable={editing || undefined}
+        suppressContentEditableWarning
+        onPointerDown={beginTextTap}
+        onPointerUp={finishTextTap}
+        onPointerCancel={() => { textTap.current = null }}
+        onClick={(event) => event.stopPropagation()}
+        onBlur={(event) => saveEditing(event.currentTarget.textContent ?? "")}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return
+          if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur() }
+          if (event.key === "Escape") {
+            event.currentTarget.textContent = thought.content
+            cancelEditing()
+            event.currentTarget.blur()
+          }
+        }}
+        style={{ flex: 1, minWidth: 0, fontSize: canvasFontSize + 1, lineHeight: 1.45, color: "#222", outline: 0, cursor: "text", userSelect: "text" }}
+      >{content}</span>
       <div style={{ height: 28, display: "flex", alignItems: "center", flexShrink: 0, alignSelf: "center" }}>
         <ThoughtTags tags={localTags} expandOnHover={false} />
         <span onPointerDown={(event) => event.stopPropagation()} style={{ width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} /></span>
