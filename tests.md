@@ -11,6 +11,7 @@ changes; it is not the pass/fail gate for application behavior.
 - `bun run test:frontend-sync`: run frontend offline sync tests.
 - `bun run test:store`: run frontend optimistic store tests.
 - `bun run typecheck`: run backend TypeScript checking and the frontend production build.
+- `bun run test:mobile`: run the mobile regression suite, including thought keyboard dismissal checks. The runner preloads IndexedDB before shared modules load.
 - `bun run bench:ai-prompts`: run the AI prompt benchmark harness.
 - `bun run test:ai`: kept as the existing AI benchmark entrypoint for compatibility.
 
@@ -51,6 +52,12 @@ Mobile thought entry checks use a temporary phone-width focused tile in the shar
 Mobile tab gesture checks use touch pointer events: a swipe scrolls without reordering or switching canvases, a stationary 350 ms hold arms reordering, and cancellation clears the pending hold. Holding and releasing opens tab actions. Mouse movement still starts reordering immediately.
 
 Mobile editing checks use isolated tile and thought data with captured writes. Escape restores the original title or thought text without saving; Enter and ordinary blur save changed text. A scrollable tag menu ignores touch pointer movement followed by cancellation, accepts mouse clicks and touch-style taps, and closes when its backdrop is pressed.
+
+Mobile thought scroll checks mount the real focused-tile component with captured writes. Touch-down leaves text read-only; a completed tap accepts up to 9px of movement and places the caret at the tapped text. Movement beyond that distance, cancellation, or another pointer cannot start editing. Repeated swipes after editing stay out of edit mode. Simulated keyboard dismissal and scroll intent save a changed draft once, including a native pan that cancels before the movement threshold. Dismissal waits for active text composition to finish. Native mouse typing, Enter/Escape, text selection, tag long presses, and cancelled thought dragging are also checked. Software keyboard visibility and native touch panning still need physical-device verification.
+
+Keyboard observer unit tests cover animated opening and dismissal, toolbar movement, keyboard height changes, rotation, pinch zoom, the window-resize fallback, and listener cleanup.
+
+Selection-drag regression checks start with a collapsed caret in the active thought. Crossing the movement threshold keeps the draft focused and unsaved before the selection expands. An actual list scroll after native pointer cancellation still commits the draft.
 
 Desktop thought editing checks use isolated data with captured writes. Escape restores the original text and exits editing without saving. Enter and clicking outside the editor each save the changed text once.
 
