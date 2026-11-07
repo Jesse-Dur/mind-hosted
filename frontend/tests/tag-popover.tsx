@@ -6,6 +6,7 @@ import { Thought } from "../src/components/Thought"
 import { TileHeader } from "../src/components/TileHeader"
 import { MobileFocusedTile } from "../src/layout/mobile/MobileFocusedTile"
 import { runThoughtSyncChecks } from "./thought-sync"
+import { SpinnerMotionFixture, runSpinnerMotionChecks } from "./spinner-motion"
 import { syncEntityKey } from "../src/sync/status"
 import type { SyncVisualState } from "../src/sync/types"
 import { useStore } from "../src/store"
@@ -37,6 +38,7 @@ function Row({ side, initial = names }: { side: string; initial?: string[] }) {
 }
 
 window.__tagRemovals = []
+window.runSpinnerMotionChecks = runSpinnerMotionChecks
 function MenuFixture() {
   const [tags, setTags] = useState(names.slice(0, 2))
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -123,13 +125,14 @@ if (params.has("sync")) useStore.setState({
   updateThoughtContent: async () => { fixtureSyncStatus("pending") },
   removeThought: async () => {},
 })
-createRoot(document.getElementById("root")!).render(params.has("sync") ? <SyncFixture /> : params.has("menu") ? <MenuFixture /> : <App />)
+createRoot(document.getElementById("root")!).render(params.has("spinner") ? <SpinnerMotionFixture /> : params.has("sync") ? <SyncFixture /> : params.has("menu") ? <MenuFixture /> : <App />)
 
 declare global {
   interface Window {
     __tagRemovals: string[]
     runTagPopoverChecks: typeof runTagPopoverChecks
     runThoughtSyncChecks: () => ReturnType<typeof runThoughtSyncChecks>
+    runSpinnerMotionChecks: typeof runSpinnerMotionChecks
     armTagPopoverHoverClose: typeof armTagPopoverHoverClose
     tagPopoverHoverCloseResult: { test: string; passed: boolean }[] | null
   }
