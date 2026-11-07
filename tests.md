@@ -11,7 +11,7 @@ changes; it is not the pass/fail gate for application behavior.
 - `bun run test:frontend-sync`: run frontend offline sync tests.
 - `bun run test:store`: run frontend optimistic store tests.
 - `bun run typecheck`: run backend TypeScript checking and the frontend production build.
-- `bun run test:mobile --preload fake-indexeddb/auto`: run the mobile regression suite with IndexedDB initialized before shared modules load. Without the preload, the combined suite currently fails its first account-partition test; that test passes in isolation.
+- `bun run test:mobile`: run the mobile regression suite, including thought keyboard dismissal checks. The runner preloads IndexedDB before shared modules load.
 - `bun run bench:ai-prompts`: run the AI prompt benchmark harness.
 - `bun run test:ai`: kept as the existing AI benchmark entrypoint for compatibility.
 
