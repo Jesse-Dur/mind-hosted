@@ -57,6 +57,8 @@ Mobile thought scroll checks mount the real focused-tile component with captured
 
 Keyboard observer unit tests cover animated opening and dismissal, toolbar movement, keyboard height changes, rotation, pinch zoom, the window-resize fallback, and listener cleanup.
 
+Selection-drag regression checks start with a collapsed caret in the active thought. Crossing the movement threshold keeps the draft focused and unsaved before the selection expands. An actual list scroll after native pointer cancellation still commits the draft.
+
 Desktop thought editing checks use isolated data with captured writes. Escape restores the original text and exits editing without saving. Enter and clicking outside the editor each save the changed text once.
 
 Desktop drag and resize checks use the real hook with in-memory writes. Rejected drops, cross-canvas no-ops, missing canvas rectangles, and rejected resizes restore transitions. Successful releases flush final geometry before transitions resume. Delayed completions cannot end a newer gesture. Checks also cover remounting, a click after a pending write, and Canvas-style delayed tile props.

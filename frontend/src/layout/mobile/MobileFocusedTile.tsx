@@ -24,7 +24,7 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
   const [dragSession, setDragSession] = useState<CrossCanvasDragSession | null>(() => getCrossCanvasDrag())
   const thoughtInputRef = useRef<HTMLInputElement>(null)
   const sectionRef = useRef<HTMLElement>(null)
-  const scrollTouch = useRef<{ pointerId: number; x: number; y: number; cancelled?: boolean } | null>(null)
+  const scrollTouch = useRef<{ pointerId: number; x: number; y: number; fromEditable: boolean; cancelled?: boolean } | null>(null)
   const composingThought = useRef<EventTarget | null>(null)
   const pendingBlur = useRef<HTMLElement | null>(null)
   const dragEndedAt = useRef(0)
@@ -51,6 +51,9 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
     const pending = scrollTouch.current
     if (!pending || pending.pointerId !== event.pointerId
       || Math.hypot(event.clientX - pending.x, event.clientY - pending.y) <= THOUGHT_TAP_SLOP) return
+    // A caret/selection drag may still have a collapsed selection here. Keep
+    // the editor focused, and wait for an actual list scroll before saving.
+    if (pending.fromEditable) return
     scrollTouch.current = null
     if (!hasExpandedTextSelection()) finishThoughtEditing()
   }
@@ -81,7 +84,12 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
 
   return (
     <section ref={sectionRef} data-mobile-tile-id={tile.id}
-      onPointerDownCapture={(event) => { if (event.pointerType === "touch" && event.isPrimary) scrollTouch.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY } }}
+      onPointerDownCapture={(event) => {
+        if (event.pointerType === "touch" && event.isPrimary) scrollTouch.current = {
+          pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+          fromEditable: event.target instanceof Element && Boolean(event.target.closest('[contenteditable="true"]')),
+        }
+      }}
       onPointerMoveCapture={moveScrollTouch}
       onPointerUpCapture={(event) => { if (scrollTouch.current?.pointerId === event.pointerId) scrollTouch.current = null }}
       onPointerCancelCapture={(event) => { if (scrollTouch.current?.pointerId === event.pointerId) scrollTouch.current.cancelled = true }}
