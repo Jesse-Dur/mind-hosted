@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useStore } from "../../store"
 import { SyncStatusDot } from "../../components/SyncStatusDot"
+import { CloseButton } from "../../components/CloseButton"
 import { ThoughtInput } from "../../components/ThoughtInput"
 import { ThoughtTags } from "../../components/ThoughtTags"
 import { TagMenu } from "../../components/TagMenu"
@@ -62,7 +63,7 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
       <div style={{ height: 46, flexShrink: 0, display: "flex", alignItems: "center", borderBottom: "1px solid #e9e9e9", padding: "0 10px", gap: 8 }}>
         <input value={title} onChange={(event) => setTitle(event.target.value)} onBlur={(event) => commitTitle(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { event.currentTarget.value = tile.title; setTitle(tile.title); event.currentTarget.blur() } }} aria-label="Tile title" style={{ flex: 1, minWidth: 0, border: 0, outline: 0, background: "transparent", fontSize: canvasFontSize + 2, fontWeight: 700, color: "#171717" }} />
         <SyncStatusDot entities={[{ entityType: "tile", id: tile.id, clientId: tile.client_id }, ...tileThoughts.map((thought) => ({ entityType: "thought" as const, id: thought.id, clientId: thought.client_id }))]} />
-        <button onClick={() => setConfirmDelete(true)} aria-label="Delete tile" style={smallButton}>×</button>
+        <CloseButton onClick={() => setConfirmDelete(true)} ariaLabel="Delete tile" size={28} iconSize={12} />
       </div>
       <MobileThoughtList
         thoughts={displayedThoughts}
@@ -240,9 +241,13 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
       <button onPointerDown={(event) => { event.stopPropagation(); beginDrag(event) }} aria-label={`Move thought${canvasName ? ` from ${canvasName}` : ""}`} style={{ width: 27, height: 27, flexShrink: 0, border: 0, background: "transparent", color: "#bbb", fontSize: 14, lineHeight: 1, touchAction: "none", display: "grid", placeItems: "center", userSelect: "none", WebkitUserSelect: "none" }}>⠿</button>
       <span ref={textRef} contentEditable={editing || undefined} suppressContentEditableWarning onPointerDown={beginTextEditing} onClick={(event) => event.stopPropagation()} onBlur={(event) => saveEditing(event.currentTarget.textContent ?? "")} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur() } if (event.key === "Escape") { event.currentTarget.textContent = thought.content; cancelEditing(); event.currentTarget.blur() } }} style={{ flex: 1, minWidth: 0, fontSize: canvasFontSize + 1, lineHeight: 1.45, color: "#222", outline: 0, cursor: "text", userSelect: "text" }}>{content}</span>
       <div style={{ height: 28, display: "flex", alignItems: "center", flexShrink: 0, alignSelf: "center" }}>
-        <ThoughtTags tags={localTags} expandOnHover={false} />
+        <ThoughtTags tags={localTags} onRemove={(tag) => {
+          const tags = localTags.filter((item) => item !== tag)
+          setLocalTags(tags)
+          void updateThoughtTags(thought.id, tags).catch(console.error)
+        }} />
         <span onPointerDown={(event) => event.stopPropagation()} style={{ width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} /></span>
-        <button onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setConfirmDelete(true) }} aria-label="Delete thought" style={{ ...smallButton, fontSize: 18 }}>×</button>
+        <CloseButton onClick={(event) => { event.stopPropagation(); setConfirmDelete(true) }} ariaLabel="Delete thought" size={28} iconSize={12} />
       </div>
       {confirmDelete && <DeleteDialog
         title="Delete this thought?"
@@ -255,5 +260,3 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
     </div>
   )
 }
-
-const smallButton: React.CSSProperties = { width: 28, height: 28, flexShrink: 0, border: 0, borderRadius: 14, background: "transparent", color: "#aaa", fontSize: 20, lineHeight: 1, display: "grid", placeItems: "center", userSelect: "none", WebkitUserSelect: "none" }

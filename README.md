@@ -25,8 +25,8 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 ## Features
 
 - **Freeform canvas** — drag to draw tiles anywhere on a canvas that scales to your screen
-- **Thoughts** — dot-point notes inside tiles, draggable to reorder or move between tiles
-- **Tags** — colour-coded tags with an expanding pill UI, searchable via Spotlight
+- **Thoughts** — dot-point notes inside tiles, draggable to reorder or move between tiles. Desktop sync indicators stay centred without resizing the row or rewrapping its text; tag dots slide into place when the indicator clears.
+- **Tags** — colour-coded dots scale with the thought's font size and open a floating panel headed "Tags" on hover or tap. Dots move into labelled pills without shifting the thought; each pill's X removes that tag from the thought. Right-click or long-press a thought to toggle tags. Both popups share the original "Tag as" menu's outer box and heading style; their text, dots, controls, and spacing follow the Font Size setting. The expanded mobile view keeps larger close targets. Tags are searchable via Spotlight.
 - **Spotlight** (`Cmd+K`) — fuzzy search across tiles, thoughts, and tags. Workspace and Past results stay current while search is open. Type `#tag` to filter by tag, `>` to send to AI, or `t` to create a new tile
 - **AI processing** — type a thought in natural language, the AI classifies it, splits compound inputs, applies tags, and files it in the right tile. Can also update, delete, and move existing thoughts
 - **History** — local and synced actions share the same badges. Older local entries load as you scroll; every entry is retained, and unresolved sync issues stay available. Expand appears only for additional information, such as before/after values, positions, tags, full text, or AI input and actions.

@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useState } from "react"
 import { createPortal } from "react-dom"
 import { useStore } from "../store"
 import { serverClientId } from "../sync/ids"
 import { syncEntityKey } from "../sync/status"
 import { SYNC_STATE_LABEL, syncIndicatorKind, syncStateColor } from "../sync/statusPresentation"
 import type { SyncActivityRecord, SyncActivityState, SyncEntityStatus, SyncEntityType, SyncVisualState } from "../sync/types"
-import { SavingSpinner } from "./SavingSpinner"
+import { SavingSpinner, SAVING_SPINNER_FADE_MS } from "./SavingSpinner"
 
 type EntityIdentity = {
   entityType: SyncEntityType
@@ -106,7 +106,7 @@ function SyncStateVisual({ state }: { state: SyncVisualState }) {
   return <><style>{`@keyframes syncLocalOnlyIn { from { opacity: 0; transform: scale(.7) } to { opacity: 1; transform: scale(1) } }`}</style><span aria-hidden style={{ width: 9, height: 9, flexShrink: 0, borderRadius: "50%", background: "transparent", border: `1.5px solid ${syncStateColor("local_only")}`, boxSizing: "border-box", animation: "syncLocalOnlyIn 180ms cubic-bezier(.2,.8,.2,1)" }} /></>
 }
 
-export function SyncStatusDot({ entities, appearance = "indicator", fallbackState, activity }: { entities: EntityIdentity[]; appearance?: "indicator" | "text"; fallbackState?: SyncActivityState; activity?: SyncActivityRecord }) {
+export function SyncStatusDot({ entities, appearance = "indicator", fallbackState, activity, onVisibilityChange }: { entities: EntityIdentity[]; appearance?: "indicator" | "text"; fallbackState?: SyncActivityState; activity?: SyncActivityRecord; onVisibilityChange?: (visible: boolean) => void }) {
   const statusMap = useStore((state) => state.syncEntityStatuses)
   const [open, setOpen] = useState(false)
   const entityStatuses = useMemo(() => entities
@@ -128,11 +128,24 @@ export function SyncStatusDot({ entities, appearance = "indicator", fallbackStat
   }, [activity, entityStatuses])
   const status = statuses[0]
   const visibleState = activity?.state ?? status?.state ?? fallbackState
+  const fadeKey = visibleState === "synced" ? `${status?.key ?? activity?.opId ?? "fallback"}:${status?.updatedAt ?? activity?.updatedAt ?? 0}` : null
+  const [finishedFade, setFinishedFade] = useState<string | null>(null)
+  useEffect(() => {
+    setFinishedFade(null)
+    if (appearance !== "indicator" || fadeKey === null) return
+    // The acknowledgement remains in the status store for History. Its visual
+    // slot should disappear when the spinner's own 750ms fade has finished.
+    const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : SAVING_SPINNER_FADE_MS
+    const timer = window.setTimeout(() => setFinishedFade(fadeKey), delay)
+    return () => window.clearTimeout(timer)
+  }, [appearance, fadeKey])
+  const visible = Boolean(visibleState) && !(appearance === "indicator" && fadeKey !== null && finishedFade === fadeKey)
+  useLayoutEffect(() => { onVisibilityChange?.(visible) }, [visible, onVisibilityChange])
   const interactive = Boolean(status?.opId && (status.state === "error" || status.state === "local_only"))
   useEffect(() => {
     if (open && !interactive) setOpen(false)
   }, [interactive, open])
-  if (!visibleState) return null
+  if (!visible || !visibleState) return null
   const label = SYNC_STATE_LABEL[visibleState]
 
   const trigger = appearance === "text"
@@ -152,7 +165,7 @@ export function SyncStatusDot({ entities, appearance = "indicator", fallbackStat
         aria-label={label}
         title={label}
         onClick={(event) => { event.stopPropagation(); if (interactive) setOpen(true) }}
-        style={{ width: 20, height: 20, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", padding: 0, background: "transparent", borderRadius: 99, cursor: interactive ? "pointer" : "default" }}
+        style={{ width: 20, height: 20, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", padding: 0, background: "transparent", borderRadius: 99, cursor: interactive ? "pointer" : "default" }}
       >
         <SyncStateVisual state={visibleState as SyncVisualState} />
       </button>

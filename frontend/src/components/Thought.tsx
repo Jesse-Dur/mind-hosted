@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useLayoutEffect } from "react"
 import { createPortal } from "react-dom"
 import { useStore } from "../store"
 import { TagMenu } from "./TagMenu"
@@ -6,7 +6,7 @@ import { CloseButton } from "./CloseButton"
 import { ThoughtTags } from "./ThoughtTags"
 import { useThoughtEdit } from "../hooks/useThoughtEdit"
 import { SyncStatusDot } from "./SyncStatusDot"
-import { getThoughtControlMetrics } from "../utils/canvasFontSize"
+import { getThoughtControlMetrics, THOUGHT_SYNC_RESERVE } from "../utils/canvasFontSize"
 import type { Thought as ThoughtType } from "../types"
 
 interface Props {
@@ -34,6 +34,13 @@ export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver
   const isHighlighted = highlightedId?.type === "thought" && Number(highlightedId.id) === Number(thought.id)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [localTags, setLocalTags] = useState(thought.tags)
+  const [syncVisible, setSyncVisible] = useState(false)
+  const [tagPopoverOpen, setTagPopoverOpen] = useState(false)
+  const [tagsShifted, setTagsShifted] = useState(false)
+  useLayoutEffect(() => {
+    // Keep the source dots still until the popover has returned to them.
+    if (!tagPopoverOpen) setTagsShifted(syncVisible)
+  }, [syncVisible, tagPopoverOpen])
 
   useEffect(() => { setLocalTags(thought.tags) }, [thought.tags])
   const { editing, content, saveEditing, startEditing, setIntent, cancelEditing } = useThoughtEdit(thought)
@@ -48,6 +55,10 @@ export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver
   async function onTagUpdate(tags: string[]) {
     setLocalTags(tags)
     await updateThoughtTags(thought.id, tags)
+  }
+
+  function removeTag(tag: string) {
+    void onTagUpdate(localTags.filter((item) => item !== tag)).catch(console.error)
   }
 
   return (
@@ -115,9 +126,16 @@ export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver
             style={{ color: "#1a1a1a", outline: "none", cursor: "text", userSelect: "text", fontSize: "inherit", lineHeight: "inherit" }}
           >{content}</span>
         </div>
-        <ThoughtTags tags={localTags} />
-        <SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} />
-        <CloseButton onClick={remove} size={controlSize} iconSize={closeIconSize} />
+        <div data-thought-controls style={{ position: "relative", display: "flex", alignItems: "center", gap: localTags.length ? 6 : 0, flexShrink: 0, height: controlSize, paddingLeft: THOUGHT_SYNC_RESERVE }}>
+          <style>{`@media (prefers-reduced-motion: reduce) { [data-thought-tag-slot] { transition: none !important; } }`}</style>
+          <div data-thought-tag-slot style={{ display: "flex", alignItems: "center", transform: tagsShifted ? `translateX(-${THOUGHT_SYNC_RESERVE}px)` : "translateX(0)", transition: "transform 220ms cubic-bezier(.2,.8,.2,1)" }}>
+            <ThoughtTags tags={localTags} fontSize={fontSize} onRemove={removeTag} onOpenChange={setTagPopoverOpen} />
+          </div>
+          <span style={{ position: "absolute", right: controlSize + 6, top: "50%", width: 20, height: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} onVisibilityChange={setSyncVisible} />
+          </span>
+          <CloseButton onClick={remove} size={controlSize} iconSize={closeIconSize} />
+        </div>
       </div>
 
       {menu && createPortal(

@@ -3,6 +3,7 @@ import {
   getEffectiveCanvasFontSize,
   getThoughtControlMetrics,
   getThoughtRequiredTileWidth,
+  getThoughtTagMetrics,
 } from "./canvasFontSize"
 
 describe("thought control sizing", () => {
@@ -20,16 +21,26 @@ describe("thought control sizing", () => {
   })
 
   test("reduces the whole tile font when the preferred size cannot fit", () => {
-    expect(getEffectiveCanvasFontSize(36, 96, 0)).toBe(18)
-    expect(getEffectiveCanvasFontSize(36, 96, 1)).toBe(9)
-    expect(getEffectiveCanvasFontSize(36, 120, 1)).toBe(23)
-    expect(getEffectiveCanvasFontSize(36, 120, 2)).toBe(17)
+    expect(getEffectiveCanvasFontSize(36, 144, 0)).toBe(28)
+    expect(getEffectiveCanvasFontSize(36, 144, 1)).toBe(20)
+    expect(getEffectiveCanvasFontSize(36, 144, 2)).toBe(13)
+    expect(getEffectiveCanvasFontSize(36, 168, 2)).toBe(21)
   })
 
-  test("reserves the full width of every tag dot", () => {
-    expect(getThoughtRequiredTileWidth(8, 1)).toBe(96)
-    expect(getThoughtRequiredTileWidth(8, 2)).toBe(108)
-    expect(getThoughtRequiredTileWidth(8, 3)).toBe(120)
+  test("reserves every tag dot and a stable sync control area", () => {
+    expect(getThoughtRequiredTileWidth(8, 1)).toBe(119)
+    expect(getThoughtRequiredTileWidth(8, 2)).toBe(127)
+    expect(getThoughtRequiredTileWidth(8, 3)).toBe(135)
   })
 
+  test("scales tag circles and spacing with the displayed thought font", () => {
+    expect(getThoughtTagMetrics(8)).toEqual({ size: 5, width: 8, height: 13, trailingOffset: 3 })
+    expect(getThoughtTagMetrics(13)).toEqual({ size: 8, width: 12, height: 18, trailingOffset: 4 })
+    expect(getThoughtTagMetrics(36)).toEqual({ size: 22, width: 33, height: 40, trailingOffset: 11 })
+    for (const fontSize of [8, 13, 24, 36]) {
+      const metrics = getThoughtTagMetrics(fontSize)
+      expect(metrics.size).toBeLessThanOrEqual(metrics.height)
+      expect(getThoughtRequiredTileWidth(fontSize, 3) - getThoughtRequiredTileWidth(fontSize, 2)).toBe(metrics.width)
+    }
+  })
 })
