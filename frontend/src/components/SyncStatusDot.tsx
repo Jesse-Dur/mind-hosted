@@ -6,6 +6,7 @@ import { syncEntityKey } from "../sync/status"
 import { SYNC_STATE_LABEL, syncIndicatorKind, syncStateColor } from "../sync/statusPresentation"
 import type { SyncActivityRecord, SyncActivityState, SyncEntityStatus, SyncEntityType, SyncVisualState } from "../sync/types"
 import { SavingSpinner, SAVING_SPINNER_FADE_MS } from "./SavingSpinner"
+import { DEFAULT_CANVAS_FONT_SIZE, getThoughtSyncMetrics } from "../utils/canvasFontSize"
 
 type EntityIdentity = {
   entityType: SyncEntityType
@@ -96,17 +97,18 @@ function actionButtonStyle(kind: "primary" | "neutral" | "danger"): React.CSSPro
   }
 }
 
-function SyncStateVisual({ state }: { state: SyncVisualState }) {
+function SyncStateVisual({ state, spinnerSize = 12 }: { state: SyncVisualState; spinnerSize?: number }) {
   const kind = syncIndicatorKind(state)
-  if (kind === "spinner") return <SavingSpinner />
-  if (kind === "synced_fade") return <SavingSpinner fading />
+  if (kind === "spinner") return <SavingSpinner size={spinnerSize} />
+  if (kind === "synced_fade") return <SavingSpinner fading size={spinnerSize} />
   if (kind === "error") {
     return <><style>{`@keyframes syncAttentionIn { from { opacity: 0; transform: scale(.68) } to { opacity: 1; transform: scale(1) } }`}</style><span aria-hidden style={{ width: 14, height: 14, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", border: "1px solid #e8bcbc", background: "#fff8f8", color: syncStateColor("error"), fontSize: 10, lineHeight: 1, fontWeight: 750, boxSizing: "border-box", animation: "syncAttentionIn 180ms cubic-bezier(.2,.8,.2,1)" }}>!</span></>
   }
   return <><style>{`@keyframes syncLocalOnlyIn { from { opacity: 0; transform: scale(.7) } to { opacity: 1; transform: scale(1) } }`}</style><span aria-hidden style={{ width: 9, height: 9, flexShrink: 0, borderRadius: "50%", background: "transparent", border: `1.5px solid ${syncStateColor("local_only")}`, boxSizing: "border-box", animation: "syncLocalOnlyIn 180ms cubic-bezier(.2,.8,.2,1)" }} /></>
 }
 
-export function SyncStatusDot({ entities, appearance = "indicator", fallbackState, activity, onVisibilityChange }: { entities: EntityIdentity[]; appearance?: "indicator" | "text"; fallbackState?: SyncActivityState; activity?: SyncActivityRecord; onVisibilityChange?: (visible: boolean) => void }) {
+export function SyncStatusDot({ entities, appearance = "indicator", fallbackState, activity, onVisibilityChange, fontSize = DEFAULT_CANVAS_FONT_SIZE }: { entities: EntityIdentity[]; appearance?: "indicator" | "text"; fallbackState?: SyncActivityState; activity?: SyncActivityRecord; onVisibilityChange?: (visible: boolean) => void; fontSize?: number }) {
+  const { spinnerSize, controlSize } = getThoughtSyncMetrics(fontSize)
   const statusMap = useStore((state) => state.syncEntityStatuses)
   const [open, setOpen] = useState(false)
   const entityStatuses = useMemo(() => entities
@@ -165,9 +167,9 @@ export function SyncStatusDot({ entities, appearance = "indicator", fallbackStat
         aria-label={label}
         title={label}
         onClick={(event) => { event.stopPropagation(); if (interactive) setOpen(true) }}
-        style={{ width: 20, height: 20, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", padding: 0, background: "transparent", borderRadius: 99, cursor: interactive ? "pointer" : "default" }}
+        style={{ width: controlSize, height: controlSize, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", padding: 0, background: "transparent", borderRadius: 99, cursor: interactive ? "pointer" : "default" }}
       >
-        <SyncStateVisual state={visibleState as SyncVisualState} />
+        <SyncStateVisual state={visibleState as SyncVisualState} spinnerSize={spinnerSize} />
       </button>
     )
 

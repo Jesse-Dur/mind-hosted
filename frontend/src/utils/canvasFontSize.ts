@@ -1,10 +1,6 @@
 export const DEFAULT_CANVAS_FONT_SIZE = 13
 export const MIN_CANVAS_FONT_SIZE = 8
 export const MAX_CANVAS_FONT_SIZE = 36
-// A 20px sync button and its 6px gap. Keep this space stable while dots move
-// inside it, so syncing cannot rewrap the thought's text.
-export const THOUGHT_SYNC_RESERVE = 26
-
 const THOUGHT_HORIZONTAL_CHROME = 40
 const THOUGHT_GAP = 6
 const MIN_THOUGHT_TEXT_WIDTH = 4
@@ -35,6 +31,13 @@ export function getThoughtTagMetrics(fontSize: number) {
   return { size, width: size + padding, height: getThoughtControlMetrics(fontSize).controlSize, trailingOffset: padding }
 }
 
+export function getThoughtSyncMetrics(fontSize: number) {
+  const spinnerSize = Math.round(12 * normalizeCanvasFontSize(fontSize) / DEFAULT_CANVAS_FONT_SIZE)
+  const controlSize = Math.max(20, spinnerSize + 8)
+  // Reserve the same width before, during, and after syncing so text cannot rewrap.
+  return { spinnerSize, controlSize, reserve: controlSize + THOUGHT_GAP }
+}
+
 export function getThoughtRequiredTileWidth(fontSize: number, tagCount: number) {
   const { controlSize } = getThoughtControlMetrics(fontSize)
   const tagMetrics = getThoughtTagMetrics(fontSize)
@@ -46,7 +49,7 @@ export function getThoughtRequiredTileWidth(fontSize: number, tagCount: number) 
   const gapWidth = (hasTags ? 3 : 2) * THOUGHT_GAP
 
   return THOUGHT_HORIZONTAL_CHROME
-    + THOUGHT_SYNC_RESERVE
+    + getThoughtSyncMetrics(fontSize).reserve
     + controlSize * 2
     + tagWidth
     + gapWidth

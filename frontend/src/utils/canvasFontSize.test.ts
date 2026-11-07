@@ -3,6 +3,7 @@ import {
   getEffectiveCanvasFontSize,
   getThoughtControlMetrics,
   getThoughtRequiredTileWidth,
+  getThoughtSyncMetrics,
   getThoughtTagMetrics,
 } from "./canvasFontSize"
 
@@ -21,10 +22,17 @@ describe("thought control sizing", () => {
   })
 
   test("reduces the whole tile font when the preferred size cannot fit", () => {
-    expect(getEffectiveCanvasFontSize(36, 144, 0)).toBe(28)
-    expect(getEffectiveCanvasFontSize(36, 144, 1)).toBe(20)
+    expect(getEffectiveCanvasFontSize(36, 144, 0)).toBe(24)
+    expect(getEffectiveCanvasFontSize(36, 144, 1)).toBe(18)
     expect(getEffectiveCanvasFontSize(36, 144, 2)).toBe(13)
-    expect(getEffectiveCanvasFontSize(36, 168, 2)).toBe(21)
+    expect(getEffectiveCanvasFontSize(36, 168, 2)).toBe(20)
+    for (const tileWidth of [144, 168, 240, 400]) {
+      for (const tagCount of [0, 1, 2, 3]) {
+        const fitted = getEffectiveCanvasFontSize(36, tileWidth, tagCount)
+        expect(getThoughtRequiredTileWidth(fitted, tagCount)).toBeLessThanOrEqual(tileWidth)
+        if (fitted < 36) expect(getThoughtRequiredTileWidth(fitted + 1, tagCount)).toBeGreaterThan(tileWidth)
+      }
+    }
   })
 
   test("reserves every tag dot and a stable sync control area", () => {
@@ -41,6 +49,15 @@ describe("thought control sizing", () => {
       const metrics = getThoughtTagMetrics(fontSize)
       expect(metrics.size).toBeLessThanOrEqual(metrics.height)
       expect(getThoughtRequiredTileWidth(fontSize, 3) - getThoughtRequiredTileWidth(fontSize, 2)).toBe(metrics.width)
+    }
+  })
+
+  test("reserves enough width for the scaled spinner at every supported font size", () => {
+    expect([8, 13, 24, 36].map((size) => getThoughtSyncMetrics(size).spinnerSize)).toEqual([7, 12, 22, 33])
+    for (let fontSize = 8; fontSize <= 36; fontSize += 1) {
+      const metrics = getThoughtSyncMetrics(fontSize)
+      expect(metrics.controlSize).toBeGreaterThanOrEqual(metrics.spinnerSize + 8)
+      expect(metrics.reserve).toBe(metrics.controlSize + 6)
     }
   })
 })

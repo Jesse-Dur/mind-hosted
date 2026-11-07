@@ -8,6 +8,7 @@ import { ThoughtTags } from "../../components/ThoughtTags"
 import { TagMenu } from "../../components/TagMenu"
 import { DeleteDialog } from "../../components/DeleteDialog"
 import { useThoughtEdit } from "../../hooks/useThoughtEdit"
+import { getThoughtSyncMetrics } from "../../utils/canvasFontSize"
 import { beginCrossCanvasDrag, endCrossCanvasDrag, getCrossCanvasDrag, moveCrossCanvasDrag, setThoughtDragTarget, subscribeCrossCanvasDrag, type CrossCanvasDragSession } from "../../utils/crossCanvasDrag"
 import { mobileThoughtInsertionIndex, mobileThoughtOrderIds, sameThoughtOrder } from "../../utils/mobileThoughtOrder"
 import { optimisticIdentityKey } from "../../utils/optimisticIdentity"
@@ -88,6 +89,7 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
 
 function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTarget: FocusTarget }) {
   const { activeCanvasId, canvases, canvasFontSize, removeThought, updateThoughtTags, moveThoughtToTile, setActiveCanvas } = useStore()
+  const syncMetrics = getThoughtSyncMetrics(canvasFontSize)
   const { editing, content, saveEditing, startEditing, setIntent, cancelEditing } = useThoughtEdit(thought)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -246,7 +248,7 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
           setLocalTags(tags)
           void updateThoughtTags(thought.id, tags).catch(console.error)
         }} />
-        <span onPointerDown={(event) => event.stopPropagation()} style={{ width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} /></span>
+        <span onPointerDown={(event) => event.stopPropagation()} style={{ width: syncMetrics.controlSize, height: 0, marginLeft: localTags.length ? 6 : 0, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} fontSize={canvasFontSize} /></span>
         <CloseButton onClick={(event) => { event.stopPropagation(); setConfirmDelete(true) }} ariaLabel="Delete thought" size={28} iconSize={12} />
       </div>
       {confirmDelete && <DeleteDialog

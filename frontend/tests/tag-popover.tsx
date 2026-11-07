@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client"
 import { ThoughtTags } from "../src/components/ThoughtTags"
 import { TagMenu } from "../src/components/TagMenu"
 import { Thought } from "../src/components/Thought"
+import { MobileFocusedTile } from "../src/layout/mobile/MobileFocusedTile"
+import { runThoughtSyncChecks } from "./thought-sync"
 import { syncEntityKey } from "../src/sync/status"
 import type { SyncVisualState } from "../src/sync/types"
 import { useStore } from "../src/store"
@@ -59,6 +61,8 @@ const syncSamples = [
   { id: 103, width: 240, fontSize: 13, content: "A longer thought that wraps across several lines in a narrow tile" },
   { id: 104, width: 330, fontSize: 24, content: "Large text" },
   { id: 105, width: 144, fontSize: 8, content: "No tags", tags: [] },
+  { id: 106, width: 430, fontSize: 36, content: "Largest text" },
+  { id: 107, width: 430, fontSize: 36, content: "" },
 ]
 
 function fixtureSyncStatus(state: SyncVisualState | null) {
@@ -68,8 +72,11 @@ function fixtureSyncStatus(state: SyncVisualState | null) {
     return state ? [[key, { key, entityType: "thought" as const, clientId, state, opId: null, action: null, error: null, updatedAt: Date.now() }]] : []
   })) })
 }
+window.runThoughtSyncChecks = () => runThoughtSyncChecks(fixtureSyncStatus)
 
 function SyncFixture() {
+  const fontSize = useStore((state) => state.canvasFontSize)
+  const mobile = params.has("mobile")
   return <>
     <div style={{ display: "flex", gap: 8, padding: 16 }}>
       <button onClick={() => fixtureSyncStatus("pending")}>Pending</button>
@@ -78,7 +85,11 @@ function SyncFixture() {
       <button onClick={() => fixtureSyncStatus("local_only")}>Local only</button>
       <button onClick={() => fixtureSyncStatus(null)}>Clear</button>
     </div>
-    {syncSamples.map(({ id, width, fontSize, content, tags = names.slice(0, 2) }) => <div key={id} data-sync-sample={id} style={{ width, margin: 16 }}>
+    {mobile && <label>Font size <select aria-label="Font size" value={fontSize} onChange={(event) => useStore.setState({ canvasFontSize: Number(event.target.value) })}>
+      {[8, 13, 24, 36].map((size) => <option key={size} value={size}>{size}</option>)}
+    </select></label>}
+    {mobile ? <div style={{ height: 1400 }}><MobileFocusedTile tile={{ id: 1, canvas_id: null, title: "Sync sizing", x: 0, y: 0, width: 1, height: 1, importance: 0, visible: true, created_at: "" }} thoughts={syncSamples.map(({ id, content, tags = names.slice(0, 2) }) => ({ id, client_id: `fixture-${id}`, tile_id: 1, content, tags, sort_order: id, created_at: "" }))} onFocusTarget={() => {}} /></div>
+    : syncSamples.map(({ id, width, fontSize, content, tags = names.slice(0, 2) }) => <div key={id} data-sync-sample={id} style={{ width, margin: 16 }}>
       <Thought thought={{ id, client_id: `fixture-${id}`, tile_id: 1, content, tags, sort_order: 0, created_at: "" }} fontSize={fontSize} dragging={false} onDragStart={() => {}} onDragMove={() => {}} onDragOver={() => {}} onDrop={() => {}} />
     </div>)}
   </>
@@ -106,6 +117,7 @@ declare global {
   interface Window {
     __tagRemovals: string[]
     runTagPopoverChecks: typeof runTagPopoverChecks
+    runThoughtSyncChecks: () => ReturnType<typeof runThoughtSyncChecks>
     armTagPopoverHoverClose: typeof armTagPopoverHoverClose
     tagPopoverHoverCloseResult: { test: string; passed: boolean }[] | null
   }
