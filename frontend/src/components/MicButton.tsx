@@ -1,5 +1,6 @@
 import { Tooltip } from "./Tooltip"
 import { useOnline } from "../utils/connectivity"
+import { SavingSpinner } from "./SavingSpinner"
 
 type MicState = "idle" | "loading" | "recording" | "transcribing"
 
@@ -25,7 +26,6 @@ export function MicButton({ micState, onMicClick }: Props) {
         <style>{`
           @keyframes micFill { from { stroke-dashoffset: ${CIRCUMFERENCE} } to { stroke-dashoffset: 0 } }
           @keyframes micPulse { 0%,100% { opacity:1 } 50% { opacity:0.5 } }
-          @keyframes spin { to { transform: rotate(360deg) } }
         `}</style>
 
         <button
@@ -49,7 +49,7 @@ export function MicButton({ micState, onMicClick }: Props) {
           onMouseLeave={(e) => { if (micState === "idle") e.currentTarget.style.background = "transparent" }}
         >
           {micState === "transcribing"
-            ? <svg width="12" height="12" viewBox="0 0 12 12" style={{ display: "block", transformOrigin: "center", animation: "spin 0.7s linear infinite" }}><circle cx="6" cy="6" r="4.5" fill="none" stroke="#ddd" strokeWidth="1.5"/><path d="M6 1.5A4.5 4.5 0 0 1 10.5 6" fill="none" stroke="#aaa" strokeWidth="1.5" strokeLinecap="round"/></svg>
+            ? <SavingSpinner />
             : micState === "recording"
             ? <svg width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" rx="2" fill="#fff"/></svg>
             : <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} fill="none" style={{ display: "block", flexShrink: 0 }}>
