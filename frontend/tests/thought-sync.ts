@@ -62,3 +62,24 @@ export async function runThoughtSyncChecks(setStatus: (state: SyncVisualState | 
   }
   return results
 }
+
+export async function runThoughtTagFocusChecks() {
+  const mobile = new URLSearchParams(location.search).has("mobile")
+  const row = document.querySelector<HTMLElement>(mobile ? '[data-mobile-thought-id="102"]' : '[data-sync-sample="102"] [draggable]')!
+  const trigger = row.querySelector<HTMLElement>("[data-thought-tags-trigger]")!
+  const panel = () => document.querySelector<HTMLElement>('[aria-label="Thought tags"]')
+  const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+  const results: { test: string; passed: boolean }[] = []
+  trigger.focus()
+  trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
+  await wait(450)
+  results.push({ test: "keyboard opening focuses a removal button", passed: document.activeElement === panel()?.querySelector("button") })
+  panel()!.querySelector<HTMLButtonElement>("button")!.click()
+  await wait(220)
+  results.push({ test: "removing a tag focuses the next removal button", passed: document.activeElement === panel()?.querySelector("button") })
+  panel()!.querySelector<HTMLButtonElement>("button")!.click()
+  await wait(220)
+  results.push({ test: "removing the final tag closes the popover", passed: !panel() })
+  results.push({ test: "the thought's delete button receives focus", passed: document.activeElement === row.querySelector('[aria-label="Delete thought"]') })
+  return results
+}

@@ -45,6 +45,7 @@ export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver
   useEffect(() => { setLocalTags(thought.tags) }, [thought.tags])
   const { editing, content, saveEditing, startEditing, setIntent, cancelEditing } = useThoughtEdit(thought)
   const spanRef = useRef<HTMLSpanElement>(null)
+  const deleteButtonRef = useRef<HTMLButtonElement>(null)
   const { controlSize, handleSize, closeIconSize } = getThoughtControlMetrics(fontSize)
   const syncMetrics = getThoughtSyncMetrics(fontSize)
 
@@ -130,12 +131,12 @@ export function Thought({ thought, fontSize, onDragStart, onDragMove, onDragOver
         <div data-thought-controls style={{ position: "relative", display: "flex", alignItems: "center", gap: localTags.length ? 6 : 0, flexShrink: 0, height: controlSize, paddingLeft: syncMetrics.reserve }}>
           <style>{`@media (prefers-reduced-motion: reduce) { [data-thought-tag-slot] { transition: none !important; } }`}</style>
           <div data-thought-tag-slot style={{ display: "flex", alignItems: "center", transform: tagsShifted ? `translateX(-${syncMetrics.reserve}px)` : "translateX(0)", transition: "transform 220ms cubic-bezier(.2,.8,.2,1)" }}>
-            <ThoughtTags tags={localTags} fontSize={fontSize} onRemove={removeTag} onOpenChange={setTagPopoverOpen} />
+            <ThoughtTags tags={localTags} fontSize={fontSize} onRemove={removeTag} onOpenChange={setTagPopoverOpen} onRestoreFocus={() => deleteButtonRef.current?.focus({ preventScroll: true })} />
           </div>
           <span style={{ position: "absolute", right: controlSize + 6, top: "50%", width: syncMetrics.controlSize, height: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} fontSize={fontSize} onVisibilityChange={setSyncVisible} />
           </span>
-          <CloseButton onClick={remove} size={controlSize} iconSize={closeIconSize} />
+          <CloseButton ref={deleteButtonRef} onClick={remove} size={controlSize} iconSize={closeIconSize} ariaLabel="Delete thought" />
         </div>
       </div>
 

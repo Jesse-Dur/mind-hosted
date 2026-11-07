@@ -1,13 +1,17 @@
+import type { Ref } from "react"
+
 interface Props {
   onClick: (e: React.MouseEvent) => void
   size?: number
   iconSize?: number
   ariaLabel?: string
+  ref?: Ref<HTMLButtonElement>
 }
 
-export function CloseButton({ onClick, size = 18, iconSize = 8, ariaLabel }: Props) {
+export function CloseButton({ onClick, size = 18, iconSize = 8, ariaLabel, ref }: Props) {
   return (
     <button
+      ref={ref}
       aria-label={ariaLabel}
       onClick={onClick}
       onPointerDown={(e) => e.stopPropagation()}

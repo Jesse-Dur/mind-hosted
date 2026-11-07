@@ -148,6 +148,7 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
   const [dragging, setDragging] = useState(false)
   const dragEndedAt = useRef(0)
   const textRef = useRef<HTMLSpanElement>(null)
+  const deleteButtonRef = useRef<HTMLButtonElement>(null)
   const tagMenuOpenedAt = useRef(0)
   const textTap = useRef<{ pointerId: number; x: number; y: number } | null>(null)
   const longPress = useRef<{ timer: number; x: number; y: number; pointerId: number } | null>(null)
@@ -326,13 +327,13 @@ function MobileThought({ thought, onFocusTarget }: { thought: Thought; onFocusTa
         style={{ flex: 1, minWidth: 0, fontSize: canvasFontSize + 1, lineHeight: 1.45, color: "#222", outline: 0, cursor: "text", userSelect: "text" }}
       >{content}</span>
       <div style={{ height: 28, display: "flex", alignItems: "center", flexShrink: 0, alignSelf: "center" }}>
-        <ThoughtTags tags={localTags} onRemove={(tag) => {
+        <ThoughtTags tags={localTags} onRestoreFocus={() => deleteButtonRef.current?.focus({ preventScroll: true })} onRemove={(tag) => {
           const tags = localTags.filter((item) => item !== tag)
           setLocalTags(tags)
           void updateThoughtTags(thought.id, tags).catch(console.error)
         }} />
         <span onPointerDown={(event) => event.stopPropagation()} style={{ width: syncMetrics.controlSize, height: 0, marginLeft: localTags.length ? 6 : 0, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><SyncStatusDot entities={[{ entityType: "thought", id: thought.id, clientId: thought.client_id }]} fontSize={canvasFontSize} /></span>
-        <CloseButton onClick={(event) => { event.stopPropagation(); setConfirmDelete(true) }} ariaLabel="Delete thought" size={28} iconSize={12} />
+        <CloseButton ref={deleteButtonRef} onClick={(event) => { event.stopPropagation(); setConfirmDelete(true) }} ariaLabel="Delete thought" size={28} iconSize={12} />
       </div>
       {confirmDelete && <DeleteDialog
         title="Delete this thought?"

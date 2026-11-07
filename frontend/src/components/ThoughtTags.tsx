@@ -32,7 +32,7 @@ function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum)
 }
 
-export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true, onOpenChange, fontSize }: { tags: string[]; onRemove?: (tag: string) => void; expandOnHover?: boolean; onOpenChange?: (open: boolean) => void; fontSize?: number }) {
+export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true, onOpenChange, onRestoreFocus, fontSize }: { tags: string[]; onRemove?: (tag: string) => void; expandOnHover?: boolean; onOpenChange?: (open: boolean) => void; onRestoreFocus?: () => void; fontSize?: number }) {
   const preferredFontSize = useStore((state) => state.canvasFontSize)
   const tagFontSize = fontSize ?? preferredFontSize
   const { size: dotSize, width: dotWidth, height: dotHeight, trailingOffset } = getThoughtTagMetrics(tagFontSize)
@@ -132,7 +132,8 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
     setRemoval({ tag, tags })
     onRemove?.(tag)
     removeTimer.current = setTimeout(() => {
-      if (panelRef.current?.contains(document.activeElement)) {
+      const hadFocus = panelRef.current?.contains(document.activeElement)
+      if (hadFocus) {
         pendingFocusIndex.current = Math.min(tags.indexOf(tag), latestTags.current.length - 1)
       }
       setRemoval(null)
@@ -142,7 +143,7 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
         setPosition(null)
         setOffsets({})
         setExpanded(false)
-        anchorRef.current?.parentElement?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true })
+        if (hadFocus) onRestoreFocus?.()
       }
     }, reducedMotion ? 0 : REMOVE_MS)
   }

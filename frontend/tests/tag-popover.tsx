@@ -5,7 +5,7 @@ import { TagMenu } from "../src/components/TagMenu"
 import { Thought } from "../src/components/Thought"
 import { TileHeader } from "../src/components/TileHeader"
 import { MobileFocusedTile } from "../src/layout/mobile/MobileFocusedTile"
-import { runThoughtSyncChecks } from "./thought-sync"
+import { runThoughtSyncChecks, runThoughtTagFocusChecks } from "./thought-sync"
 import { SpinnerMotionFixture, runSpinnerMotionChecks } from "./spinner-motion"
 import { syncEntityKey } from "../src/sync/status"
 import type { SyncVisualState } from "../src/sync/types"
@@ -77,6 +77,7 @@ function fixtureSyncStatus(state: SyncVisualState | null) {
   })) })
 }
 window.runThoughtSyncChecks = () => runThoughtSyncChecks(fixtureSyncStatus)
+window.runThoughtTagFocusChecks = runThoughtTagFocusChecks
 
 function TileHeaderSample({ fontSize }: { fontSize: number }) {
   const [editing, setEditing] = useState(false)
@@ -132,6 +133,7 @@ declare global {
     __tagRemovals: string[]
     runTagPopoverChecks: typeof runTagPopoverChecks
     runThoughtSyncChecks: () => ReturnType<typeof runThoughtSyncChecks>
+    runThoughtTagFocusChecks: typeof runThoughtTagFocusChecks
     runSpinnerMotionChecks: typeof runSpinnerMotionChecks
     armTagPopoverHoverClose: typeof armTagPopoverHoverClose
     tagPopoverHoverCloseResult: { test: string; passed: boolean }[] | null
