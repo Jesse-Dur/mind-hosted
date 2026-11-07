@@ -1015,7 +1015,7 @@ describe("sequential dependency processing", () => {
   });
 });
 
-test("requests Kody once per exact commit and ignores forged request markers", async () => {
+test("requests a full Kody review once per exact commit and ignores forged request markers", async () => {
   const pr = { number: 65, head: { sha: "new-head" } };
   const comments: any[] = [{ user: { login: "someone", id: 1 }, body: "<!-- mind-dependency-review:new-head -->" }];
   const requests: any[] = [];
@@ -1029,7 +1029,7 @@ test("requests Kody once per exact commit and ignores forged request markers", a
   await requestCurrentKodyReview(api, pr);
   await requestCurrentKodyReview(api, pr);
   expect(requests).toHaveLength(1);
-  expect(requests[0].options.body.body).toContain("@kody start-review");
+  expect(requests[0].options.body.body.startsWith("@kody review --force\n")).toBe(true);
   await requestCurrentKodyReview(api, { ...pr, head: { sha: "another-head" } });
   expect(requests).toHaveLength(2);
 });

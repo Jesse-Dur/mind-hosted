@@ -381,7 +381,7 @@ if (!process.env.DATABASE_URL) {
       expect(Number(tags[0]?.id)).toBe(tagId!)
       expect(tags[0]?.client_id).toBe("tag-client-A")
       expect(tags[0]?.color).toBe("#333333")
-      expect(history).toMatchObject([
+      expect([...history]).toMatchObject([
         { action: "tag.color", detail: { old_color: "#111111", color: "#222222" } },
         { action: "tag.color", detail: { old_color: "#222222", color: "#333333" } },
       ])
