@@ -767,7 +767,7 @@ export async function requestCurrentKodyReview(api, pullRequest) {
       comment.user?.login === GITHUB_ACTIONS_BOT_LOGIN && comment.body?.includes(marker))) return;
   await api.request(`/issues/${pullRequest.number}/comments`, {
     method: "POST",
-    body: { body: `@kody start-review\n\nPlease review dependency revision \`${pullRequest.head.sha}\`, including its app version and current main changes.\n\n${marker}` },
+    body: { body: `@kody review --force\n\nPlease review dependency revision \`${pullRequest.head.sha}\`, including its app version and current main changes.\n\n${marker}` },
   });
 }
 
