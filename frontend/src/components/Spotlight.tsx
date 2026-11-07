@@ -43,6 +43,8 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
   })
   const openedByMicRef = useRef(openedByMic)
   const startedMicFromOpenRef = useRef(false)
+  // Strict Mode replays mount effects after the recording hook's cleanup.
+  useEffect(() => () => { startedMicFromOpenRef.current = false }, [])
   const showRecordingHints = physicalKeyboard && (micState === "recording" || micState === "loading" || (openedByMicRef.current && !query.trim()))
   const showShortcutHint = physicalKeyboard && micState === "idle" && !openedByMicRef.current && !query.trim()
   const isAIMode = query.startsWith(">")
@@ -218,7 +220,6 @@ export function Spotlight({ openedByMic, onClose }: { openedByMic: boolean; onCl
               autoFocus
               value={query}
               onKeyDown={(e) => {
-                if (e.key === "Escape") { onClose() }
                 if (e.key === "ArrowUp" || e.key === "ArrowDown") {
                   e.preventDefault()
                   cmdkInputRef.current?.dispatchEvent(new KeyboardEvent("keydown", { key: e.key, bubbles: true, cancelable: true }))
