@@ -65,7 +65,7 @@
 ## Tabs
 - Multiple canvases via a tab bar at the top of the screen
 - Tabs are scrollable horizontally
-- Right-click or Control-click a tab to favourite, rename, or delete it. Favourited tabs are pinned to the front. Delete is disabled for the last canvas, with an explanation that one canvas must remain.
+- Right-click a tab (or Control-click on macOS) to favourite, rename, or delete it. Favourited tabs are pinned to the front. Delete is disabled for the last canvas, with an explanation that one canvas must remain.
 - Double-click a tab to rename it inline
 - `+` button to create a new tab
 - Keyboard shortcuts: `Ctrl+Alt/Option+1/2/3` to jump to tab by index, `Ctrl+Alt/Option+.` next tab, `Ctrl+Alt/Option+,` prev tab, `Ctrl+Alt/Option+N` to create a new tab

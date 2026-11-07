@@ -390,7 +390,7 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
   }
 
   function onTabPointerDown(e: React.PointerEvent<HTMLDivElement>, canvas: Canvas) {
-    if (e.button !== 0 || e.ctrlKey || renamingKey === canvasIdentityKey(canvas)) return
+    if (e.button !== 0 || renamingKey === canvasIdentityKey(canvas)) return
     if (dragRef.current && dragRef.current.pointerId !== e.pointerId) return
     // Tab clicks prevent native blur for drag support, so save an active rename before switching.
     if (renamingKey !== null) commitRename()
