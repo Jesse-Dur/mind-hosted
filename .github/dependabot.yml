@@ -18,10 +18,22 @@ updates:
     commit-message:
       prefix: "deps"
     groups:
+      react:
+        applies-to: "version-updates"
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
       patch-updates:
         applies-to: "version-updates"
         patterns:
           - "*"
+        exclude-patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
         update-types:
           - "patch"
 
