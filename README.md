@@ -101,11 +101,23 @@ The public app data API is intentionally narrow:
 
 ---
 
+## Versions and releases
+
+The shared app version lives in `frontend/package.json` and is displayed in Settings. It has two integer parts: `6.9` is followed by `6.10`. The first number changes for an intentional major milestone or an incompatibility, resetting the second number to zero, for example `6.12` to `7.0`. Features and fixes use the same second-number counter.
+
+Every PR into `main` must increment the version, including backend, frontend, dependency, configuration, CI, and documentation changes. Use the next second number from current `main`, or the next first number with `.0` for a milestone or incompatibility. Versions previously committed on `main` or already tagged cannot be reused. Separate PRs can initially propose the same next version; after one merges, the others must update from `main` and choose the next version before merging.
+
+CI's **Version policy** check compares the PR head with freshly fetched `main`, its version history, and existing tags. **Test suite** depends on that check, so dependency automation also waits for a valid version bump. Dependabot PRs need a version bump added before they can pass; they have no exemption. Branch protection on `main` requires both GitHub Actions checks, up-to-date branches, and pull requests, with administrator enforcement enabled to prevent stale checks or direct pushes from bypassing the policy. Kody's approval status remains advisory for human-authored PRs; dependency automation separately enforces its existing review rules.
+
+After the backend deployment and health check succeed, **Deploy Backend** creates an annotated `v<version>` tag on the exact deployed commit and publishes a GitHub release with generated notes. This also runs for explicitly dispatched dependency deployments. Failed or paused deployments do not publish releases. Reruns preserve an existing matching tag and release, and a tag pointing to another commit causes failure. Tags and published versions must never be moved or reused. GitHub releases identify the source version; frontend rollout remains managed by Vercel independently.
+
+---
+
 ## Dependency updates
 
 Dependabot follows the SMILES website update schedule: backend, frontend, and runtime Bun packages are checked daily at 06:00 Australia/Adelaide, and GitHub Actions at 06:20. `runtime/package.json` and its lockfile pin the Bun executable and PM2, using the official npm packages. Runtime updates stay separate from application updates. Routine application patches wait two days after release and are grouped; runtime patches are individual PRs. Minors and majors wait four days and remain separate. GitHub Actions updates wait four days. Security updates have no cooldown and are not grouped by this configuration.
 
-The CI workflow installs all three lockfiles, runs the dependency-policy and runtime recovery tests and application suite, checks types, and builds the frontend. It uses the proposed Bun and PM2 versions from `runtime/package.json`, Node 22 for PM2, and a disposable PostgreSQL service with external billing disabled. A runtime smoke test starts and resurrects a temporary Bun process under the proposed PM2 using an isolated process-manager directory. CI and the Kody approval status are advisory: this configuration does not require branch-protection checks or prevent manual merges.
+The CI workflow checks the app version, installs all three lockfiles, runs the dependency-policy, version-policy, release, and runtime recovery tests and application suite, checks types, and builds the frontend. It uses the proposed Bun and PM2 versions from `runtime/package.json`, Node 22 for PM2, and a disposable PostgreSQL service with external billing disabled. A runtime smoke test starts and resurrects a temporary Bun process under the proposed PM2 using an isolated process-manager directory. The required merge checks are described in Versions and releases above.
 
 Dependency automation merges patches, minors, and verified security fixes only after the **Test suite** check passes and **kody-ai[bot]** approves the exact current commit. Normal major upgrades also need Jesse-Dur's approval of that commit; GitHub Actions changes remain manual. Missing, failed, or outdated checks and reviews keep an update open. The policy rechecks the revision and review before merging and assigns updates needing attention to Jesse-Dur. Human-authored PRs receive a Kody approval indicator but are not automatically merged.
 

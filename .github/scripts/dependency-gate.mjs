@@ -316,7 +316,7 @@ export function trustedClassification(comments, headSha) {
   return null;
 }
 
-class GitHubApi {
+export class GitHubApi {
   constructor(repository, token) {
     this.repository = repository;
     this.baseUrl = `https://api.github.com/repos/${repository}`;
