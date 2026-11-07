@@ -88,7 +88,7 @@ describe("responsive bundle boundaries", () => {
     expect(history).toContain("buildHistoryFeed")
     expect(history).toContain('appearance="text"')
     expect(history).not.toContain("Sync activity")
-    expect(syncStatus).toContain("<SavingSpinner fading />")
+    expect(syncStatus).toContain("<SavingSpinner fading size={spinnerSize} />")
     expect(syncStatus).not.toContain("SyncDotVisual")
     expect(overview).not.toContain("translateZ(0)")
     expect(overview).not.toContain("willChange")

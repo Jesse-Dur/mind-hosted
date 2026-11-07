@@ -25,8 +25,8 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 ## Features
 
 - **Freeform canvas** — drag to draw tiles anywhere on a canvas that scales to your screen
-- **Thoughts** — dot-point notes inside tiles, draggable to reorder or move between tiles
-- **Tags** — colour-coded tags with an expanding pill UI, searchable via Spotlight
+- **Thoughts** — dot-point notes inside tiles, draggable to reorder or move between tiles. Save spinners scale with the thought font without resizing the row or rewrapping its text; desktop tag dots slide into place when the indicator clears.
+- **Tags** — colour-coded dots scale with the thought's font size and open a floating panel headed "Tags" on hover or tap. Dots move into labelled pills without shifting the thought; each pill's X removes that tag from the thought. Right-click or long-press a thought to toggle tags. Both popups share the original "Tag as" menu's outer box and heading style; their text, dots, controls, and spacing follow the Font Size setting. The expanded mobile view keeps larger close targets. Tags are searchable via Spotlight.
 - **Spotlight** (`Cmd+K`) — fuzzy search across tiles, thoughts, and tags. Workspace and Past results stay current while search is open. Type `#tag` to filter by tag, `>` to send to AI, or `t` to create a new tile
 - **AI processing** — type a thought in natural language, the AI classifies it, splits compound inputs, applies tags, and files it in the right tile. Can also update, delete, and move existing thoughts
 - **History** — local and synced actions share the same badges. Older local entries load as you scroll; every entry is retained, and unresolved sync issues stay available. Expand appears only for additional information, such as before/after values, positions, tags, full text, or AI input and actions.
@@ -73,7 +73,7 @@ The sync engine prioritises the active canvas:
 - Local creates, edits, moves, resizes, reorders, and deletes are written to the outbox and flushed later if the connection drops.
 - IndexedDB is partitioned by Clerk user. Existing unpartitioned data is claimed once by the signed-in account, and signed-out account caches cannot be opened by another account. Account switches pause sync before changing authentication and resume after the matching local database is ready.
 - Workspace startup failures retry automatically with increasing delays capped at 15 seconds. The loading screen stays visible; if the first retry also fails, it shows “Loading failed, automatically retrying” beneath the icon.
-- Small entity spinners show queued local saves and fade after acknowledgement; soft red attention markers flag failures, while an outlined orange dot identifies intentionally device-only changes. The durable status history and resolution actions are available in History.
+- Entity spinners show queued local saves and fade after acknowledgement. Their grey ring stays stationary while the dark arc rotates around its centre. Tile and thought spinners scale with the canvas text size on desktop and mobile. Soft red attention markers flag failures, while an outlined orange dot identifies intentionally device-only changes. The durable status history and resolution actions are available in History.
 - History starts loading its next pages when about 25 displayed events remain below the viewport, with a spinner at the bottom while more events are loading on desktop and mobile.
 - Temporary failures to obtain an authentication token pause uploads without blocking later attempts. Reconnecting rechecks authentication, so queued changes can resume without a manual retry.
 - Pending uploads, including temporary network failures, appear as “Syncing” without error text. Reconnecting bypasses their retry delay; rejected and intentionally device-only changes still require their existing resolution actions.
