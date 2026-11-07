@@ -1,5 +1,5 @@
 {
-  "version": "6.9",
+  "version": "6.10",
   "name": "frontend",
   "type": "module",
   "private": true,
@@ -11,7 +11,7 @@
     "@types/bun": "latest",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.0.1",
+    "@vitejs/plugin-react": "^6.2.1",
     "vite": "^8.3.5"
   },
   "peerDependencies": {
