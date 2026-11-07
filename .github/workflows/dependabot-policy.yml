@@ -1,0 +1,133 @@
+name: Dependabot policy
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
+      - dismissed
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: "Optional pull-request number; leave empty to scan every open Dependabot PR"
+        required: false
+        type: number
+      prepare_only:
+        description: "Prepare and verify a pilot PR without automatically merging it"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: dependabot-policy-${{ github.event.pull_request.number || inputs.pull_request || github.event.workflow_run.head_sha || github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  checks: read
+  contents: write
+  issues: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  classify:
+    name: Classify Dependabot update
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out the trusted base revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Reuse the classification of a trusted preparation commit
+        id: classification
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CLASSIFY_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: node .github/scripts/dependency-gate.mjs classified
+
+      - name: Read Dependabot metadata
+        if: steps.classification.outputs.reuse != 'true'
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.DEPENDABOT_ALERTS_TOKEN || github.token }}
+          alert-lookup: ${{ secrets.DEPENDABOT_ALERTS_TOKEN != '' }}
+
+      - name: Apply policy labels
+        if: steps.classification.outputs.reuse != 'true'
+        env:
+          ALERT_STATE: ${{ steps.metadata.outputs.alert-state }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PACKAGE_ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CLASSIFY_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPOSITORY: ${{ github.repository }}
+          SECURITY_LOOKUP_AVAILABLE: ${{ secrets.DEPENDABOT_ALERTS_TOKEN != '' }}
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+        run: node .github/scripts/dependency-gate.mjs classify
+
+  gate:
+    name: Enforce current-revision gates
+    needs:
+      - classify
+    if: >-
+      always() &&
+      !(github.event_name == 'pull_request_target' && github.actor == 'dependabot[bot]') &&
+      (vars.DEPENDENCY_AUTO_MERGE_PAUSED != 'true' || inputs.prepare_only == true) &&
+      (needs.classify.result == 'success' || needs.classify.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: dependency-processing
+      cancel-in-progress: false
+
+    steps:
+      - name: Check out trusted policy code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Create the repository-scoped preparation token
+        if: vars.DEPENDENCY_APP_ID != ''
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.DEPENDENCY_APP_ID }}
+          private-key: ${{ secrets.DEPENDENCY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - name: Evaluate open Dependabot updates
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEPENDENCY_PREPARATION_TOKEN: ${{ steps.app.outputs.token }}
+          DEPENDENCY_APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          ALLOW_MERGE: ${{ vars.DEPENDENCY_AUTO_MERGE_PAUSED != 'true' && inputs.prepare_only != true }}
+          PR_NUMBER: ${{ inputs.pull_request }}
+          REPOSITORY: ${{ github.repository }}
+        run: node .github/scripts/dependency-gate.mjs gate

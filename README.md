@@ -12,7 +12,11 @@ I used to write it down on notepad (back in my microslop windows days), or write
 
 Lying in bed, I began to imagine a blank slate, where i could create tiles and put my 'thoughts', so made it (with the help of AI, of course). I never intended to make this public, but many people have been very interested, so I thought i'd open-source it, the logical solution! But this does mean it's largely vibecoded slop, so feel free to contribute, or to put your time towards a better cause (or touch grass).
 
-Privacy is important to me. AI processing is handled by Groq, who do not retain your prompts or completions. Your thoughts are stored in a managed Postgres database scoped strictly to your account.
+Privacy is important to me. Thought processing and voice transcription run through OpenRouter and its downstream providers. Text processing sends your input and relevant tile, tag, and thought context; transcription sends your audio.
+
+Both requests require Zero Data Retention (ZDR) routing and deny provider data collection. The OpenRouter workspace or key must also enforce ZDR only with Safety Retention excluded; the request flag follows those settings. OpenRouter defines ZDR as no routine storage after processing, with a legal/CSAM retention exception ([policy](https://openrouter.ai/docs/guides/features/zdr)).
+
+Your saved thoughts and AI input/action History remain in the account-scoped managed Postgres database, and offline data remains in your browser. Recordings are forwarded for transcription without being saved by the backend; AI diagnostic logs exclude audio, transcripts, and note content.
 
 You're welcome to open issues, fork the project, make it commercial, heck i dont care. All i ask is you be a good person & those are the terms you agree to by interacting with this project.
 
@@ -42,12 +46,13 @@ You're welcome to open issues, fork the project, make it commercial, heck i dont
 | Layer | Technology |
 |---|---|
 | Runtime | Bun |
-| Backend | Hono (hosted on Render) |
+| Backend | Hono (VPS, managed by PM2 behind Nginx) |
 | Database | Neon (Postgres) |
 | Frontend | React + TypeScript + Vite (hosted on Vercel) |
 | State | Zustand |
 | Offline storage | IndexedDB via Dexie |
-| AI | Groq (`qwen/qwen3.6-27b`) |
+| AI | OpenRouter (`z-ai/glm-5.3-flash`) |
+| Transcription | OpenRouter (`elevenlabs/scribe-v2`) |
 | Auth | Clerk |
 
 ---
@@ -85,7 +90,7 @@ Sync event publication uses a short transaction with a per-user advisory lock ac
 
 When upgrading an existing installation to serialized publication, stop and drain the old backend writers before starting the updated backend. Clients that already missed events need fresh snapshots for their cached canvases; snapshot reconciliation preserves pending local work and the outbox.
 
-AI processing still requires network access to Groq. AI writes are restricted to thoughts and go through the same backend sync mutation path internally, so AI-created, updated, deleted, and moved thoughts emit `sync_events` and are picked up by normal pull flows.
+AI processing and voice transcription require network access to OpenRouter. AI writes are restricted to thoughts and go through the same backend sync mutation path internally, so AI-created, updated, deleted, and moved thoughts emit `sync_events` and are picked up by normal pull flows.
 
 The public app data API is intentionally narrow:
 
@@ -97,13 +102,60 @@ The public app data API is intentionally narrow:
 
 ---
 
+## Versions and releases
+
+The shared app version lives in `frontend/package.json` and is displayed in Settings. It has two integer parts: `6.9` is followed by `6.10`. The first number changes for an intentional major milestone or an incompatibility, resetting the second number to zero, for example `6.12` to `7.0`. Features and fixes use the same second-number counter.
+
+Every PR into `main` must increment the version, including backend, frontend, dependency, configuration, CI, and documentation changes. Use the next second number from current `main`, or the next first number with `.0` for a milestone or incompatibility. Versions previously committed on `main` or already tagged cannot be reused. Separate PRs can initially propose the same next version; after one merges, the others must update from `main` and choose the next version before merging.
+
+CI's **Version policy** check compares the PR head with freshly fetched `main`, its version history, and existing tags. **Test suite** depends on that check, so dependency automation also waits for a valid version bump. The dependency workflow prepares that bump automatically; Dependabot PRs have no exemption. Branch protection on `main` requires both GitHub Actions checks, up-to-date branches, and pull requests, with administrator enforcement enabled to prevent stale checks or direct pushes from bypassing the policy. New code changes automatically dismiss stale approvals so Kody can approve the new revision. Kody's approval status remains advisory for human-authored PRs; dependency automation separately enforces its existing review rules.
+
+After the backend deployment and health check succeed, **Deploy Backend** creates an annotated `v<version>` tag on the exact deployed commit and publishes a GitHub release with generated notes. This also runs for explicitly dispatched dependency deployments. Failed or paused deployments do not publish releases. Reruns preserve an existing matching tag and release, and a tag pointing to another commit causes failure. Tags and published versions must never be moved or reused. GitHub releases identify the source version; frontend rollout remains managed by Vercel independently.
+
+---
+
+## Dependency updates
+
+Dependabot follows the SMILES website update schedule: backend, frontend, and runtime Bun packages are checked daily at 06:00 Australia/Adelaide, and GitHub Actions at 06:20. `runtime/package.json` and its lockfile pin the Bun executable and PM2, using the official npm packages. Runtime updates stay separate from application updates. React, React DOM, and their corresponding type packages share a group so runtime versions can advance together. Other routine application patches wait two days after release and are grouped; runtime patches are individual PRs. Minors and majors wait four days and otherwise remain separate. GitHub Actions updates wait four days. Security updates have no cooldown and are not grouped by this configuration.
+
+The CI workflow checks the app version, installs all three lockfiles, runs the dependency-policy, version-policy, release, and runtime recovery tests and application suite, checks types, and builds the frontend. It uses the proposed Bun and PM2 versions from `runtime/package.json`, Node 22 for PM2, and a disposable PostgreSQL service with external billing disabled. A runtime smoke test starts and resurrects a temporary Bun process under the proposed PM2 using an isolated process-manager directory. The required merge checks are described in Versions and releases above.
+
+Dependency automation prepares same-repository Dependabot PRs targeting `main` using trusted base-branch code. It merges current `main` into the PR's Git tree, increments the app version, and pushes a normal commit without checking out or executing PR code. A temporary index normalizes only the previous app version for the merge; real dependency and source conflicts require a maintainer. Previously verified classification is attested for the exact generated commit before its push, while source attestations are retained for retries. A concurrent head change prevents a fast-forward push; changes to `main` require fresh preparation and verification.
+
+Preparation uses a repository-scoped GitHub App so its commits trigger normal PR CI and review events. Configure the repository variable `DEPENDENCY_APP_ID` and Actions secret `DEPENDENCY_APP_PRIVATE_KEY`, and install the App only on this repository with Contents and Pull requests read/write and Workflows write. The token is created for the current repository and revoked at job completion. Initial Dependabot-authored PR events classify the update; CI completion, App-authored events, reviews, or the schedule start preparation using Actions secrets. The App key does not need to be a Dependabot secret. Missing credentials stop preparation. Privileged jobs keep using trusted base code and never run dependency installation or PR scripts.
+
+The gate processes one active automatic update at a time, prioritizing an already prepared update over newer PRs. Failures and updates needing manual approval remain open while other candidates can proceed. Each event-driven gate run is short; PR events, completed CI, reviews, and the 15-minute schedule resume processing. If Kody has no review in progress and has not approved the current revision, the gate requests a full review with `@kody review --force` once per exact head commit. This avoids an incremental retry being skipped because that revision was already analyzed.
+
+Dependency automation merges patches, minors, and verified security fixes only after both **Version policy** and **Test suite** pass and **kody-ai[bot]** approves the exact current commit. Normal major upgrades also need Jesse-Dur's approval of that commit; GitHub Actions changes remain manual. Missing, failed, or outdated checks and reviews keep an update open. The policy rechecks the revision, checks, and review, then resolves live `main` against the attested preparation base immediately before merging; it does not rely on the PR's cached base SHA. Updates needing attention are assigned to Jesse-Dur. Human-authored PRs receive a Kody approval indicator but are not automatically merged.
+
+The repository variable `DEPENDENCY_AUTO_MERGE_PAUSED=true` suspends automatic preparation and merging while leaving update PRs, classification, CI, reviews, and manual merges available. To prepare and verify a pilot while paused, manually dispatch **Dependabot policy** with its PR number and `prepare_only=true`; that run cannot merge. `PRODUCTION_DEPLOYMENT_PAUSED=true` suspends the deployment job. These switches are independent and take effect on new workflow runs.
+
+The hosted Kody app must have access to the repository. `kodus-config.yml` enables automatic reviews, approvals, and requests for changes, including dependency manifests and lockfiles. Dependabot alerts and security updates must be enabled in the repository security settings. The optional Actions secret `DEPENDABOT_ALERTS_TOKEN` grants only Dependabot-alert and pull-request read access; without it, unverified major security fixes follow the normal manual-major policy.
+
+Manual merges into `main` use the deployment workflow. Dependency-policy merges explicitly dispatch that same workflow because merges made with `GITHUB_TOKEN` do not trigger push workflows. Dispatch retries up to three times; if none is confirmed, the workflow fails and attempts to assign the merged PR and post deployment recovery instructions. Deployments run one at a time and check out the workflow's exact commit; an outdated run cannot overwrite a newer deployed commit.
+
+On the VPS, `.github/scripts/deploy-runtime.mjs` installs locked runtime releases under `~/.local/share/mind-runtime/releases`. It bootstraps the exact proposed Bun version through npm so an older installed Bun does not need to parse a newer lockfile format. It verifies both installed versions and installs the locked backend dependencies before switching the runtime. The deployment account needs Node, npm, an existing `pm2-opc` startup service, and passwordless sudo for its systemd override and restart. The saved PM2 process list must contain only `mind-backend`, using `~/.bun/bin/bun`, as in the existing VPS setup.
+
+The deployer saves the process list, atomically switches the Bun executable, and installs a systemd override that uses the managed PM2 on reboot. After restarting the process manager, it checks that the unauthenticated local sync endpoint returns its expected 401. If activation or health checks fail, it restores the previous runtime and service override and restarts the prior manager; the workflow reports failure even when recovery succeeds. This recovery does not revert application source or backend dependencies. The current and previous runtime releases are retained; older releases are removed after a successful deployment. The original global PM2 is retained as a bootstrap tool, while the service uses the repository-managed installation.
+
+OS packages and Node are maintained through the VPS package manager. TLS renewal uses Certbot independently of dependency updates.
+
+---
+
+## Production certificate renewal
+
+The VPS uses Certbot's Route 53 DNS challenge to renew `api.mind.durik.com.au`; port 80 is not required. The enabled `certbot-renew.timer` runs the renewal service on a randomized schedule. After a successful renewal, `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh` validates the Nginx configuration and gracefully reloads Nginx to serve the new certificate. The backend process does not need to restart.
+
+---
+
 ## Self-hosting
 
 ### Prerequisites
 
-- **[Bun](https://bun.sh)** — runtime and package manager
+- **[Bun](https://bun.sh)** — use the version pinned in `runtime/package.json`
+- Node 22 and npm for PM2 and runtime tests
 - A [Neon](https://neon.tech) Postgres database
-- A [Groq](https://console.groq.com) API key
+- An [OpenRouter](https://openrouter.ai/settings/keys) API key from a workspace configured for strict ZDR
 - A [Clerk](https://clerk.com) application
 
 ### Setup
@@ -111,6 +163,7 @@ The public app data API is intentionally narrow:
 ```bash
 # Install dependencies
 bun install
+bun install --cwd runtime --frozen-lockfile
 cd frontend && bun install && cd ..
 ```
 
@@ -119,10 +172,18 @@ cd frontend && bun install && cd ..
 | Environment variable | Description |
 |---|---|
 | `DATABASE_URL` | Neon Postgres connection string |
-| `GROQ_API_KEY` | Groq API key |
+| `OPENROUTER_API_KEY` | Server-only OpenRouter API key |
+| `OPENROUTER_AI_MODEL` | Optional; defaults to `z-ai/glm-5.3-flash` |
+| `OPENROUTER_TRANSCRIPTION_MODEL` | Optional; defaults to `elevenlabs/scribe-v2` |
 | `CLERK_SECRET_KEY` | Clerk secret key |
 | `CLERK_PUBLISHABLE_KEY` | Clerk publishable key (backend) |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk publishable key (frontend) |
+
+In OpenRouter, enforce ZDR for all model groups, select **ZDR only** for both Google and other models (exclude Safety Retention), and keep prompt/completion logging and training opt-ins disabled. Apply these settings to the workspace/key used by the backend before sending user data. Requests fail when no eligible provider is available; retries do not relax privacy settings. Never put the API key in frontend variables.
+
+The browser preserves its recorded audio format, including WebM and MP4/M4A. Uploads are limited to 25 MB, with request sizes capped before parsing. Scribe v2 detects the language automatically and serves the existing `/api/whisper/transcribe` URL. OpenRouter attempts time out after five minutes for transcription and one minute for thought processing; uncertain network failures are not replayed automatically.
+
+Run `bun run test:ai-integration` for mocked provider, tool-mutation, and recording-format regression checks. The existing `bun run bench:ai-prompts` command makes live model calls and writes benchmark fixtures; use an isolated test database.
 
 ### Running
 
@@ -137,6 +198,8 @@ This starts both servers concurrently:
 Open `http://localhost:5173` in your browser.
 
 The development service worker prefers network responses while online so reloads use current Vite modules, with cached files as an offline fallback. Production uses separate build-specific caches.
+
+Production updates finish caching files and release the cache lock before requesting activation. Update failures distinguish timeouts, downloads, device storage, and activation errors; reconnect advice appears only after a failed download when the browser reports being offline. The update prompt offers **Try again** after a failure.
 
 ---
 

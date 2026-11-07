@@ -1,4 +1,6 @@
-## v<!-- e.g. 1.5 -->
+## v<!-- Match frontend/package.json, e.g. 6.3 -->
+
+- [ ] Incremented `frontend/package.json` from current `main`: next second number, or next first number with `.0` for an intentional milestone or incompatibility. This applies to every PR, including docs and dependency updates; existing versions and tags cannot be reused.
 
 ### New Features
 <!-- What's new -->

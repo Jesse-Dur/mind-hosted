@@ -1,0 +1,40 @@
+version: 2.0
+
+automatedReviewActive: true
+showStatusFeedback: true
+
+reviewCadence:
+  type: 'automatic'
+  timeWindow: 15
+  pushesToTrigger: 3
+
+pullRequestApprovalActive: true
+isRequestChangesActive: true
+runOnDraft: true
+enableCommittableSuggestions: true
+
+summary:
+  generatePRSummary: false
+
+# Generated build output is not reviewable source. Dependency manifests and
+# bun.lock intentionally remain included so Kody reviews supply-chain changes.
+ignorePaths:
+  - '.env'
+  - 'dist/**'
+  - 'frontend/dist/**'
+
+baseBranches:
+  - 'main'
+
+reviewOptions:
+  bug: true
+  performance: true
+  security: true
+  business_logic: true
+
+suggestionControl:
+  applyFiltersToKodyRules: false
+  # Publish findings at every supported severity level.
+  severityLevelFilter: 'low'
+
+ignoredTitleKeywords: []

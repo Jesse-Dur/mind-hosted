@@ -3,7 +3,7 @@ import type { StateCreator } from "zustand"
 import type { BillingCreationLimitFeature, BillingLimitFeature, BillingLimitNotice, BillingOverage, BillingPlanImpact, BillingPlanSwitchResult, BillingPlans, BillingUsage, Canvas, HistoryEvent, Tag, Thought, Tile } from "../types"
 import type { SyncActivityRecord, SyncEntityStatus } from "../sync/types"
 
-export type AiStatus = "idle" | "processing" | "queued" | "limited"
+export type AiStatus = "idle" | "processing" | "queued"
 export type CanvasOrderUpdate = Pick<Canvas, "id" | "sort_order" | "is_favourite">
 export type AiPriority = "low" | "medium" | "high"
 export type CanvasDeleteOptions =

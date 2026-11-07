@@ -1,5 +1,6 @@
 import type { BillingPlanImpact, BillingPlanSwitchResult, BillingPlans, BillingUsage, Canvas, HistoryEvent, HistoryPage, Tag, Thought, Tile } from "../types"
 import type { SyncPullResponse, SyncPushOperation, SyncPushResponse, SyncSnapshotResponse } from "../sync/types"
+import { recordingFilename } from "../utils/audioRecording"
 import { isReauthRequired, notifyReauthRequired } from "../auth/reauthSignal"
 import { ApiRateLimitError, ApiUnauthorizedError } from "./errors"
 
@@ -163,12 +164,12 @@ export function createApi(getToken: GetToken, context?: ApiRequestContext) {
       status: () => req<AiStatusResponse>("/ai/status", getToken, undefined, context),
     },
 
-    whisper: {
+    transcription: {
       transcribe: async (blob: Blob): Promise<{ text: string }> => {
         const requestTranscription = (token: string) => {
           context?.assertCurrent()
           const form = new FormData()
-          form.append("audio", blob, "audio.webm")
+          form.append("audio", blob, recordingFilename(blob.type))
           return fetch(`${BASE}/whisper/transcribe`, {
             method: "POST",
             headers: { "Authorization": `Bearer ${token}` },

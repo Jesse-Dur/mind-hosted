@@ -6,7 +6,6 @@ const CONFIG = {
   idle:       { color: "#d1d5db", label: "",                              spinner: false },
   processing: { color: "#22c55e", label: "Processing...",                 spinner: true  },
   queued:     { color: "#eab308", label: "In Queue...",                   spinner: false },
-  limited:    { color: "#ef4444", label: "High demand, expect long wait times", spinner: false },
 }
 
 export function AiStatusPill() {
