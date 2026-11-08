@@ -153,7 +153,7 @@ The VPS uses Certbot's Route 53 DNS challenge to renew `api.mind.durik.com.au`; 
 ### Prerequisites
 
 - **[Bun](https://bun.sh)** — use the version pinned in `runtime/package.json`
-- Node 22 and npm for PM2 and runtime tests
+- Node 22.12+ and npm for local development, PM2, and runtime tests
 - A [Neon](https://neon.tech) Postgres database
 - An [OpenRouter](https://openrouter.ai/settings/keys) API key from a workspace configured for strict ZDR
 - A [Clerk](https://clerk.com) application
