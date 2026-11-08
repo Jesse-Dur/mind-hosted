@@ -1,5 +1,6 @@
 import { Tooltip } from "./Tooltip"
 import { useOnline } from "../utils/connectivity"
+import { SavingSpinner } from "./SavingSpinner"
 
 type MicState = "idle" | "loading" | "recording" | "transcribing"
 
@@ -16,6 +17,7 @@ export function MicButton({ micState, onMicClick }: Props) {
   const online = useOnline()
   const isActive = micState !== "idle"
   const offlineBlocked = !online && micState !== "recording"
+  const micColor = !online ? "#c8c8c8" : micState === "loading" ? "#1a1a1a" : "#bbb"
   const tooltipLabel = micState === "recording" ? "Stop recording" : offlineBlocked ? "Voice input requires an internet connection" : "Voice input"
 
   return (
@@ -24,7 +26,6 @@ export function MicButton({ micState, onMicClick }: Props) {
         <style>{`
           @keyframes micFill { from { stroke-dashoffset: ${CIRCUMFERENCE} } to { stroke-dashoffset: 0 } }
           @keyframes micPulse { 0%,100% { opacity:1 } 50% { opacity:0.5 } }
-          @keyframes spin { to { transform: rotate(360deg) } }
         `}</style>
 
         <button
@@ -36,7 +37,7 @@ export function MicButton({ micState, onMicClick }: Props) {
           style={{
             position: "absolute", inset: 0,
             width: SIZE, height: SIZE, borderRadius: "50%",
-            border: "none",
+            border: "none", padding: 0, boxSizing: "border-box",
             cursor: offlineBlocked ? "not-allowed" : isActive ? (micState === "recording" ? "pointer" : "default") : "pointer",
             background: micState === "recording" ? "#ef4444" : "transparent",
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -48,25 +49,26 @@ export function MicButton({ micState, onMicClick }: Props) {
           onMouseLeave={(e) => { if (micState === "idle") e.currentTarget.style.background = "transparent" }}
         >
           {micState === "transcribing"
-            ? <svg width="12" height="12" viewBox="0 0 12 12" style={{ display: "block", transformOrigin: "center", animation: "spin 0.7s linear infinite" }}><circle cx="6" cy="6" r="4.5" fill="none" stroke="#ddd" strokeWidth="1.5"/><path d="M6 1.5A4.5 4.5 0 0 1 10.5 6" fill="none" stroke="#aaa" strokeWidth="1.5" strokeLinecap="round"/></svg>
+            ? <SavingSpinner />
             : micState === "recording"
             ? <svg width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" rx="2" fill="#fff"/></svg>
-            : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ display: "block", margin: "auto", position: "relative", top: 0 }}><rect x="9" y="2" width="6" height="12" rx="3" stroke={!online ? "#c8c8c8" : micState === "loading" ? "#1a1a1a" : "#bbb"} strokeWidth="1.8"/><path d="M5 10a7 7 0 0 0 14 0" stroke={!online ? "#c8c8c8" : micState === "loading" ? "#1a1a1a" : "#bbb"} strokeWidth="1.8" strokeLinecap="round"/><line x1="12" y1="17" x2="12" y2="21" stroke={!online ? "#c8c8c8" : micState === "loading" ? "#1a1a1a" : "#bbb"} strokeWidth="1.8" strokeLinecap="round"/></svg>
+            : <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} fill="none" style={{ display: "block", flexShrink: 0 }}>
+                {micState === "loading" && <circle
+                  cx={SIZE / 2} cy={SIZE / 2} r={RADIUS}
+                  stroke="#555" strokeWidth="2"
+                  strokeDasharray={CIRCUMFERENCE}
+                  strokeLinecap="round"
+                  transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}
+                  style={{ animation: "micFill 0.8s ease forwards" }}
+                />}
+                <svg x="7" y="7" width="14" height="14" viewBox="0 0 24 24">
+                  <rect x="9" y="2" width="6" height="12" rx="3" stroke={micColor} strokeWidth="1.8"/>
+                  <path d="M5 10a7 7 0 0 0 14 0" stroke={micColor} strokeWidth="1.8" strokeLinecap="round"/>
+                  <line x1="12" y1="17" x2="12" y2="21" stroke={micColor} strokeWidth="1.8" strokeLinecap="round"/>
+                </svg>
+              </svg>
           }
         </button>
-
-        {/* Loading ring — traces border during stream init, rendered on top */}
-        {micState === "loading" && (
-          <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ position: "absolute", inset: 0, transform: "rotate(-90deg)", pointerEvents: "none" }}>
-            <circle
-              cx={SIZE / 2} cy={SIZE / 2} r={RADIUS}
-              fill="none" stroke="#555" strokeWidth="2"
-              strokeDasharray={CIRCUMFERENCE}
-              strokeLinecap="round"
-              style={{ animation: `micFill 0.8s ease forwards` }}
-            />
-          </svg>
-        )}
       </div>
     </Tooltip>
   )

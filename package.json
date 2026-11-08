@@ -15,17 +15,19 @@
     "dev:frontend": "bun run --cwd frontend dev",
     "start": "bun run backend/index.ts",
     "test:automation": "bun test ./.github/scripts/dependency-gate.test.ts ./.github/scripts/dependency-preparation.test.ts ./.github/scripts/runtime.test.ts ./.github/scripts/version-policy.test.ts ./.github/scripts/release.test.ts",
-    "test:ai-integration": "bun test backend/test/openrouter.test.ts frontend/src/utils/audioRecording.test.ts && bun test backend/test/aiProcessing.test.ts"
+    "test:ai-integration": "bun test backend/test/openrouter.test.ts && bun run test:recording && bun test backend/test/aiProcessing.test.ts",
+    "test:recording": "bun test frontend/src/utils/audioRecording.test.ts && bun test frontend/src/hooks/useMicRecording.test.tsx"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "concurrently": "^10.0.6",
-    "fake-indexeddb": "^6.2.7"
+    "fake-indexeddb": "^6.2.7",
+    "happy-dom": "21.0.4"
   },
   "dependencies": {
     "@clerk/backend": "^3.26.6",
     "@clerk/hono": "^0.1.97",
     "hono": "^4.13.16",
-    "postgres": "^3.4.9"
+    "postgres": "^4.0.0"
   }
 }

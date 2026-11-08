@@ -66,7 +66,7 @@ export function TileHeader({ tile, fontSize, thoughtIdentities, onDragDown, edit
         <SyncStatusDot entities={[
           { entityType: "tile", id: tile.id, clientId: tile.client_id },
           ...(thoughtIdentities ?? []).map((thought) => ({ entityType: "thought" as const, id: thought.id, clientId: thought.clientId })),
-        ]} />
+        ]} fontSize={fontSize} />
         <CloseButton onClick={() => removeTile(tile.id)} size={closeSize} iconSize={closeIconSize} />
       </div>
     </div>
