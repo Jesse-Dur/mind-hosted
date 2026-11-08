@@ -6,7 +6,7 @@
       "name": "jesse-dashboard",
       "dependencies": {
         "@clerk/backend": "^3.26.6",
-        "@clerk/hono": "^0.1.97",
+        "@clerk/hono": "^0.1.98",
         "hono": "^4.13.16",
         "postgres": "^4.0.0",
       },
@@ -21,7 +21,7 @@
   "packages": {
     "@clerk/backend": ["@clerk/backend@3.26.6", "", { "dependencies": { "@clerk/shared": "^4.44.0", "standardwebhooks": "^1.0.0" } }, "sha512-tm2ZWWFW+qBzW9SkdR0RxL++hww/ArtTzrtsu8k2cCXJIVGKaIMl/5tKi+4wy7iouvgk33Bs22fv3vKJ0RRrHg=="],
 
-    "@clerk/hono": ["@clerk/hono@0.1.97", "", { "dependencies": { "@clerk/backend": "^3.26.6", "@clerk/shared": "^4.44.0" }, "peerDependencies": { "hono": ">=4" } }, "sha512-J6TEbLYuBHT4lObBnMFVUqyFJUPlvwEuwV0MN9JGSPMKRWfP6ZQI4M7Bd+MjlGdo/iWIiH3A03sbIQsN8iDw+g=="],
+    "@clerk/hono": ["@clerk/hono@0.1.98", "", { "dependencies": { "@clerk/backend": "^3.27.0", "@clerk/shared": "^4.44.1" }, "peerDependencies": { "hono": ">=4" } }, "sha512-bxyvWWBFHqu2n3oh5YHHkZEk9iPqVjs/TopHl2PWA5AcLT22TKkZsbl/aP25n+D3TQ1MRHYJjefI44iMCtSPRQ=="],
 
     "@clerk/shared": ["@clerk/shared@4.44.1", "", { "dependencies": { "@tanstack/query-core": "^5.101.4", "dequal": "2.0.3", "glob-to-regexp": "0.4.1", "js-cookie": "3.0.8" }, "peerDependencies": { "react": "^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0", "react-dom": "^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0" }, "optionalPeers": ["react", "react-dom"] }, "sha512-c06U6GtlLJNOKj900rHDSqjVRz0/0zb3RZXVGKUqTulfQxr4Ym543JE6cbOnZVJZCbm0fGPhdRKvHq6fO/SvVw=="],
 
