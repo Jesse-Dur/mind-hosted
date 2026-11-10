@@ -28,6 +28,6 @@
     "@clerk/backend": "^3.27.0",
     "@clerk/hono": "^0.1.98",
     "hono": "^4.13.17",
-    "postgres": "^4.0.0"
+    "postgres": "^4.1.0"
   }
 }
