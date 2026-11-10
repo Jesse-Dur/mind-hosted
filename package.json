@@ -21,7 +21,7 @@
   "devDependencies": {
     "@types/bun": "latest",
     "concurrently": "^10.0.7",
-    "fake-indexeddb": "^6.2.7",
+    "fake-indexeddb": "^6.2.8",
     "happy-dom": "21.0.4"
   },
   "dependencies": {
