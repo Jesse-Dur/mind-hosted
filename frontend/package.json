@@ -12,7 +12,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.2.1",
-    "vite": "^8.3.6"
+    "vite": "^8.3.7"
   },
   "peerDependencies": {
     "typescript": "^6.0.3"
