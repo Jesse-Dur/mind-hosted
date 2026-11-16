@@ -3,70 +3,124 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkRepositoryVersion, parseVersion, validateVersion } from "./version-policy.mjs";
+import { buildVersion, checkRepositoryVersion, parseVersion, releaseVersion } from "../../scripts/release-version.mjs";
 
-describe("two-part app version policy", () => {
-  test("increments the release counter without treating it as a decimal", () => {
-    expect(validateVersion({ baseVersion: "6.9", version: "6.10" })).toBe("6.10");
-    expect(validateVersion({ baseVersion: "6.99", version: "6.100" })).toBe("6.100");
-  });
+function fixture() {
+  const cwd = mkdtempSync(join(tmpdir(), "mind-release-version-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  git("init", "-b", "main");
+  git("config", "user.name", "Release test");
+  git("config", "user.email", "release@example.invalid");
+  const commit = (message = "change") => {
+    git("add", "-A");
+    git("commit", "--allow-empty", "-m", message);
+    return git("rev-parse", "HEAD");
+  };
+  const config = (major: number, initialMinor = 0) => writeFileSync(join(cwd, "release.json"), JSON.stringify({ major, initialMinor }));
+  mkdirSync(join(cwd, "frontend"));
+  writeFileSync(join(cwd, "frontend/package.json"), JSON.stringify({ version: "6.25" }));
+  const legacy = commit("legacy v6.25");
+  git("tag", "v6.25");
+  config(6, 26);
+  const migration = commit("calculated versions");
+  return { cwd, git, commit, config, legacy, migration, clean: () => rmSync(cwd, { recursive: true, force: true }) };
+}
 
-  test("allows an intentional milestone or incompatibility to reset the counter", () => {
-    expect(validateVersion({ baseVersion: "6.12", version: "7.0" })).toBe("7.0");
-  });
+function using(run: (r: ReturnType<typeof fixture>) => void) {
+  const r = fixture();
+  try { run(r); } finally { r.clean(); }
+}
 
-  for (const version of ["6.2", "6.1", "6.4", "7.1", "8.0"]) {
-    test(`rejects an unchanged, backwards, or skipped version: ${version}`, () => {
-      expect(() => validateVersion({ baseVersion: "6.2", version })).toThrow("must change");
-    });
+describe("calculated two-part release versions", () => {
+  test("continues after v6.25 and keeps existing tags unchanged", () => using((r) => {
+    expect(checkRepositoryVersion(r.legacy, r.migration, r.cwd)).toBe("6.26");
+    expect(releaseVersion(r.commit(), r.cwd)).toBe("6.27");
+    expect(releaseVersion(r.migration, r.cwd)).toBe("6.26");
+    expect(r.git("rev-parse", "v6.25")).toBe(r.legacy);
+  }));
+
+  test("the migration merge starts at 6.26 regardless of its internal commits", () => using((r) => {
+    r.git("checkout", "-b", "migration-pr");
+    r.commit(); r.commit();
+    r.git("checkout", "main");
+    r.git("reset", "--hard", r.legacy);
+    r.git("merge", "--no-ff", "migration-pr", "-m", "Merge calculated versions");
+    expect(releaseVersion("HEAD", r.cwd)).toBe("6.26");
+  }));
+
+  for (const config of [{ major: 0, initialMinor: 0 }, { major: 7, initialMinor: -1 }, { major: 7.5, initialMinor: 0 }, { major: 7 }, { major: "7", initialMinor: 0 }]) {
+    test(`rejects malformed release configuration ${JSON.stringify(config)}`, () => using((r) => {
+      writeFileSync(join(r.cwd, "release.json"), JSON.stringify(config));
+      const head = r.commit("bad config");
+      expect(() => releaseVersion(head, r.cwd)).toThrow("requires a positive integer");
+    }));
   }
+
+  test("counts a multi-commit PR once and accepts PRs without a version edit", () => using((r) => {
+    r.git("checkout", "-b", "feature");
+    r.commit(); r.commit(); r.commit();
+    const head = r.git("rev-parse", "HEAD");
+    expect(checkRepositoryVersion(r.migration, head, r.cwd)).toBe("6.29");
+    r.git("checkout", "main");
+    r.git("merge", "--no-ff", "feature", "-m", "Merge feature");
+    expect(releaseVersion("HEAD", r.cwd)).toBe("6.27");
+    r.git("checkout", "-b", "dependency");
+    writeFileSync(join(r.cwd, "frontend/package.json"), JSON.stringify({ dependencies: { example: "2.0.0" } }));
+    expect(checkRepositoryVersion("main", r.commit("dependency update"), r.cwd)).toBe("6.28");
+  }));
+
+  test("a milestone starts at zero and later merges advance its counter", () => using((r) => {
+    r.config(7);
+    const major = r.commit("milestone");
+    expect(checkRepositoryVersion(r.migration, major, r.cwd)).toBe("7.0");
+    expect(releaseVersion(r.commit(), r.cwd)).toBe("7.1");
+  }));
+
+  for (const [major, initialMinor] of [[6, 26], [6, 0], [5, 0], [7, 1]]) {
+    test(`rejects a reset or invalid milestone ${major}.${initialMinor}`, () => using((r) => {
+      r.config(major, initialMinor);
+      // A formatting-only rewrite is a change too; it must not reset the counter.
+      writeFileSync(join(r.cwd, "release.json"), `${JSON.stringify({ major, initialMinor }, null, 2)}\n`);
+      const head = r.commit("reset attempt");
+      expect(() => checkRepositoryVersion(r.migration, head, r.cwd)).toThrow("increase the major");
+    }));
+  }
+
+  test("deleting and restoring configuration cannot reuse a previous major", () => using((r) => {
+    r.git("rm", "release.json");
+    r.commit("delete config");
+    expect(() => releaseVersion("HEAD", r.cwd)).toThrow("Missing release.json");
+    r.config(6, 26);
+    r.commit("restore config");
+    expect(() => releaseVersion("HEAD", r.cwd)).toThrow("increase the major");
+  }));
+
+  test("migration rejects overlapping legacy versions", () => using((r) => {
+    r.git("reset", "--hard", r.legacy);
+    r.config(6, 25);
+    const head = r.commit("bad migration");
+    expect(() => checkRepositoryVersion(r.legacy, head, r.cwd)).toThrow("continue after");
+    expect(() => releaseVersion(head, r.cwd)).toThrow("continue after");
+  }));
+
+  test("shallow clones fail rather than publishing a reused number", () => using((r) => {
+    const shallow = join(r.cwd, "shallow");
+    execFileSync("git", ["clone", "--depth=1", `file://${r.cwd}`, shallow], { stdio: "pipe" });
+    expect(() => releaseVersion("HEAD", shallow)).toThrow("complete Git history");
+  }));
+
+  test("production builds use the exact release number while previews and local builds are identified", () => using((r) => {
+    const production = { VERCEL: "1", VERCEL_ENV: "production", VERCEL_GIT_COMMIT_REF: "main", VERCEL_GIT_COMMIT_SHA: r.migration };
+    expect(buildVersion(production, r.cwd)).toBe("6.26");
+    expect(buildVersion({ VERCEL: "1", VERCEL_ENV: "preview" }, r.cwd)).toBe(`6.26-preview.${r.migration.slice(0, 7)}`);
+    expect(buildVersion({}, r.cwd)).toBe("6.26-local");
+    expect(() => buildVersion({ ...production, VERCEL_GIT_COMMIT_REF: "feature" }, r.cwd)).toThrow("exact main commit");
+    expect(() => buildVersion({ ...production, VERCEL_GIT_COMMIT_SHA: r.legacy }, r.cwd)).toThrow("does not match");
+  }));
 
   for (const version of [undefined, 6.3, "6", "6.3.0", "v6.3", "06.3", "6.03", "6.-1", "6.3-beta", "6.3\n"]) {
     test(`rejects invalid version ${JSON.stringify(version)}`, () => {
       expect(() => parseVersion(version)).toThrow("two integers");
     });
-  }
-
-  test("rejects a duplicate tag even if it is not on main", () => {
-    expect(() => validateVersion({ baseVersion: "6.2", version: "6.3", tags: ["v6.3"] })).toThrow("already been used");
-  });
-
-  test("rejects a version previously used on main even without a tag", () => {
-    expect(() => validateVersion({ baseVersion: "6.2", version: "6.3", previousVersions: ["6.3", "6.2"] })).toThrow("already been used");
-  });
-});
-
-test("checks the PR head against current main, rejecting a second PR after the same version merges", () => {
-  const root = mkdtempSync(join(tmpdir(), "mind-version-policy-"));
-  const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-  const commitVersion = (version: string) => {
-    writeFileSync(join(root, "frontend/package.json"), JSON.stringify({ version }));
-    git("add", ".");
-    git("-c", "user.name=Version test", "-c", "user.email=version@example.invalid", "commit", "-m", version);
-    return git("rev-parse", "HEAD");
-  };
-  try {
-    git("init", "-b", "main");
-    mkdirSync(join(root, "frontend"));
-    commitVersion("6.2");
-    git("checkout", "-b", "first-pr");
-    const first = commitVersion("6.3");
-    expect(checkRepositoryVersion("main", first, root)).toBe("6.3");
-    git("checkout", "main");
-    git("checkout", "-b", "second-pr");
-    writeFileSync(join(root, "another-change.txt"), "A distinct PR with the same proposed version\n");
-    const second = commitVersion("6.3");
-    expect(second).not.toBe(first);
-    expect(checkRepositoryVersion("main", second, root)).toBe("6.3");
-    git("checkout", "main");
-    git("merge", "--ff-only", first);
-    expect(() => checkRepositoryVersion("main", second, root)).toThrow("must change from 6.3 to 6.4");
-    git("checkout", "second-pr");
-    const bumped = commitVersion("6.4");
-    expect(checkRepositoryVersion("main", bumped, root)).toBe("6.4");
-    git("tag", "v6.4", first);
-    expect(() => checkRepositoryVersion("main", bumped, root)).toThrow("already been used");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
   }
 });

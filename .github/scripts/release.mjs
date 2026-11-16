@@ -1,8 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { GitHubApi } from "./dependency-gate.mjs";
-import { parseVersion } from "./version-policy.mjs";
+import { parseVersion, releaseVersion } from "../../scripts/release-version.mjs";
 
 async function optionalRequest(api, path) {
   try {
@@ -58,7 +57,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (!repository || !token || !sha) throw new Error("GITHUB_REPOSITORY, GITHUB_TOKEN, and GITHUB_SHA are required.");
     const head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
     if (head !== sha) throw new Error("Checkout does not match the deployed commit.");
-    const { version } = JSON.parse(readFileSync("frontend/package.json", "utf8"));
+    const version = releaseVersion(sha);
     const release = await publishRelease(new GitHubApi(repository, token), { version, sha });
     console.log(`Release published: ${release.html_url}`);
   } catch (error) {

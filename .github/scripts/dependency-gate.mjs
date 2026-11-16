@@ -1,5 +1,4 @@
 import { pathToFileURL } from "node:url";
-import { appendFileSync } from "node:fs";
 
 export const GITHUB_ACTIONS_BOT_ID = 41898282;
 export const GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]";
@@ -640,8 +639,8 @@ The merge is complete. Check the [deployment runs](https://github.com/${api.repo
   throw new Error(message, { cause: dispatchError });
 }
 
-export async function mergeCurrentRevision(api, pullRequest, policy, preparedBaseSha) {
-  if (!preparedBaseSha) throw new Error("The attested preparation base SHA is required before merging.");
+export async function mergeCurrentRevision(api, pullRequest, policy, testedBaseSha) {
+  if (!testedBaseSha) throw new Error("The tested main SHA is required before merging.");
   const latestPullRequest = await api.request(`/pulls/${pullRequest.number}`);
 
   if (
@@ -666,7 +665,13 @@ export async function mergeCurrentRevision(api, pullRequest, policy, preparedBas
   // PR base.sha can be a cached snapshot. Resolve the branch after checking the
   // current head's gates, immediately before the guarded merge request.
   const liveBase = await api.request("/git/ref/heads/main");
-  if (liveBase.object.sha !== preparedBaseSha) return false;
+  if (liveBase.object.sha !== testedBaseSha) return false;
+  const comparison = await api.request(`/compare/${testedBaseSha}...${latestPullRequest.head.sha}`);
+  if (comparison.merge_base_commit?.sha !== testedBaseSha ||
+      !["ahead", "identical"].includes(comparison.status)) return false;
+  // Re-read main after the comparison too; strict branch protection covers a
+  // final race between this snapshot and GitHub's guarded merge request.
+  if ((await api.request("/git/ref/heads/main")).object.sha !== testedBaseSha) return false;
 
   const mergeResult = await api.request(
     `/pulls/${latestPullRequest.number}/merge`,
@@ -702,7 +707,7 @@ export async function mergeCurrentRevision(api, pullRequest, policy, preparedBas
 async function processPullRequest(
   api,
   pullRequestNumber,
-  { prepare, allowMerge },
+  { allowMerge },
 ) {
   const initialPullRequest = await api.request(`/pulls/${pullRequestNumber}`);
 
@@ -718,14 +723,11 @@ async function processPullRequest(
   const classificationComments = await api.paginate(
     `/issues/${initialPullRequest.number}/comments`,
   );
-  let classification = trustedClassification(
+  const classification = trustedClassification(
     classificationComments,
     initialPullRequest.head.sha,
   );
   if (!classification) return "blocked";
-  const preparation = await prepare(api, initialPullRequest, classification);
-  if (preparation.state !== "ready") return preparation.state;
-  classification = preparation.classification;
   const policy = classifyPolicy(classification);
 
   // Do not add a fallback PR warning comment here. Statuses are scoped to the
@@ -744,7 +746,11 @@ async function processPullRequest(
   const pullRequest = await api.request(`/pulls/${pullRequestNumber}`);
   const liveBase = await api.request("/git/ref/heads/main");
   if (pullRequest.state !== "open" || pullRequest.head.sha !== initialPullRequest.head.sha ||
-      pullRequest.base.ref !== "main" || liveBase.object.sha !== classification.preparation.baseSha) return "stale";
+      pullRequest.base.ref !== "main") return "stale";
+  const testedBaseSha = liveBase.object.sha;
+  const comparison = await api.request(`/compare/${testedBaseSha}...${pullRequest.head.sha}`);
+  if (comparison.merge_base_commit?.sha !== testedBaseSha ||
+      !["ahead", "identical"].includes(comparison.status)) return "stale";
   const gates = await evaluateGates(api, pullRequest);
   if (gates.ci.state === "failure" || gates.version.state === "failure" ||
       ["CHANGES_REQUESTED", "COMMENTED", "DISMISSED"].includes(gates.kodyReview)) {
@@ -757,7 +763,7 @@ async function processPullRequest(
   if (!policy.autoMerge && !gates.maintainerApproved) return "manual";
   if (gates.ci.state !== "success" || gates.version.state !== "success" || !kodyReviewPassed(policy, gates.kodyReview)) return "waiting";
   if (!allowMerge) return "waiting";
-  return await mergeCurrentRevision(api, pullRequest, policy, classification.preparation.baseSha) ? "merged" : "stale";
+  return await mergeCurrentRevision(api, pullRequest, policy, testedBaseSha) ? "merged" : "stale";
 }
 
 export async function requestCurrentKodyReview(api, pullRequest) {
@@ -767,7 +773,7 @@ export async function requestCurrentKodyReview(api, pullRequest) {
       comment.user?.login === GITHUB_ACTIONS_BOT_LOGIN && comment.body?.includes(marker))) return;
   await api.request(`/issues/${pullRequest.number}/comments`, {
     method: "POST",
-    body: { body: `@kody review --force\n\nPlease review dependency revision \`${pullRequest.head.sha}\`, including its app version and current main changes.\n\n${marker}` },
+    body: { body: `@kody review --force\n\nPlease review dependency revision \`${pullRequest.head.sha}\`, including its dependency changes against current main.\n\n${marker}` },
   });
 }
 
@@ -797,19 +803,9 @@ The policy workflow could not complete for revision \`${pullRequest.head.sha.sli
 }
 
 export async function runGate(api, {
-  prepare,
   requestedPullRequest = Number(process.env.PR_NUMBER || 0),
   allowMerge = process.env.ALLOW_MERGE !== "false",
 } = {}) {
-  if (!prepare) {
-    const { prepareDependency } = await import("./dependency-preparation.mjs");
-    if (!process.env.DEPENDENCY_PREPARATION_TOKEN || !process.env.DEPENDENCY_APP_SLUG) {
-      throw new Error("Configure DEPENDENCY_APP_ID and DEPENDENCY_APP_PRIVATE_KEY before preparing dependencies.");
-    }
-    prepare = (client, pullRequest, classification) => prepareDependency(client, pullRequest, classification, {
-      token: process.env.DEPENDENCY_PREPARATION_TOKEN, appSlug: process.env.DEPENDENCY_APP_SLUG,
-    });
-  }
   let failures = 0;
 
   const candidates = requestedPullRequest
@@ -821,19 +817,20 @@ export async function runGate(api, {
     const comments = await api.paginate(`/issues/${pullRequest.number}/comments`);
     const classification = trustedClassification(comments, pullRequest.head.sha);
     const automatic = classifyPolicy(classification).autoMerge;
-    return { pullRequest, priority: automatic ? (classification?.preparation ? 0 : 1) : 2 };
+    return { pullRequest, priority: automatic ? 0 : 1 };
   }));
-  const pullRequestNumbers = classified.sort((left, right) => left.priority - right.priority)
+  const pullRequestNumbers = classified.sort((left, right) => left.priority - right.priority ||
+    new Date(left.pullRequest.created_at) - new Date(right.pullRequest.created_at))
     .map(({ pullRequest }) => pullRequest.number);
 
   for (const pullRequestNumber of pullRequestNumbers) {
     try {
       const result = await processPullRequest(api, pullRequestNumber, {
-        prepare, allowMerge,
+        allowMerge,
       });
       // One active update at a time; real failures and manual approvals do not
       // hold up unrelated updates. The next event or schedule resumes the gate.
-      if (["prepared", "waiting", "merged", "stale"].includes(result)) break;
+      if (["waiting", "merged", "stale"].includes(result)) break;
     } catch (error) {
       failures += 1;
       console.error(
@@ -926,16 +923,6 @@ async function main() {
   }
 
   const api = new GitHubApi(repository, token);
-
-  if (mode === "classified") {
-    const number = Number(process.env.PR_NUMBER);
-    if (!number || !process.env.GITHUB_OUTPUT) throw new Error("PR_NUMBER and GITHUB_OUTPUT are required.");
-    const pullRequest = await api.request(`/pulls/${number}`);
-    const comments = await api.paginate(`/issues/${number}/comments`);
-    const exists = isDependabotPullRequest(pullRequest, repository) && trustedClassification(comments, pullRequest.head.sha);
-    appendFileSync(process.env.GITHUB_OUTPUT, `reuse=${Boolean(exists)}\n`);
-    return;
-  }
 
   if (mode === "classify") {
     const pullRequestNumber = Number(process.env.PR_NUMBER || 0);
