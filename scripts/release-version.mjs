@@ -103,12 +103,20 @@ export function buildVersion(env = process.env, cwd = repositoryRoot) {
   return `${version}-${env.VERCEL ? `preview.${git("rev-parse", "--short=7", "HEAD")}` : "local"}`;
 }
 
+export function prepareBuildHistory(env = process.env, cwd = repositoryRoot) {
+  const git = gitAt(cwd);
+  if (!env.VERCEL || git("rev-parse", "--is-shallow-repository") !== "true") return;
+  // Vercel removes remotes after cloning. This repository is public, so the
+  // missing history can be fetched directly without adding build credentials.
+  const remote = git("remote").split("\n").includes("origin")
+    ? "origin" : "https://github.com/Jesse-Dur/mind-hosted.git";
+  execFileSync("git", ["fetch", "--unshallow", remote, git("rev-parse", "HEAD")], { cwd, stdio: "inherit" });
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     if (process.argv[2] === "--prepare-build") {
-      if (process.env.VERCEL && gitAt(repositoryRoot)("rev-parse", "--is-shallow-repository") === "true") {
-        execFileSync("git", ["fetch", "--unshallow", "origin"], { cwd: repositoryRoot, stdio: "inherit" });
-      }
+      prepareBuildHistory();
       console.log(`App version: ${buildVersion()}`);
     } else console.log(releaseVersion(process.argv[2]));
   } catch (error) {

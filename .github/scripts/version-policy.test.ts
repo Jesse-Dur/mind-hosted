@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildVersion, checkRepositoryVersion, parseVersion, releaseVersion } from "../../scripts/release-version.mjs";
+import { buildVersion, checkRepositoryVersion, parseVersion, prepareBuildHistory, releaseVersion } from "../../scripts/release-version.mjs";
 
 function fixture() {
   const cwd = mkdtempSync(join(tmpdir(), "mind-release-version-"));
@@ -107,6 +107,23 @@ describe("calculated two-part release versions", () => {
     const shallow = join(r.cwd, "shallow");
     execFileSync("git", ["clone", "--depth=1", `file://${r.cwd}`, shallow], { stdio: "pipe" });
     expect(() => releaseVersion("HEAD", shallow)).toThrow("complete Git history");
+  }));
+
+  test("Vercel's shallow checkout can fetch history after its origin remote is removed", () => using((r) => {
+    r.git("checkout", "-b", "preview-branch");
+    const preview = r.commit("preview change");
+    r.git("checkout", "main");
+    const shallow = join(r.cwd, "vercel-checkout");
+    execFileSync("git", ["clone", "--depth=1", "--branch", "preview-branch", `file://${r.cwd}`, shallow], { stdio: "pipe" });
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: shallow, encoding: "utf8", stdio: "pipe" }).trim();
+    git("remote", "remove", "origin");
+    // Route the public URL to this fixture without using the network.
+    git("config", `url.file://${r.cwd}.insteadOf`, "https://github.com/Jesse-Dur/mind-hosted.git");
+    expect(() => releaseVersion("HEAD", shallow)).toThrow("complete Git history");
+    prepareBuildHistory({ VERCEL: "1" }, shallow);
+    expect(git("rev-parse", "--is-shallow-repository")).toBe("false");
+    expect(releaseVersion("HEAD", shallow)).toBe("6.27");
+    expect(buildVersion({ VERCEL: "1", VERCEL_ENV: "preview" }, shallow)).toBe(`6.27-preview.${preview.slice(0, 7)}`);
   }));
 
   test("production builds use the exact release number while previews and local builds are identified", () => using((r) => {
