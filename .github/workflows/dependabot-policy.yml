@@ -83,6 +83,8 @@ jobs:
       - classify
     if: >-
       always() &&
+      ((github.event_name != 'pull_request_target' && github.event_name != 'pull_request_review') ||
+        github.event.pull_request.user.login == 'dependabot[bot]') &&
       !(github.actor == 'dependabot[bot]' && github.event_name == 'pull_request_review') &&
       (vars.DEPENDENCY_AUTO_MERGE_PAUSED != 'true' || inputs.verify_only == true) &&
       (needs.classify.result == 'success' || needs.classify.result == 'skipped')
