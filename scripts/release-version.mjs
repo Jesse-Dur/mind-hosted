@@ -103,20 +103,40 @@ export function buildVersion(env = process.env, cwd = repositoryRoot) {
   return `${version}-${env.VERCEL ? `preview.${git("rev-parse", "--short=7", "HEAD")}` : "local"}`;
 }
 
-export function prepareBuildHistory(env = process.env, cwd = repositoryRoot) {
+export async function prepareBuildHistory(env = process.env, cwd = repositoryRoot, {
+  run = execFileSync,
+  pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+} = {}) {
   const git = gitAt(cwd);
   if (!env.VERCEL || git("rev-parse", "--is-shallow-repository") !== "true") return;
-  // Vercel removes remotes after cloning. This repository is public, so the
-  // missing history can be fetched directly without adding build credentials.
-  const remote = git("remote").split("\n").includes("origin")
-    ? "origin" : "https://github.com/Jesse-Dur/mind-hosted.git";
-  execFileSync("git", ["fetch", "--unshallow", remote, git("rev-parse", "HEAD")], { cwd, stdio: "inherit" });
+  // Vercel removes remotes after cloning. Its repository metadata identifies
+  // the source even when a project is renamed, transferred, or forked.
+  let remote = "origin";
+  if (!git("remote").split("\n").includes(remote)) {
+    const owner = env.VERCEL_GIT_REPO_OWNER;
+    const slug = env.VERCEL_GIT_REPO_SLUG;
+    if (!/^[a-zA-Z0-9-]+$/.test(owner ?? "") ||
+        !/^[a-zA-Z0-9_.-]+$/.test(slug ?? "") || [".", ".."].includes(slug)) {
+      throw new Error("Vercel repository owner and slug are required to fetch build history without origin.");
+    }
+    remote = `https://github.com/${owner}/${slug}.git`;
+  }
+  const sha = git("rev-parse", "HEAD");
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      run("git", ["fetch", "--unshallow", remote, sha], { cwd, stdio: "inherit", timeout: 30_000 });
+      return;
+    } catch (error) {
+      if (attempt === 2) throw new Error("Could not fetch complete build history after three attempts.", { cause: error });
+      await pause(1_000 * 2 ** attempt);
+    }
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     if (process.argv[2] === "--prepare-build") {
-      prepareBuildHistory();
+      await prepareBuildHistory();
       console.log(`App version: ${buildVersion()}`);
     } else console.log(releaseVersion(process.argv[2]));
   } catch (error) {

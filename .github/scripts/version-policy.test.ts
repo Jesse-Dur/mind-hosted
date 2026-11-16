@@ -109,22 +109,77 @@ describe("calculated two-part release versions", () => {
     expect(() => releaseVersion("HEAD", shallow)).toThrow("complete Git history");
   }));
 
-  test("Vercel's shallow checkout can fetch history after its origin remote is removed", () => using((r) => {
+  function vercelCheckout(r: ReturnType<typeof fixture>) {
     r.git("checkout", "-b", "preview-branch");
     const preview = r.commit("preview change");
     r.git("checkout", "main");
-    const shallow = join(r.cwd, "vercel-checkout");
-    execFileSync("git", ["clone", "--depth=1", "--branch", "preview-branch", `file://${r.cwd}`, shallow], { stdio: "pipe" });
-    const git = (...args: string[]) => execFileSync("git", args, { cwd: shallow, encoding: "utf8", stdio: "pipe" }).trim();
+    const cwd = join(r.cwd, "vercel-checkout");
+    execFileSync("git", ["clone", "--depth=1", "--branch", "preview-branch", `file://${r.cwd}`, cwd], { stdio: "pipe" });
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" }).trim();
     git("remote", "remove", "origin");
-    // Route the public URL to this fixture without using the network.
-    git("config", `url.file://${r.cwd}.insteadOf`, "https://github.com/Jesse-Dur/mind-hosted.git");
-    expect(() => releaseVersion("HEAD", shallow)).toThrow("complete Git history");
-    prepareBuildHistory({ VERCEL: "1" }, shallow);
-    expect(git("rev-parse", "--is-shallow-repository")).toBe("false");
-    expect(releaseVersion("HEAD", shallow)).toBe("6.27");
-    expect(buildVersion({ VERCEL: "1", VERCEL_ENV: "preview" }, shallow)).toBe(`6.27-preview.${preview.slice(0, 7)}`);
-  }));
+    const env = { VERCEL: "1", VERCEL_GIT_REPO_OWNER: "Renamed-Owner", VERCEL_GIT_REPO_SLUG: "renamed-mind" };
+    // Route the renamed repository URL to this fixture without using the network.
+    git("config", `url.file://${r.cwd}.insteadOf`, `https://github.com/${env.VERCEL_GIT_REPO_OWNER}/${env.VERCEL_GIT_REPO_SLUG}.git`);
+    return { cwd, git, env, preview };
+  }
+
+  test("Vercel's shallow checkout fetches its source repository's history without origin", async () => {
+    const r = fixture();
+    try {
+      const v = vercelCheckout(r);
+      expect(() => releaseVersion("HEAD", v.cwd)).toThrow("complete Git history");
+      await prepareBuildHistory(v.env, v.cwd);
+      expect(v.git("rev-parse", "--is-shallow-repository")).toBe("false");
+      expect(releaseVersion("HEAD", v.cwd)).toBe("6.27");
+      expect(buildVersion({ VERCEL: "1", VERCEL_ENV: "preview" }, v.cwd)).toBe(`6.27-preview.${v.preview.slice(0, 7)}`);
+    } finally { r.clean(); }
+  });
+
+  test("transient history-fetch failures retry with backoff and recover the exact version", async () => {
+    const r = fixture();
+    try {
+      const v = vercelCheckout(r);
+      const delays: number[] = [];
+      let attempts = 0;
+      await prepareBuildHistory(v.env, v.cwd, {
+        run: (command: string, args: string[], options: any) => {
+          expect(options.timeout).toBe(30_000);
+          if (++attempts < 3) throw new Error("Temporary network failure");
+          return execFileSync(command, args, options);
+        },
+        pause: async (ms: number) => { delays.push(ms); },
+      });
+      expect(attempts).toBe(3);
+      expect(delays).toEqual([1000, 2000]);
+      expect(releaseVersion("HEAD", v.cwd)).toBe("6.27");
+    } finally { r.clean(); }
+  });
+
+  test("persistent fetch failures stop after three attempts and cannot produce a release number", async () => {
+    const r = fixture();
+    try {
+      const v = vercelCheckout(r);
+      let attempts = 0;
+      const delays: number[] = [];
+      await expect(prepareBuildHistory(v.env, v.cwd, {
+        run: () => { attempts += 1; throw new Error("Network unavailable"); },
+        pause: async (ms: number) => { delays.push(ms); },
+      })).rejects.toThrow("after three attempts");
+      expect(attempts).toBe(3);
+      expect(delays).toEqual([1000, 2000]);
+      expect(() => releaseVersion("HEAD", v.cwd)).toThrow("complete Git history");
+    } finally { r.clean(); }
+  });
+
+  test("missing or invalid repository metadata cannot select a fallback remote", async () => {
+    const r = fixture();
+    try {
+      const v = vercelCheckout(r);
+      for (const env of [{ VERCEL: "1" }, { ...v.env, VERCEL_GIT_REPO_OWNER: "owner/other" }, { ...v.env, VERCEL_GIT_REPO_SLUG: ".." }]) {
+        await expect(prepareBuildHistory(env, v.cwd)).rejects.toThrow("repository owner and slug");
+      }
+    } finally { r.clean(); }
+  });
 
   test("production builds use the exact release number while previews and local builds are identified", () => using((r) => {
     const production = { VERCEL: "1", VERCEL_ENV: "production", VERCEL_GIT_COMMIT_REF: "main", VERCEL_GIT_COMMIT_SHA: r.migration };
