@@ -5,7 +5,7 @@
     "": {
       "name": "jesse-dashboard",
       "dependencies": {
-        "@clerk/backend": "^3.28.0",
+        "@clerk/backend": "^3.29.0",
         "@clerk/hono": "^0.1.100",
         "hono": "^4.13.18",
         "postgres": "^4.1.1",
@@ -19,7 +19,7 @@
     },
   },
   "packages": {
-    "@clerk/backend": ["@clerk/backend@3.28.0", "", { "dependencies": { "@clerk/shared": "^4.45.0", "standardwebhooks": "^1.0.0" } }, "sha512-7GTG4QJdcww4nznhY5JAPUFOtxt4u+KhXoHU6qqQ8JBLWDqWi7gk2ewJzXf4R5VlvrqRHlEtUuPJgbK2RjYecg=="],
+    "@clerk/backend": ["@clerk/backend@3.29.0", "", { "dependencies": { "@clerk/shared": "^4.45.1", "standardwebhooks": "^1.0.0" } }, "sha512-VmoVqkQXDs3hi2HsUomqe9Z/izoGgQ+IbY8fJN9VsqSdKVgHGUBw6CjDbOufkDakDuC8zBtcT9sn0M3QR3RHfQ=="],
 
     "@clerk/hono": ["@clerk/hono@0.1.100", "", { "dependencies": { "@clerk/backend": "^3.29.0", "@clerk/shared": "^4.45.1" }, "peerDependencies": { "hono": ">=4" } }, "sha512-obmPeR7xvGYOJJOvIYuvItpOEIfXp0Kpqm/NfU0nODwBQUQTGJDPZjAPEwLuAaqEohcUsx1hnPo3UECQK0LlJQ=="],
 
@@ -106,7 +106,5 @@
     "yargs": ["yargs@18.0.0", "", { "dependencies": { "cliui": "^9.0.1", "escalade": "^3.1.1", "get-caller-file": "^2.0.5", "string-width": "^7.2.0", "y18n": "^5.0.5", "yargs-parser": "^22.0.0" } }, "sha512-4UEqdc2RYGHZc7Doyqkrqiln3p9X2DZVxaGbwhn2pi7MrRagKaOcIKe8L3OxYcbhXLgLFUS3zAYuQjKBQgmuNg=="],
 
     "yargs-parser": ["yargs-parser@22.0.0", "", {}, "sha512-rwu/ClNdSMpkSrUb+d6BRsSkLUq1fmfsY6TOpYzTwvwkg1/NRG85KBy3kq++A8LKQwX6lsu+aWad+2khvuXrqw=="],
-
-    "@clerk/hono/@clerk/backend": ["@clerk/backend@3.29.0", "", { "dependencies": { "@clerk/shared": "^4.45.1", "standardwebhooks": "^1.0.0" } }, "sha512-VmoVqkQXDs3hi2HsUomqe9Z/izoGgQ+IbY8fJN9VsqSdKVgHGUBw6CjDbOufkDakDuC8zBtcT9sn0M3QR3RHfQ=="],
   }
 }
