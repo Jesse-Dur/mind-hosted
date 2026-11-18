@@ -98,6 +98,7 @@ Preference recovery checks mount the real App in an isolated browser harness wit
 
 ## Current Frontend Coverage
 
+- Sign-in modal compatibility checks cover Clerk's focus selectors when the page recovers the native matching method from a temporary blank frame.
 - Microphone lifecycle checks mount the shared recording hook and Spotlight in Happy DOM with simulated media devices. Button, typing, shortcut, silence, Escape, dismissal, and page exit release every audio track and close the audio context. Checks cover pending permission cancellation, setup and recorder failures, final audio chunks, rapid restarts, ignored late transcription results, and shortcut startup under React Strict Mode.
 - Completed upserts keep separate durable operations and flush in order for each entity, preserving their History actions.
 - Local History reads start with a bounded page, retain old pending/error/device-only entries, and load every retained entry on demand. Hidden acknowledgement markers remain durable without filling visible pages.
