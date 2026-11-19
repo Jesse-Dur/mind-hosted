@@ -6,7 +6,7 @@
       "name": "jesse-dashboard",
       "dependencies": {
         "@clerk/backend": "^3.29.0",
-        "@clerk/hono": "^0.1.100",
+        "@clerk/hono": "^0.1.101",
         "hono": "^4.13.19",
         "postgres": "^4.1.1",
       },
@@ -21,7 +21,7 @@
   "packages": {
     "@clerk/backend": ["@clerk/backend@3.29.0", "", { "dependencies": { "@clerk/shared": "^4.45.1", "standardwebhooks": "^1.0.0" } }, "sha512-VmoVqkQXDs3hi2HsUomqe9Z/izoGgQ+IbY8fJN9VsqSdKVgHGUBw6CjDbOufkDakDuC8zBtcT9sn0M3QR3RHfQ=="],
 
-    "@clerk/hono": ["@clerk/hono@0.1.100", "", { "dependencies": { "@clerk/backend": "^3.29.0", "@clerk/shared": "^4.45.1" }, "peerDependencies": { "hono": ">=4" } }, "sha512-obmPeR7xvGYOJJOvIYuvItpOEIfXp0Kpqm/NfU0nODwBQUQTGJDPZjAPEwLuAaqEohcUsx1hnPo3UECQK0LlJQ=="],
+    "@clerk/hono": ["@clerk/hono@0.1.101", "", { "dependencies": { "@clerk/backend": "^3.30.0", "@clerk/shared": "^4.46.0" }, "peerDependencies": { "hono": ">=4" } }, "sha512-uh/S+6brf0tQOeEs4iu1OiO+KltbQxXak2+p+anOInrw2JViW14alfS36f8yTy/s38BwxijVk+j7x8dnhVjB6Q=="],
 
     "@clerk/shared": ["@clerk/shared@4.45.1", "", { "dependencies": { "@tanstack/query-core": "^5.101.4", "dequal": "2.0.3", "glob-to-regexp": "0.4.1", "js-cookie": "3.0.8" }, "peerDependencies": { "react": "^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0", "react-dom": "^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0" }, "optionalPeers": ["react", "react-dom"] }, "sha512-rAGh+U8dSE6Ov1I3mXysIHaGhxx63ET+24kW4gnmApJvrfU8nq9JT9pQOoyzG3X4PQa93aaAsxkck46CynDeHA=="],
 
@@ -106,5 +106,9 @@
     "yargs": ["yargs@18.0.0", "", { "dependencies": { "cliui": "^9.0.1", "escalade": "^3.1.1", "get-caller-file": "^2.0.5", "string-width": "^7.2.0", "y18n": "^5.0.5", "yargs-parser": "^22.0.0" } }, "sha512-4UEqdc2RYGHZc7Doyqkrqiln3p9X2DZVxaGbwhn2pi7MrRagKaOcIKe8L3OxYcbhXLgLFUS3zAYuQjKBQgmuNg=="],
 
     "yargs-parser": ["yargs-parser@22.0.0", "", {}, "sha512-rwu/ClNdSMpkSrUb+d6BRsSkLUq1fmfsY6TOpYzTwvwkg1/NRG85KBy3kq++A8LKQwX6lsu+aWad+2khvuXrqw=="],
+
+    "@clerk/hono/@clerk/backend": ["@clerk/backend@3.31.2", "", { "dependencies": { "@clerk/shared": "^4.48.1", "standardwebhooks": "^1.0.0" } }, "sha512-7RWZPcdRMzO0zqXgXz09AnibDNwa2nMOvlY79LNavJOajHeG5CoEkpfAYRO9uKjC9+MIy/PNGyBb9wXusu5LGA=="],
+
+    "@clerk/hono/@clerk/shared": ["@clerk/shared@4.48.1", "", { "dependencies": { "@tanstack/query-core": "^5.101.4", "dequal": "2.0.3", "glob-to-regexp": "0.4.1", "js-cookie": "3.0.8" }, "peerDependencies": { "react": "^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0", "react-dom": "^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0" }, "optionalPeers": ["react", "react-dom"] }, "sha512-qNj66fHshem+ozP7R9fsVekJR/HvuI+R3PkpZmOE95Fg4B7BlqSkpKVuw0iD8xn7Guo3zGrHFqe6jzdjDHPXkw=="],
   }
 }
