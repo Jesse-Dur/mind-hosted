@@ -104,5 +104,39 @@ export function PwaUpdatePrompt() {
     return () => navigator.serviceWorker?.removeEventListener("controllerchange", reload)
   }, [])
   if (!ready) return null
-  return <div role="status" style={{ position: "fixed", left: "50%", bottom: "max(16px,env(safe-area-inset-bottom))", transform: "translateX(-50%)", zIndex: 500, width: "max-content", maxWidth: "calc(100vw - 32px)", boxSizing: "border-box", borderRadius: 10, background: "#222", color: "#fff", padding: "9px 10px 9px 13px", display: "flex", alignItems: "center", gap: 12, boxShadow: "0 8px 25px rgba(0,0,0,.24)", fontSize: 12 }}><span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{error ?? "Mind is ready to update"}</span><button disabled={updating} onClick={() => void update()} style={{ flexShrink: 0, whiteSpace: "nowrap", border: 0, borderRadius: 6, background: "#fff", color: "#222", padding: "5px 8px", fontWeight: 700 }}>{updating ? "Updating…" : error ? "Try again" : "Update"}</button></div>
+  return (
+    <div role="status" style={{
+      position: "fixed",
+      insetInline: 16,
+      marginInline: "auto",
+      bottom: "max(16px,env(safe-area-inset-bottom))",
+      zIndex: 500,
+      width: "max-content",
+      maxWidth: "calc(100vw - 32px)",
+      boxSizing: "border-box",
+      borderRadius: 10,
+      background: "#222",
+      color: "#fff",
+      padding: "9px 10px 9px 13px",
+      display: "flex",
+      alignItems: "center",
+      gap: 12,
+      boxShadow: "0 8px 25px rgba(0,0,0,.24)",
+      fontSize: 12,
+    }}>
+      <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{error ?? "Mind is ready to update"}</span>
+      <button disabled={updating} onClick={() => void update()} style={{
+        flexShrink: 0,
+        whiteSpace: "nowrap",
+        border: 0,
+        borderRadius: 6,
+        background: "#fff",
+        color: "#222",
+        padding: "5px 8px",
+        fontWeight: 700,
+      }}>
+        {updating ? "Updating…" : error ? "Try again" : "Update"}
+      </button>
+    </div>
+  )
 }
