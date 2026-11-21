@@ -11,6 +11,7 @@ import { createCrossCanvasTabHoverController, type CrossCanvasTabHoverController
 import { pointInsideRect } from "../utils/pointerRect"
 import { canvasIdentityKey } from "../utils/canvasIdentity"
 import { resolveTargetTap, type TargetTap } from "../utils/targetDoubleTap"
+import { currentSyncAccountScope, isSyncAccountScopeCurrent } from "../sync/accountScope"
 import type { Canvas } from "../types"
 import type { CanvasDeleteOptions } from "../store/types"
 
@@ -138,8 +139,9 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
   useEffect(() => {
     if (!contextMenu) return
     function closeOnOutsidePress(event: PointerEvent) {
-      if (event.target instanceof Node && contextMenuRef.current?.contains(event.target)) return
-      // Close before a drag can raise the canvas above the tab bar's stacking context.
+      const menu = contextMenuRef.current
+      if (menu && event.composedPath().includes(menu)) return
+      // Dismiss the menu before an outside press can start a drag.
       setContextMenu(null)
     }
     window.addEventListener("pointerdown", closeOnOutsidePress, true)
@@ -263,17 +265,17 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
     setSelectRenameText(false)
   }
 
-  function handleRemove(canvas: Canvas) {
+  async function handleRemove(canvas: Canvas) {
     setContextMenu(null)
-    if (canvases.length === 1) return
+    const canvasKey = canvasIdentityKey(canvas)
     const state = useStore.getState()
-    const canvasTiles = state.activeCanvasId === canvas.id ? state.tiles : state.tileCache.get(canvas.id)
-    if (canvasTiles?.length === 0) {
-      // A known-empty canvas has no contents that need a deletion choice.
-      void removeCanvas(canvas.id, { mode: "deleteContents" })
-      return
-    }
-    setDeleteCanvas(canvas)
+    const current = state.canvases.find((item) => canvasIdentityKey(item) === canvasKey)
+    if (!current || state.canvases.length <= 1) return
+    const scope = currentSyncAccountScope()
+    if (await state.removeCanvasIfEmpty(current.id)) return
+    if (!isSyncAccountScopeCurrent(scope)) return
+    const latestCanvases = useStore.getState().canvases
+    if (latestCanvases.length > 1) setDeleteCanvas(latestCanvases.find((item) => canvasIdentityKey(item) === canvasKey) ?? null)
   }
 
   function confirmRemove(options: CanvasDeleteOptions) {
@@ -714,7 +716,7 @@ export function TabBar({ slidingOut, onOpenMenu, leftAccessory, topOffset = 0 }:
             {[
               { label: contextMenu.canvas.is_favourite ? "Unfavourite" : "★ Favourite", action: () => handleFavourite(contextMenu.canvas) },
               { label: "Rename", action: () => startRename(contextMenu.canvas) },
-              { label: "Delete", action: () => handleRemove(contextMenu.canvas), danger: true, disabled: canvases.length <= 1 },
+              { label: "Delete", action: () => { void handleRemove(contextMenu.canvas).catch(console.error) }, danger: true, disabled: canvases.length <= 1 },
             ].map(({ label, action, danger, disabled }) => (
               <div key={label} aria-disabled={disabled || undefined} onClick={disabled ? undefined : action} style={{ padding: "7px 12px", fontSize: 13, cursor: disabled ? "not-allowed" : "pointer", borderRadius: 5, color: disabled ? "#888" : danger ? "#ef4444" : "#1a1a1a" }}
                 onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = "#f5f5f5" }}

@@ -29,6 +29,7 @@ export const createWorkspaceRestoreSlice: StoreSlice<WorkspaceRestoreSlice> = (s
       tags,
       tiles,
       thoughts,
+      loadedCanvasIds: new Set(),
       tileCache: activeCanvasId === null ? new Map() : new Map([[activeCanvasId, tiles]]),
       thoughtCache: activeCanvasId === null ? new Map() : new Map([[activeCanvasId, thoughts]]),
     })

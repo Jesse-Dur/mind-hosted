@@ -4,10 +4,12 @@ import { isTemporaryCanvasId } from "../utils/canvasIdentity"
 import { cachedThoughtsForCanvas, cachedTiles } from "../sync/cache"
 import { currentLoadGeneration } from "./loadGeneration"
 import { fetchAndCacheSnapshot } from "../sync/snapshot"
+import { setCanvasContentsLoaded } from "../sync/storeBridge"
 import { isApiUnauthorizedError } from "../api/errors"
 import { mergeVisibleEntities } from "./cacheHelpers"
 
 export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => ({
+  loadedCanvasIds: new Set(),
   tileCache: new Map(),
   thoughtCache: new Map(),
   tiles: [],
@@ -21,6 +23,7 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
       return
     }
 
+    setCanvasContentsLoaded(targetCanvasId, false)
     const generation = currentLoadGeneration()
     const refreshTiles = async () => {
       let tiles: Tile[]
@@ -81,6 +84,7 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
       return
     }
 
+    setCanvasContentsLoaded(targetCanvasId, false)
     const generation = currentLoadGeneration()
     const refreshThoughts = async () => {
       let tiles: Tile[]
@@ -144,6 +148,7 @@ export const createCanvasDataSlice: StoreSlice<CanvasDataSlice> = (set, get) => 
     const generation = currentLoadGeneration()
     for (const id of missing) {
       if (generation !== currentLoadGeneration()) return
+      setCanvasContentsLoaded(id, false)
       const [cachedTileRows, cachedThoughtRows] = await Promise.all([
         cachedTiles(id),
         cachedThoughtsForCanvas(id),

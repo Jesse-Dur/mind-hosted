@@ -190,6 +190,7 @@ export async function resetFrontendState() {
     tags: [],
     tiles: [],
     thoughts: [],
+    loadedCanvasIds: new Set(),
     tileCache: new Map(),
     thoughtCache: new Map(),
     thoughtStableKeys: new Map(),

@@ -15,6 +15,7 @@ export const createSessionSlice: StoreSlice<SessionSlice> = (set, get) => ({
       tags: [],
       tiles: [],
       thoughts: [],
+      loadedCanvasIds: new Set(),
       tileCache: new Map(),
       thoughtCache: new Map(),
       thoughtStableKeys: new Map(),

@@ -232,8 +232,10 @@ export function ThoughtTags({ tags: currentTags, onRemove, expandOnHover = true,
   useEffect(() => {
     if (!visible) return
     function onPointerDown(event: PointerEvent) {
-      const target = event.target as Node
-      if (anchorRef.current?.contains(target) || panelRef.current?.contains(target)) return
+      const path = event.composedPath()
+      const anchor = anchorRef.current
+      const panel = panelRef.current
+      if ((anchor && path.includes(anchor)) || (panel && path.includes(panel))) return
       closePanel()
     }
     function onKeyDown(event: KeyboardEvent) {

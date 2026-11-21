@@ -316,6 +316,21 @@ export async function cachedTiles(canvasId: number) {
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
 }
 
+export async function mayHaveCanvasContents(canvasId: number) {
+  return syncDb.transaction("r", syncDb.entities, syncDb.outbox, async () => {
+    const tile = await syncDb.entities.where("entityType").equals("tile").and(({ data, confirmedData }) =>
+      // An optimistic delete or move can empty the UI while the tile is still on the server.
+      (isTile(data) && data.canvas_id === canvasId) ||
+      (confirmedData != null && isTile(confirmedData) && confirmedData.canvas_id === canvasId),
+    ).first()
+    if (tile) return true
+    const incomingMove = await syncDb.outbox.where("entityType").equals("canvas").and(({ action, payload }) =>
+      action === "delete" && payload.mode === "moveContents" && payload.targetCanvasId === canvasId,
+    ).first()
+    return incomingMove !== undefined
+  })
+}
+
 export async function cachedThoughtsForCanvas(canvasId: number) {
   const [tileRecords, thoughtRecords] = await Promise.all([
     syncDb.entities.where("entityType").equals("tile").and((record) => record.status !== "deleted").toArray(),

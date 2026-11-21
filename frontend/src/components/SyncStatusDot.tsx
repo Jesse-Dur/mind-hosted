@@ -43,7 +43,7 @@ function SyncResolutionDialog({ statuses, onClose }: { statuses: SyncEntityStatu
   return createPortal(
     <div
       role="presentation"
-      onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}
+      onPointerDown={(event) => { if (event.nativeEvent.composedPath()[0] === event.currentTarget) onClose() }}
       style={{ position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,0.28)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
     >
       <section role="dialog" aria-modal="true" aria-label="Sync status" style={{ width: "min(440px, 100%)", maxHeight: "min(620px, 85dvh)", overflowY: "auto", background: "#fff", borderRadius: 14, padding: 18, boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>

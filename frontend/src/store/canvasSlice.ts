@@ -1,13 +1,21 @@
 import type { Canvas, Thought, Tile } from "../types"
-import type { CanvasSlice, StoreSlice } from "./types"
+import type { AppStore, CanvasSlice, StoreSlice } from "./types"
 import { getStoredActiveCanvasId, readStoredActiveCanvasId, writeStoredActiveCanvasId } from "./storage"
 import { isTemporaryCanvasId } from "../utils/canvasIdentity"
-import { cachedCanvases } from "../sync/cache"
+import { cachedCanvases, mayHaveCanvasContents } from "../sync/cache"
 import { enqueueDelete, enqueueUpsert, setSyncActiveCanvas } from "../sync/engine"
 import { createClientId, createTemporarySyncId } from "../sync/ids"
 import { advanceLoadGeneration } from "./loadGeneration"
-import { fetchAndCacheSnapshot } from "../sync/snapshot"
+import { fetchAndCacheSnapshot, isCanvasSnapshotLoading } from "../sync/snapshot"
 import { isApiUnauthorizedError } from "../api/errors"
+import { isReauthRequired } from "../auth/reauthSignal"
+import { currentSyncAccountScope, isStaleSyncAccountError, isSyncAccountScopeCurrent, runSyncAccountTask } from "../sync/accountScope"
+
+function isLoadedAndEmpty(state: AppStore, id: number) {
+  return state.loadedCanvasIds.has(id) && !isCanvasSnapshotLoading(id) && navigator.onLine !== false && !isReauthRequired()
+    && state.tileCache.get(id)?.length === 0 && state.thoughtCache.get(id)?.length === 0
+    && (state.activeCanvasId !== id || (state.tiles.length === 0 && state.thoughts.length === 0))
+}
 
 export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
   canvases: [],
@@ -182,6 +190,22 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
     })
   },
 
+  removeCanvasIfEmpty: async (id) => {
+    if (!isLoadedAndEmpty(get(), id)) return false
+    const scope = currentSyncAccountScope()
+    try {
+      if (await runSyncAccountTask(() => mayHaveCanvasContents(id))) return false
+    } catch (error) {
+      if (!isStaleSyncAccountError(error)) console.error(error)
+      return false
+    }
+    const current = get()
+    if (!isSyncAccountScopeCurrent(scope) || current.canvases.length <= 1
+      || !current.canvases.some((canvas) => canvas.id === id) || !isLoadedAndEmpty(current, id)) return false
+    await current.removeCanvas(id, { mode: "deleteContents" })
+    return true
+  },
+
   removeCanvas: async (id, options) => {
     const { canvases, activeCanvasId, tileCache, thoughtCache, tiles, thoughts } = get()
     const removedCanvas = canvases.find((canvas) => canvas.id === id)
@@ -206,8 +230,11 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
       const sourceThoughtsAreKnown = thoughtCache.has(id) || s.activeCanvasId === id
       tileCache.delete(id)
       thoughtCache.delete(id)
+      const loadedCanvasIds = new Set(s.loadedCanvasIds)
+      loadedCanvasIds.delete(id)
 
       if (options.mode === "moveContents") {
+        if (!s.loadedCanvasIds.has(id)) loadedCanvasIds.delete(options.targetCanvasId)
         const movedTiles = sourceTiles.map((tile) => ({ ...tile, canvas_id: options.targetCanvasId }))
         const targetTilesAreKnown = tileCache.has(options.targetCanvasId) || s.activeCanvasId === options.targetCanvasId
         if (targetTilesAreKnown || sourceTilesAreKnown) {
@@ -242,6 +269,7 @@ export const createCanvasSlice: StoreSlice<CanvasSlice> = (set, get) => ({
         activeCanvasId: nextActiveCanvasId,
         tiles: visibleTiles,
         thoughts: visibleThoughts,
+        loadedCanvasIds,
         tileCache,
         thoughtCache,
       }

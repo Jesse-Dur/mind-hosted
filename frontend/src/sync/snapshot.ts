@@ -4,6 +4,7 @@ import { cacheSyncSnapshot, cachedCanvases, cachedTags, cachedThoughtsForCanvas,
 import { GLOBAL_REVISION_KEY, canvasRevisionKey } from "./revisions"
 import { captureEntityWriteGeneration } from "./entityWriteFence"
 import { assertSyncAccountScopeCurrent, currentSyncAccountScope, runSyncAccountTask } from "./accountScope"
+import { setCanvasContentsLoaded } from "./storeBridge"
 
 export type CachedSnapshot = {
   revision: number
@@ -19,15 +20,20 @@ export type CachedSnapshot = {
 const inFlightSnapshots = new Map<string, Promise<CachedSnapshot>>()
 
 function snapshotKey(canvasId: number | null | undefined) {
-  const account = currentSyncAccountScope()?.userId ?? "unscoped"
+  const account = currentSyncAccountScope()?.generation ?? "unscoped"
   const canvas = canvasId === null || canvasId === undefined ? "default" : String(canvasId)
   return `${account}:${canvas}`
+}
+
+export function isCanvasSnapshotLoading(canvasId: number) {
+  return inFlightSnapshots.has(snapshotKey(canvasId)) || inFlightSnapshots.has(snapshotKey(null))
 }
 
 export async function fetchAndCacheSnapshot(canvasId?: number | null): Promise<CachedSnapshot> {
   const key = snapshotKey(canvasId)
   const existing = inFlightSnapshots.get(key)
   if (existing) return existing
+  if (canvasId != null) setCanvasContentsLoaded(canvasId, false)
 
   const snapshotGeneration = captureEntityWriteGeneration()
   const request = runSyncAccountTask(async (scope) => {
@@ -39,7 +45,7 @@ export async function fetchAndCacheSnapshot(canvasId?: number | null): Promise<C
     if (snapshot.active_canvas_id !== null) {
       await setMetadataNumber(canvasRevisionKey(snapshot.active_canvas_id), snapshot.revision)
     }
-    return {
+    const result = {
       revision: snapshot.revision,
       activeCanvasId: snapshot.active_canvas_id,
       canvases: await cachedCanvases(),
@@ -49,6 +55,9 @@ export async function fetchAndCacheSnapshot(canvasId?: number | null): Promise<C
       changedTileIds: changedIds.tileIds,
       changedThoughtIds: changedIds.thoughtIds,
     }
+    assertSyncAccountScopeCurrent(scope)
+    if (result.activeCanvasId !== null) setCanvasContentsLoaded(result.activeCanvasId, true)
+    return result
   }).finally(() => {
     inFlightSnapshots.delete(key)
   })
