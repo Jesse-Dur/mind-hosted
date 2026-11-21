@@ -2,7 +2,7 @@ import { createPortal } from "react-dom"
 
 export function DeleteDialog({ title, message, deleteLabel, onClose, onDelete }: { title: string; message: string; deleteLabel: string; onClose: () => void; onDelete: () => void }) {
   return createPortal(
-    <div role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title" style={backdropStyle} onPointerDown={(event) => { event.stopPropagation(); if (event.target === event.currentTarget) onClose() }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation() }}>
+    <div role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title" style={backdropStyle} onPointerDown={(event) => { event.stopPropagation(); if (event.nativeEvent.composedPath()[0] === event.currentTarget) onClose() }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation() }}>
       <div style={dialogStyle}>
         <h2 id="delete-dialog-title" style={{ fontSize: 17, margin: 0 }}>{title}</h2>
         <p style={{ fontSize: 13, lineHeight: 1.45, color: "#666", margin: 0 }}>{message}</p>

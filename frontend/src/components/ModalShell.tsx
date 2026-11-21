@@ -17,7 +17,7 @@ export function ModalShell({ titleId, title, subtitle, width = "min(540px, calc(
     <div
       role="presentation"
       onMouseDown={(event) => {
-        if (closeOnBackdrop && event.target === event.currentTarget) onClose()
+        if (closeOnBackdrop && event.nativeEvent.composedPath()[0] === event.currentTarget) onClose()
       }}
       style={{
         position: "fixed",

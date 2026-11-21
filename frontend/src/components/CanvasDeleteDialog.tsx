@@ -41,7 +41,7 @@ export function CanvasDeleteDialog({ canvas, canvases, onCancel, onConfirm }: Ca
     <div
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onCancel()
+        if (event.nativeEvent.composedPath()[0] === event.currentTarget) onCancel()
       }}
       style={{
         position: "fixed",

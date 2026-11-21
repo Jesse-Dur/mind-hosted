@@ -57,10 +57,12 @@ export interface CanvasSlice {
   addCanvas: (name: string) => CanvasCreation | null
   updateCanvas: (id: number, data: Partial<Pick<Canvas, "name" | "sort_order" | "is_favourite">>) => Promise<void>
   removeCanvas: (id: number, options: CanvasDeleteOptions) => Promise<void>
+  removeCanvasIfEmpty: (id: number) => Promise<boolean>
   reorderCanvases: (updates: CanvasOrderUpdate[]) => void
 }
 
 export interface CanvasDataSlice {
+  loadedCanvasIds: Set<number>
   tileCache: Map<number, Tile[]>
   thoughtCache: Map<number, Thought[]>
   tiles: Tile[]

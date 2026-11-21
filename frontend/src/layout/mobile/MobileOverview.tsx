@@ -106,7 +106,8 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
   useEffect(() => {
     if (!undo) return
     const dismiss = (event: PointerEvent) => {
-      if ((event.target as HTMLElement).closest("[data-mobile-tile-undo]")) return
+      const toast = hostRef.current?.querySelector("[data-mobile-tile-undo]")
+      if (toast && event.composedPath().includes(toast)) return
       setUndo(null)
     }
     window.addEventListener("pointerdown", dismiss, true)
@@ -300,7 +301,8 @@ export function MobileOverview({ focusedTileId, onFocusTile }: { focusedTileId: 
 
     const additionalDown = (pointerEvent: PointerEvent) => {
       const current = gestureRef.current
-      if (!current || pointerEvent.pointerId === current.primaryId || !hostRef.current?.contains(pointerEvent.target as Node)) return
+      const host = hostRef.current
+      if (!current || pointerEvent.pointerId === current.primaryId || !host || !pointerEvent.composedPath().includes(host)) return
       beginResize(current, pointerEvent)
     }
     const move = (pointerEvent: PointerEvent) => {

@@ -79,7 +79,7 @@ export function MobileFocusedTile({ tile, thoughts, onFocusTarget }: { tile: Til
     if (event.defaultPrevented || getCrossCanvasDrag() || Date.now() - dragEndedAt.current < 350 || hasExpandedTextSelection()) return
     const target = event.target
     // Ignore thought controls and events bubbling through React from portals.
-    if (!(target instanceof Element) || !event.currentTarget.contains(target)
+    if (!(target instanceof Element) || !event.nativeEvent.composedPath().includes(event.currentTarget)
       || target.closest("[data-mobile-thought-id], input, button, [contenteditable]")) return
     thoughtInputRef.current?.focus()
   }

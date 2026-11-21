@@ -9,7 +9,7 @@ changes; it is not the pass/fail gate for application behavior.
 - `bun run test`: run the current manual regression suite and type/build checks.
 - `bun run test:backend`: run snapshot revision tests, then backend sync database integration tests in a separate process to isolate the mocked database client.
 - `bun run test:frontend-sync`: run frontend offline sync tests.
-- `bun run test:store`: run frontend optimistic store tests.
+- `bun run test:store`: run frontend optimistic store tests and event-path checks for the canvas tab menu, thought tag popover, mobile controls, and delete dialog backdrop.
 - `bun run test:recording`: run audio-format checks and DOM-based microphone lifecycle regressions in separate processes.
 - `bun run typecheck`: run backend TypeScript checking and the frontend production build.
 - `bun run test:mobile`: run the mobile regression suite, including thought keyboard dismissal checks. The runner preloads IndexedDB before shared modules load.

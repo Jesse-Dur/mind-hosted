@@ -21,6 +21,16 @@ export function registerSyncStore(get: GetState, set: SetState) {
   setState = set
 }
 
+export function setCanvasContentsLoaded(canvasId: number, loaded: boolean) {
+  if (getState?.().loadedCanvasIds.has(canvasId) === loaded) return
+  setState?.((state) => {
+    const loadedCanvasIds = new Set(state.loadedCanvasIds)
+    if (loaded) loadedCanvasIds.add(canvasId)
+    else loadedCanvasIds.delete(canvasId)
+    return { loadedCanvasIds }
+  })
+}
+
 function upsertTileInPlace(tiles: Tile[], tile: Tile) {
   if (!tiles.some((item) => item.id === tile.id)) return [...tiles, tile]
   return tiles.map((item) => item.id === tile.id ? { ...tile, stableKey: item.stableKey ?? tile.stableKey } : item)
@@ -101,10 +111,14 @@ export function adoptServerEntity(entityType: SyncEntityType, record: LocalEntit
       const tileCache = replaceCanvasIdInCache(state.tileCache, tempId, canvas.id)
       const thoughtCache = new Map<number, Thought[]>()
       for (const [key, thoughts] of state.thoughtCache) thoughtCache.set(key === tempId ? canvas.id : key, thoughts)
+      // Locally created canvases start with complete caches and gain a server ID on acknowledgement.
+      const loadedCanvasIds = state.tileCache.has(tempId) && state.thoughtCache.has(tempId)
+        ? new Set(state.loadedCanvasIds).add(canvas.id) : state.loadedCanvasIds
       return {
         canvases: state.canvases.map((item) => item.id === tempId ? { ...canvas, stableKey: item.stableKey } : item),
         activeCanvasId: state.activeCanvasId === tempId ? canvas.id : state.activeCanvasId,
         tiles: state.tiles.map((tile) => tile.canvas_id === tempId ? { ...tile, canvas_id: canvas.id } : tile),
+        loadedCanvasIds,
         tileCache,
         thoughtCache,
       }
@@ -247,6 +261,9 @@ export function removeRemoteEntity(entityType: SyncEntityType, serverId: number 
       }
       tileCache.delete(serverId)
       thoughtCache.delete(serverId)
+      const loadedCanvasIds = new Set(state.loadedCanvasIds)
+      loadedCanvasIds.delete(serverId)
+      if (usableTargetCanvasId !== null && !state.loadedCanvasIds.has(serverId)) loadedCanvasIds.delete(usableTargetCanvasId)
       const activeCanvasId = state.activeCanvasId === serverId ? usableTargetCanvasId ?? canvases[0]?.id ?? null : state.activeCanvasId
       if (state.activeCanvasId === serverId) writeStoredActiveCanvasId(activeCanvasId)
       return {
@@ -254,6 +271,7 @@ export function removeRemoteEntity(entityType: SyncEntityType, serverId: number 
         activeCanvasId,
         tiles: activeCanvasId === null ? [] : tileCache.get(activeCanvasId) ?? (state.activeCanvasId === activeCanvasId ? state.tiles : []),
         thoughts: activeCanvasId === null ? [] : thoughtCache.get(activeCanvasId) ?? (state.activeCanvasId === activeCanvasId ? state.thoughts : []),
+        loadedCanvasIds,
         tileCache,
         thoughtCache,
       }
